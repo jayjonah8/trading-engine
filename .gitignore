@@ -1,0 +1,6 @@
+/target
+
+# Ignore env files anywhere in the repo
+.env
+**/.env         # Any .env in subdirectories
+**/.env.*       # Also match .env.local, .env.development, etc
