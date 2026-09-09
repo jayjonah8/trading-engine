@@ -1,7 +1,9 @@
 #![allow(dead_code)]
 
-use std::sync::Arc;
-use std::collections::{HashMap};
+use std::{
+    collections::HashMap,
+    sync::Arc,
+};
 
 use tokio::sync::{
     mpsc::UnboundedSender,
@@ -9,290 +11,301 @@ use tokio::sync::{
     watch,
 };
 
-use crate::core::engine_state::{
-    Engine,
-    TradingPhase,
-    LastPrice,
-};
-use super::config::Config;
-use super::engine_view::EngineView;
-use super::general::General;
-
-use crate::core::trade_intent::TradeIntent;
-use crate::core::exec::{ExecCommand, ExecEvent};
-use crate::core::trades::{
-    PendingCloses,
-    PendingOpens,
-    Trades,
+use crate::core::{
+    config::Config,
+    engine::{
+        shared::{
+            get_execution_mode,
+            verify_engine_config,
+            ExecutionMode,
+        },
+        state::EngineState,
+    },
+    engine_view::EngineView,
+    execution::{
+        ExecCommand,
+        ExecEvent,
+        OrderChanges,
+        OrderId,
+    },
+    risk::RiskLimits,
+    trade_intent::TradeIntent,
 };
 
 use crate::notifications::env_helpers::validate_notification_env;
 
-use crate::core::engine_shared::{
-    get_execution_mode,
-    verify_engine_config,
-};
-
-use crate::exchange::alpaca_utils::{
-    AlpacaAccountBalance,
-    get_alpaca_account_balance,
-};
-
-pub enum EngineEvent {
-    /// Requests a new live or simulated trade.
-    OpenMarketOrder(TradeIntent),
-
-    /// Requests a new trade during historical backtesting.
-    OpenMarketOrderBacktest(TradeIntent),
-
-    /// Requests a new live or simulated limit order.
-    OpenLimitOrder(TradeIntent),
-
-    /// Requests a new limit order during historical backtesting.
-    OpenLimitOrderBacktest(TradeIntent),
-
-    /// Requests cancellation of an active live or simulated limit (or resting) order. 
-    CancelOrder { order_id: String, reason: String },
-
-    /// Requests cancellation of an active limit order during historical backtesting.
-    CancelOrderBacktest { order_id: String, reason: String },
-
-    /// Requests modification of an active live or simulated order.
-    ///
-    /// Quantity or limit price may be omitted when that value should remain unchanged.
-    ModifyLiveOrder { order_id: String, quantity: Option<f64>, limit_px: Option<f64> },
-
-    /// Requests modification of an active order during historical backtesting.
-    ModifyLiveOrderBacktest { order_id: String, quantity: Option<f64>, limit_px: Option<f64> },
-
-    /// Requests that one specific live or simulated trade be closed by symbol.
-    CloseSingleTrade { symbol: String, reason: String },
-
-    /// Requests that one specific trade be closed by symbol during historical backtesting.
-    CloseSingleTradeBacktest { symbol: String, reason: String },
-
-    /// Requests that all currently open live or simulated trades be closed.
-    ///
-    /// Useful for end-of-session cleanup, emergency shutdown,
-    /// or other strategy-wide exit conditions.
-    CloseAllTrades { reason: String },
-
-    /// Requests that all currently open trades be closed during historical backtesting.
-    CloseAllTradesBacktest { reason: String },
-
-    /// Live market-price update used for position valuation
-    /// and live/simulation risk management.
-    PriceTick { symbol: String, px: f64, ts_ms: i64 },
-
-    /// Historical market-price update used during backtesting.
-    ///
-    /// Uses the original historical timestamp so risk checks and
-    /// trade behavior remain tied to replay time instead of wall time.
-    PriceTickBacktest { symbol: String, px: f64, ts_ms: i64 },
-
-    /// Finalizes a completed live or simulated trade.
-    ///
-    /// Live trades reach this event after the exchange confirms the final
-    /// CloseFill. Simulated trades reach it directly after the local risk
-    /// checker determines the simulated exit.
-    ///
-    /// This provides one shared path for final close bookkeeping such as
-    /// realized PnL, trade counters, symbol ownership, and trade removal.
-    TradeClosed { id: String, ts_ms: i64, realized: f64, exit_px: f64 },
-
-    /// Finalizes a completed historical backtest trade.
-    ///
-    /// Backtest trades reach this event after a historical risk condition,
-    /// strategy exit, or forced close determines the simulated exit.
-    ///
-    /// Uses historical replay timestamps rather than wall-clock time.
-    TradeClosedBacktest { id: String, ts_ms: i64, realized: f64, exit_px: f64 },
-
-    /// Backtest synchronization barrier.
-    ///
-    /// Confirms that all EngineEvents queued before this event
-    /// have been processed before the backtest continues.
-    BacktestBarrier { done: oneshot::Sender<()> },
+/// Current high-level operating phase of the engine.
+///
+/// TODO: Expand this later if the engine gains explicit startup,
+/// reconciliation, shutdown, or recovery phases.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TradingPhase {
+    Normal,
 }
 
+/// Most recent market price known by the engine for a symbol.
+///
+/// TODO: Replace primitive types with canonical `Symbol` and `Price`.
+#[derive(Debug, Clone, Copy)]
+pub struct LastPrice {
+    pub px: f64,
+    pub ts_ms: i64,
+}
+
+/// Events entering the authoritative engine loop.
+///
+/// Strategy decisions and market-data updates enter through `EngineEvent`.
+///
+/// Venue execution lifecycle facts enter separately through `ExecEvent`.
+///
+/// Backtesting should eventually use this exact same event model. A simulated
+/// execution adapter can consume `ExecCommand` and emit canonical `ExecEvent`s
+/// without requiring duplicated backtest-specific engine events.
+pub enum EngineEvent {
+    /// Requests creation of a new strategy trade.
+    OpenTrade(TradeIntent),
+
+    /// Requests cancellation of an active engine order.
+    CancelOrder {
+        order_id: OrderId,
+        reason: String,
+    },
+
+    /// Requests replacement/modification of an active engine order.
+    ReplaceOrder {
+        order_id: OrderId,
+        quantity: Option<f64>,
+        limit_px: Option<f64>,
+        stop_px: Option<f64>,
+        reason: String,
+    },
+
+    /// Requests closure of one strategy trade associated with a symbol.
+    ///
+    /// TODO: Eventually prefer `TradeId` once strategies and EngineView expose
+    /// canonical trade identity directly.
+    CloseSingleTrade {
+        symbol: String,
+        reason: String,
+    },
+
+    /// Requests closure of all active directional trades.
+    CloseAllTrades {
+        reason: String,
+    },
+
+    /// Market-price update used for valuation and strategy-level risk logic.
+    ///
+    /// `ts_ms` is always event time. During live trading this is live market
+    /// time; during backtesting this is historical replay time.
+    PriceTick {
+        symbol: String,
+        px: f64,
+        ts_ms: i64,
+    },
+
+    /// Synchronization barrier primarily useful for deterministic testing and
+    /// historical replay.
+    Barrier {
+        done: oneshot::Sender<()>,
+    },
+}
+
+/// Main authoritative trading engine.
+///
+/// The engine owns canonical trading state and is the only layer responsible
+/// for applying state transitions.
+///
+/// Exchange adapters, strategies, market-data providers, simulators, and
+/// notification systems communicate with the engine through commands/events
+/// rather than directly mutating engine state.
+pub struct Engine {
+    /// Static/runtime engine configuration.
+    pub cfg: Config,
+
+    /// Canonical execution, position, trade, and risk state.
+    pub state: EngineState,
+
+    /// Most recent known price by symbol.
+    pub last_px: HashMap<String, LastPrice>,
+
+    /// Published read-only strategy view.
+    pub tx_view: watch::Sender<Arc<EngineView>>,
+
+    /// Channel for feeding events back into the authoritative engine loop.
+    pub tx_engine: UnboundedSender<EngineEvent>,
+
+    /// Venue-independent execution command channel.
+    pub tx_exec: UnboundedSender<ExecCommand>,
+
+    /// Live / simulation / backtest execution mode.
+    ///
+    /// Core state transitions should remain the same regardless of this mode.
+    pub execution_mode: ExecutionMode,
+
+    /// Current high-level engine phase.
+    pub trading_phase: TradingPhase,
+
+    pub debug_mode: bool,
+}
 
 impl Engine {
-
-    pub async fn new(
+    /// Creates a new trading engine.
+    ///
+    /// Account/equity discovery is intentionally NOT performed here.
+    ///
+    /// Exchange adapters or application bootstrap should obtain venue account
+    /// state and pass canonical account updates into the engine separately.
+    /// This keeps the engine independent from Alpaca, IBKR, Hyperliquid, or
+    /// any future venue.
+    pub fn new(
         cfg: Config,
         tx_view: watch::Sender<Arc<EngineView>>,
         tx_engine: UnboundedSender<EngineEvent>,
         tx_exec: UnboundedSender<ExecCommand>,
     ) -> Self {
-
         verify_engine_config(&cfg);
         validate_notification_env(&cfg);
 
         let execution_mode = get_execution_mode(&cfg);
 
         // ============================================================
-        // INITIALIZE ACCOUNT BALANCE
+        // RISK LIMITS
         // ============================================================
 
-        let account_balance =
-            if cfg.enable_backtest_mode {
-                AlpacaAccountBalance::with_cash(
-                    cfg.backtest_starting_balance
-                )
-            } else {
-                get_alpaca_account_balance()
-                    .await
-                    .expect(
-                        "Failed to fetch Alpaca account balance"
-                    )
-            };
+        // TODO:
+        // Move this construction into something like:
+        //
+        //     cfg.risk_limits()
+        //
+        // once Config itself is cleaned up.
+        let risk_limits = RiskLimits {
+            max_active_trades: Some(cfg.max_gross_positions),
+            max_order_notional: None,
+            max_gross_notional: None,
+            max_symbol_notional: None,
+            max_leverage: Some(cfg.default_leverage as f64),
+        };
 
         // ============================================================
-        // INITIALIZE GENERAL STATE
+        // ENGINE
         // ============================================================
 
-        let general =
-            General {
-                realized_pnl: 0.0,
-                sim_realized_pnl: 0.0,
-                account_balance,
-            };
+        let engine = Self {
+            cfg,
+            state: EngineState::new(risk_limits),
+            last_px: HashMap::new(),
+            tx_view,
+            tx_engine,
+            tx_exec,
+            execution_mode,
+            trading_phase: TradingPhase::Normal,
+            owner_by_symbol: HashMap::new(),
+            last_decision_ts: HashMap::new(),
+            debug_mode: true,
+        };
 
-        // ============================================================
-        // INITIALIZE ENGINE
-        // ============================================================
-
-        let me =
-            Self {
-                cfg,
-                general,
-                trades: Trades::default(),
-                pending_opens: PendingOpens::default(),
-                pending_closes: PendingCloses::default(),
-                last_px: HashMap::new(),
-                tx_view,
-                tx_engine,
-                tx_exec,
-                execution_mode,
-                trading_phase: TradingPhase::Normal,
-                owner_by_symbol: HashMap::new(),
-                last_decision_ts: HashMap::new(),
-                open_count_by_symbol: HashMap::new(),
-                debug_mode: true,
-            };
-
-
-        me.publish_view();
-
-        me
+        engine.publish_view();
+        engine
     }
 
-
     // ============================================================
-    // ENGINE VIEW (updates engine state for strategies when called)
-    // ============================================================   
+    // ENGINE VIEW
+    // ============================================================
 
+    /// Publishes the latest read-only engine state to strategies.
+    ///
+    /// TODO:
+    /// Update `EngineView::from_parts()` so it consumes canonical EngineState
+    /// directly instead of depending on legacy state structures.
     fn publish_view(&self) {
         let view = EngineView::from_parts(
             &self.cfg,
-            &self.general,
-            &self.trades,
+            &self.state,
         );
 
         let _ = self.tx_view.send_replace(view);
     }
 
-
     // ============================================================
-    // ENGINE EVENT DISPATCHER
+    // ENGINE EVENTS
     // ============================================================
 
-    /// Central entry point for all events processed by the engine.
+    /// Central entry point for non-execution events processed by the engine.
     ///
-    /// Routes strategy intents, market-data updates, execution events,
-    /// trade lifecycle events, and backtest events to their dedicated
-    /// handlers where authoritative engine state is updated.
+    /// This is the authoritative strategy / market-data event dispatcher.
     pub fn on_event(&mut self, event: EngineEvent) {
         match event {
-            EngineEvent::OpenMarketOrder(intent) => {
+            EngineEvent::OpenTrade(intent) => {
                 self.handle_open_trade(intent);
-                // @todo error message (intent should block) if MarketOrder OrderType is used in OpenLimitOrder or OpenLimitOrderBacktest message
-                // add enum OrderType {MarketOrder, LimitOrder}
             }
 
-            EngineEvent::OpenMarketOrderBacktest(intent) => {
-                self.handle_open_backtest_trade(intent);
+            EngineEvent::CancelOrder {
+                order_id,
+                reason,
+            } => {
+                self.handle_cancel_order(order_id, reason);
             }
 
-            EngineEvent::OpenLimitOrder(intent) => {
-                // @todo Handle live and simulated limit order creation.
-                //  symbol, direction, quantity, limit_px 
-                // error message (intent should block) if LimitOrder OrderType is used in OpenMarketOrder or OpenLimitOrderBacktest message
+            EngineEvent::ReplaceOrder {
+                order_id,
+                quantity,
+                limit_px,
+                stop_px,
+                reason,
+            } => {
+                let changes = OrderChanges {
+                    quantity,
+                    limit_px,
+                    stop_px,
+                };
+
+                self.handle_replace_order(
+                    order_id,
+                    changes,
+                    reason,
+                );
             }
 
-            EngineEvent::OpenLimitOrderBacktest(intent)  => {
-                // @todo Handle historical backtest limit order creation.
-                // symbol, direction, quantity, limit_px 
-                // add enum OrderType {MarketOrder, LimitOrder}
+            EngineEvent::CloseSingleTrade {
+                symbol,
+                reason,
+            } => {
+                self.handle_close_single_trade(
+                    symbol,
+                    reason,
+                );
             }
 
-            EngineEvent::CancelOrder { order_id, reason } => {
-                // @todo Handle cancellation of an active live or simulated limit order.
-                // should cancel limit orders or resting orders
-            }
-
-            EngineEvent::CancelOrderBacktest { order_id, reason } => {
-                // @todo Handle cancellation of an active backtest limit order.
-                // should cancel limit orders or resting orders
-            }
-
-            EngineEvent::ModifyLiveOrder { order_id, quantity, limit_px } => {
-                // @todo Handle modification of an active live or simulated order.
-            }
-
-            EngineEvent::ModifyLiveOrderBacktest { order_id, quantity, limit_px } => {
-                // @todo Handle modification of an active backtest order.
-            }
-
-            EngineEvent::CloseSingleTrade { symbol, reason } => {
-                self.handle_close_single_trade(symbol, reason);
-            }
-
-            EngineEvent::CloseSingleTradeBacktest { symbol, reason } => {
-                self.handle_close_single_trade_backtest(symbol, reason);
-            }
-
-            EngineEvent::CloseAllTrades { reason } => {
+            EngineEvent::CloseAllTrades {
+                reason,
+            } => {
                 self.handle_close_all_trades(reason);
             }
 
-            EngineEvent::CloseAllTradesBacktest { reason } => {
-                self.handle_close_all_trades_backtest(reason);
+            EngineEvent::PriceTick {
+                symbol,
+                px,
+                ts_ms,
+            } => {
+                self.last_px.insert(
+                    symbol.clone(),
+                    LastPrice {
+                        px,
+                        ts_ms,
+                    },
+                );
+
+                self.check_risk_for_symbol(
+                    &symbol,
+                    px,
+                    ts_ms,
+                );
             }
 
-            EngineEvent::PriceTick { symbol, px, ts_ms } => {
-                let sym = symbol.clone();
-
-                self.last_px.insert(symbol, LastPrice { px, ts_ms });
-                self.check_risk_for_symbol(&sym, px, ts_ms);
-            }
-
-            EngineEvent::PriceTickBacktest { symbol, px, ts_ms } => {
-                let sym = symbol.clone();
-
-                self.last_px.insert(symbol, LastPrice { px, ts_ms });
-                self.check_risk_for_backtest_symbol(&sym, px, ts_ms);
-            }
-
-            EngineEvent::TradeClosed { id, ts_ms, realized, exit_px } => {
-                self.handle_trade_closed(id, ts_ms, realized, exit_px);
-            }
-
-            EngineEvent::TradeClosedBacktest { id, ts_ms, realized, exit_px } => {
-                self.handle_trade_closed_backtest(id, ts_ms, realized, exit_px);
-            }
-
-            EngineEvent::BacktestBarrier { done } => {
+            EngineEvent::Barrier {
+                done,
+            } => {
                 let _ = done.send(());
             }
         }
@@ -300,43 +313,45 @@ impl Engine {
         self.publish_view();
     }
 
-
     // ============================================================
     // EXECUTION EVENTS
     // ============================================================
 
-    /// Routes live exchange execution events to the appropriate engine handler.
+    /// Processes canonical execution facts reported by an execution adapter.
     ///
-    /// These events come from the live exchange adapter and are only used for
-    /// real exchange execution. They are not used by Simulation or Backtest modes,
-    /// which handle their simulated fills internally without the exchange adapter.
+    /// Live venues and the future historical execution simulator should both
+    /// emit these same events.
     pub fn on_exec_event(
         &mut self,
         event: ExecEvent,
     ) {
         match event {
-            ExecEvent::Ack { .. } => {
-                self.handle_exec_ack(event);
+            ExecEvent::OrderAccepted { .. } => {
+                self.handle_order_accepted(event);
             }
 
-            ExecEvent::OpenPartialFill { .. } => {
-                self.handle_open_partial_fill(event);
+            ExecEvent::OrderWorking { .. } => {
+                self.handle_order_working(event);
             }
 
-            ExecEvent::OpenFill { .. } => {
-                self.handle_open_fill(event);
+            ExecEvent::Fill { .. } => {
+                self.handle_exec_fill(event);
             }
 
-            ExecEvent::ClosePartialFill { .. } => {
-                self.handle_close_partial_fill(event);
+            ExecEvent::OrderCanceled { .. } => {
+                self.handle_order_canceled(event);
             }
 
-            ExecEvent::CloseFill { .. } => {
-                self.handle_close_fill(event);
+            ExecEvent::OrderExpired { .. } => {
+                self.handle_order_expired(event);
             }
 
-            ExecEvent::Resting { .. } => {
-                self.handle_exec_resting(event);
+            ExecEvent::OrderRejected { .. } => {
+                self.handle_order_rejected(event);
+            }
+
+            ExecEvent::OrderReplaced { .. } => {
+                self.handle_order_replaced(event);
             }
 
             ExecEvent::Error { .. } => {
