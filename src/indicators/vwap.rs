@@ -8,7 +8,7 @@ use crate::core::events::Bar;
 /// VOLUME WEIGHTED AVERAGE PRICE (VWAP)
 ///
 /// VWAP calculates the average traded price weighted by actual trade
-/// volume. Prices where more shares traded contribute more heavily.
+/// volume. Prices where more quantity traded contribute more heavily.
 ///
 /// This implementation uses exact raw-trade accumulation stored in each Bar:
 ///
@@ -21,6 +21,9 @@ use crate::core::events::Bar;
 /// This is more accurate than approximating VWAP from candle OHLC values
 /// because the calculation preserves the actual price and size of the
 /// raw trades used to construct each candle.
+///
+/// Volume uses `f64` because quantities may be fractional across venues,
+/// such as crypto or fractional equities.
 ///
 /// Common uses:
 /// - Measure the market's volume-weighted average traded price.
@@ -38,8 +41,8 @@ use crate::core::events::Bar;
 /// Only bars belonging to the selected session should contribute to that
 /// session's VWAP.
 ///
-/// Because Bar stores exact price_volume_sum from raw trades, the same
-/// calculation works consistently for both live trading and backtesting.
+/// Because Bar stores exact `price_volume_sum` from raw trades, the same
+/// calculation works consistently across live trading and historical replay.
 pub fn vwap(
     bars: &[Bar],
 ) -> Option<f64> {
@@ -54,31 +57,34 @@ pub fn vwap(
             })
             .sum();
 
-    let total_volume: u64 =
+    let total_volume: f64 =
         bars.iter()
             .map(|bar| {
                 bar.volume
             })
             .sum();
 
-    if total_volume == 0 {
+    // A VWAP cannot be calculated when no volume traded.
+    if total_volume <= 0.0 {
         return None;
     }
 
     Some(
         total_price_volume
-            / total_volume as f64
+            / total_volume
     )
 }
 
-
-// Exact VWAP using only candles inside a specific time window.
-//
-// Useful for:
-// - regular trading session VWAP
-// - morning VWAP
-// - custom rolling windows
-// - backtest session boundaries
+/// Exact VWAP using only candles inside a specific time window.
+///
+/// Useful for:
+/// - regular trading session VWAP
+/// - morning VWAP
+/// - custom rolling windows
+/// - historical replay session boundaries
+///
+/// The timestamps stored on each Bar determine whether it belongs to the
+/// requested window, so this function is independent of live/backtest mode.
 pub fn vwap_between(
     bars: &[Bar],
     start: DateTime<Utc>,
@@ -88,10 +94,10 @@ pub fn vwap_between(
         0.0;
 
     let mut total_volume =
-        0u64;
+        0.0;
 
     for bar in bars {
-        // Only use candles belonging to the requested window.
+        // Ignore candles that do not overlap the requested time window.
         if bar.end <= start
             || bar.start >= end
         {
@@ -105,13 +111,13 @@ pub fn vwap_between(
             bar.volume;
     }
 
-    if total_volume == 0 {
+    if total_volume <= 0.0 {
         return None;
     }
 
     Some(
         total_price_volume
-            / total_volume as f64
+            / total_volume
     )
 }
 

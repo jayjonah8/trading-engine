@@ -15,7 +15,7 @@ use crate::{
 
 // Owns all candle aggregators used by the bot.
 //
-// Every raw trade is passed through every configured timeframe.
+// Every raw tape trade is passed through every configured timeframe.
 pub struct CandleManager {
     aggregators:
         Vec<CandleAggregator>,
@@ -40,16 +40,19 @@ impl CandleManager {
     }
 
 
-    // Processes one raw trade through every configured timeframe.
+    // Processes one raw tape trade through every configured timeframe.
     //
     // Returns any candles that became complete BEFORE this trade
     // is added to the new candle interval.
+    //
+    // `size` uses f64 because quantities may be fractional across
+    // venues such as Hyperliquid and fractional-equity brokers.
     pub fn on_trade(
         &mut self,
         symbol: &str,
         timestamp: DateTime<Utc>,
         price: f64,
-        size: u64,
+        size: f64,
     ) -> Vec<Bar> {
         let mut closed_bars =
             Vec::new();
@@ -65,7 +68,7 @@ impl CandleManager {
                     )
             );
 
-            // Then apply the current trade.
+            // Then apply the current tape trade.
             aggregator.on_trade(
                 symbol,
                 timestamp,
@@ -90,8 +93,10 @@ impl CandleManager {
     }
 
 
-    // Used at the end of a backtest to close every candle
-    // that is complete by the backtest end time.
+    // Closes every candle that is complete by the supplied timestamp.
+    //
+    // Useful for shutdown, historical replay, or any point where
+    // completed candles need to be flushed without waiting for another trade.
     pub fn close_through(
         &mut self,
         timestamp: DateTime<Utc>,

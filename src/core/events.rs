@@ -1,4 +1,4 @@
-use serde::Deserialize;
+#![allow(dead_code)]
 
 use chrono::{
     DateTime,
@@ -7,78 +7,134 @@ use chrono::{
 
 use crate::market::timeframe::Timeframe;
 
-#[allow(dead_code)]
+/// Venue-independent market-data envelope.
+///
+/// Every market-data provider converts its native messages into these
+/// canonical events before sending them into the application.
+///
+/// This keeps strategies and the engine independent from Alpaca,
+/// Hyperliquid, IBKR, or any future market-data provider.
 #[derive(Clone, Debug)]
 pub struct AppEventEnvelope {
     pub symbol: String,
     pub event: AppEvent,
 }
 
-#[allow(dead_code)]
+/// Canonical market-data events understood by the application.
+///
+/// These represent market information only. Execution events for our own
+/// orders belong to the separate `ExecEvent` system.
 #[derive(Clone, Debug)]
 pub enum AppEvent {
-    // Emitted when a market trade is received.
-    Trade(Trade),
+    /// A public trade printed on the market tape.
+    TapeTrade(TapeTrade),
 
-    // Emitted when a bid/ask quote update is received.
-    // Represents the current bid and ask state of the market.
-    // A quote contains the highest price buyers are willing to pay (bid)
-    // and the lowest price sellers are willing to accept (ask), along with
-    // the available size at each price. Quotes are useful for measuring
-    // spread, liquidity, and estimating the current executable market price.
+    /// Current best bid and ask.
     Quote(Quote),
-    
-    // Emitted only after a candle has fully completed.
+
+    /// A fully completed candle/bar.
     BarClosed(Bar),
 }
 
-#[allow(dead_code)]
-#[derive(Clone, Debug, Deserialize)]
-pub struct Trade {
-    #[serde(rename = "S")]
+/// A public trade printed on the market tape.
+///
+/// `TapeTrade` is intentionally separate from the engine's `Trade`.
+///
+/// - `TapeTrade` = public market-data execution
+/// - `Trade`     = strategy-level trade lifecycle
+/// - `Fill`      = execution of one of our own orders
+///
+/// Venue-specific messages should be converted into this canonical format
+/// before entering the application's market-data event bus.
+///
+/// TODO:
+/// Replace primitive price/quantity values with canonical `Price` and
+/// `Quantity` types once the strong-type cleanup is completed.
+#[derive(Clone, Debug)]
+pub struct TapeTrade {
     pub symbol: String,
 
-    #[serde(rename = "p")]
+    /// Price at which the public trade executed.
     pub price: f64,
 
-    #[serde(rename = "s")]
-    pub size: u64,
+    /// Quantity executed in the public trade.
+    ///
+    /// `f64` is temporarily used because quantities may be fractional,
+    /// especially for crypto and fractional equities.
+    pub size: f64,
 
-    #[serde(rename = "t")]
-    pub timestamp: String,
+    /// Venue-provided event timestamp normalized to Unix milliseconds.
+    pub timestamp_ms: i64,
 }
 
-#[allow(dead_code)]
-#[derive(Clone, Debug, Deserialize)]
+/// Canonical best bid/ask market quote.
+///
+/// This contains the top of the order book rather than an execution.
+///
+/// Strategies may derive midpoint, spread, liquidity, or other values from
+/// this structure without depending on venue-specific market-data formats.
+///
+/// TODO:
+/// Replace primitive price/quantity values with canonical `Price` and
+/// `Quantity` types once the strong-type cleanup is completed.
+#[derive(Clone, Debug)]
 pub struct Quote {
-    #[serde(rename = "S")]
     pub symbol: String,
 
-    #[serde(rename = "bp")]
+    /// Highest currently available bid price.
     pub bid_price: f64,
 
-    #[serde(rename = "ap")]
+    /// Lowest currently available ask price.
     pub ask_price: f64,
 
-    #[serde(rename = "bs")]
-    pub bid_size: u64,
+    /// Quantity available at the best bid.
+    pub bid_size: f64,
 
-    #[serde(rename = "as")]
-    pub ask_size: u64,
+    /// Quantity available at the best ask.
+    pub ask_size: f64,
 
-    #[serde(rename = "t")]
-    pub timestamp: String,
+    /// Venue-provided event timestamp normalized to Unix milliseconds.
+    pub timestamp_ms: i64,
 }
 
-#[allow(dead_code)]
+impl Quote {
+    /// Midpoint between the current best bid and ask.
+    pub fn mid_price(&self) -> f64 {
+        (self.bid_price + self.ask_price) / 2.0
+    }
+
+    /// Absolute bid/ask spread.
+    pub fn spread(&self) -> f64 {
+        self.ask_price - self.bid_price
+    }
+
+    /// Bid/ask spread as a percentage of the midpoint.
+    pub fn spread_percent(&self) -> f64 {
+        let mid = self.mid_price();
+
+        if mid <= 0.0 {
+            return 0.0;
+        }
+
+        (self.spread() / mid) * 100.0
+    }
+}
+
+/// Canonical completed OHLCV candle/bar.
+///
+/// Bars are provider-independent and may be produced from live tape data,
+/// historical data, or another normalized market-data source.
 #[derive(Clone, Debug)]
 pub struct Bar {
     pub symbol: String,
 
-    // The candle timeframe that produced this bar.
+    /// Candle timeframe that produced this bar.
     pub timeframe: Timeframe,
 
+    /// Inclusive beginning of the candle interval.
     pub start: DateTime<Utc>,
+
+    /// End of the candle interval.
     pub end: DateTime<Utc>,
 
     pub open: f64,
@@ -86,10 +142,17 @@ pub struct Bar {
     pub low: f64,
     pub close: f64,
 
-    pub volume: u64,
+    /// Total quantity traded during the candle.
+    pub volume: f64,
+
+    /// Number of public trades included in the candle.
     pub trade_count: u64,
 
-    // Exact sum of price * trade size for every raw trade
-    // inside this candle. Used to calculate exact VWAP.
+    /// Exact sum of `trade_price * trade_size` for every tape trade
+    /// included in the candle.
+    ///
+    /// VWAP can therefore be calculated as:
+    ///
+    /// `price_volume_sum / volume`
     pub price_volume_sum: f64,
 }
