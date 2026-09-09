@@ -1,59 +1,137 @@
 #![allow(dead_code)]
 
+use crate::core::{
+    execution::order::{
+        OrderType,
+        TimeInForce,
+    },
+    trades::Direction,
+};
+
+/// Strategy request to create a new directional trade.
+///
+/// `TradeIntent` describes:
+///
+/// - what directional exposure the strategy wants
+/// - how the initial entry should be executed
+/// - optional trade-level risk rules
+///
+/// It does not represent an exchange order itself.
+///
+/// The engine converts this intent into:
+///
+/// TradeIntent
+///     -> Trade
+///     -> RiskReservation
+///     -> Order
+///     -> ExecCommand
+///
+/// TODO: Replace temporary primitive types with canonical strongly typed values:
+///
+/// - `String` strategy ID -> `StrategyId`
+/// - `String` symbol -> `Symbol`
+/// - `f64` prices -> `Price`
+/// - `f64` monetary values -> `Money`
 #[derive(Debug, Clone)]
 pub struct TradeIntent {
-    /// Name of the strategy generating this intent (e.g. "MeanReversion")
-    pub strategy: String,
+    /// Strategy generating this trade request.
+    ///
+    /// TODO: Replace with `StrategyId`.
+    pub strategy_id: String,
 
-    /// Trading stock symbol (e.g. "AAPL")
+    /// Instrument to trade.
+    ///
+    /// TODO: Replace with canonical `Symbol`.
     pub symbol: String,
 
-    /// Direction of the trade: true = long, false = short
-    pub is_long: bool,
+    /// Directional exposure requested by the strategy.
+    pub direction: Direction,
 
-    /// Current midprice at the moment the intent is generated
-    pub price: f64,
+    /// Market/reference price observed when the strategy generated the intent.
+    ///
+    /// This is useful for recording strategy signal price and diagnostics.
+    ///
+    /// TODO: Replace with `Price`.
+    pub signal_px: f64,
 
-    /// Amount to use for trade 
-    pub trade_amount_usd: f64,
+    /// Requested notional size of the trade.
+    ///
+    /// TODO: Replace with `Money`.
+    pub target_notional: f64,
 
-    // @todo delete entry_percent. The engine does not need it and some
-    // strategies might never even use entry_percent to enter a trade at all
+    // ============================================================
+    // ENTRY EXECUTION
+    // ============================================================
 
-    /// Percent threshold hit to trigger entry (e.g. 3.2 meaning +3.2%)
-    pub entry_percent: f64,
+    /// Type of order to use for the initial entry.
+    pub order_type: OrderType,
 
-    // @todo make this exit_profit_percent a Option and update the engine. Strategies should
-    // the option to exit by exit_profit_percent or any other indicator 
-    // the want or not to use them at all.
+    /// Time-in-force applied to the entry order.
+    pub time_in_force: TimeInForce,
 
-    /// Desired take-profit percentage for exit
-    pub exit_profit_percent: f64,
+    /// Limit price when required by the selected `OrderType`.
+    ///
+    /// Expected for:
+    ///
+    /// - `OrderType::Limit`
+    /// - `OrderType::StopLimit`
+    ///
+    /// TODO: Replace with `Option<Price>`.
+    pub limit_px: Option<f64>,
 
-    // @todo make this exit_loss_percent a Option and update the engine. Strategies should
-    // the option to exit by exit_loss_percent or any other indicator 
-    // the want or not to use them at all.
+    /// Stop trigger price when required by the selected `OrderType`.
+    ///
+    /// Expected for:
+    ///
+    /// - `OrderType::StopMarket`
+    /// - `OrderType::StopLimit`
+    ///
+    /// TODO: Replace with `Option<Price>`.
+    pub stop_px: Option<f64>,
 
-    /// Percent stop-loss (normal SL)
-    pub exit_loss_percent: f64,
+    /// Prevents the entry order from immediately taking liquidity when
+    /// supported by the execution venue.
+    pub post_only: bool,
 
-    // @todo make emergency_exit_percent an Option and update the engine (see reasons above)
+    /// Normally false for entry orders.
+    ///
+    /// Included so canonical order construction can remain universal.
+    pub reduce_only: bool,
 
-    /// Emergency stop-loss (hard SL if price collapses)
-    pub emergency_exit_percent: f64,
+    // ============================================================
+    // TRADE RISK PLAN
+    // ============================================================
 
-    // @todo make min_sl_delay an Option and update the engine (see reasons above)
+    /// Optional take-profit percentage managed by the engine.
+    ///
+    /// `None` means the strategy does not use the engine's percentage-based
+    /// take-profit logic.
+    pub take_profit_percent: Option<f64>,
 
-    /// Delay in seconds before stop-loss checks are enabled
-    pub min_sl_delay: u64,
+    /// Optional normal stop-loss percentage managed by the engine.
+    ///
+    /// `None` means no engine-managed percentage stop loss.
+    pub stop_loss_percent: Option<f64>,
 
-    /// Whether time-based auto-close is enabled
-    pub enable_trade_duration: bool,
+    /// Optional emergency stop-loss percentage.
+    ///
+    /// `None` disables the engine-managed emergency stop.
+    pub emergency_stop_percent: Option<f64>,
 
-    /// Optional limit for how long a trade may stay open
-    /// If Some(x), trade auto-closes after x seconds.
-    pub trade_duration_secs: Option<u64>,
+    /// Optional delay before the normal stop-loss becomes active.
+    ///
+    /// For example, `Some(30)` means the normal stop-loss cannot trigger
+    /// until 30 seconds after the trade becomes open.
+    pub stop_loss_delay_secs: Option<u64>,
 
-    /// Timestamp of intent in milliseconds
+    /// Optional maximum lifetime of the trade.
+    ///
+    /// `None` means there is no engine-managed duration exit.
+    pub max_duration_secs: Option<u64>,
+
+    /// Event timestamp when the strategy generated the intent.
+    ///
+    /// Live trading uses live event time while historical replay uses the
+    /// original historical timestamp.
     pub ts_ms: i64,
 }
