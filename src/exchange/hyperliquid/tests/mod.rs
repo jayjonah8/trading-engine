@@ -1,0 +1,1 @@
+mod fast_price_feed;

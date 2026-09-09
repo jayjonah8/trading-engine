@@ -18,27 +18,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "alpaca-bot"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-trait",
- "chrono",
- "chrono-tz",
- "dotenvy",
- "futures",
- "futures-util",
- "ibapi",
- "reqwest 0.12.28",
- "serde",
- "serde_json",
- "serenity",
- "slack-morphism",
- "tokio",
- "tokio-tungstenite",
-]
-
-[[package]]
 name = "android_system_properties"
 version = "0.1.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2758,6 +2737,27 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "db97caf9d906fbde555dd62fa95ddba9eecfd14cb388e4f491a66d74cd5fb79a"
 dependencies = [
  "once_cell",
+]
+
+[[package]]
+name = "trading-engine"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "chrono",
+ "chrono-tz",
+ "dotenvy",
+ "futures",
+ "futures-util",
+ "ibapi",
+ "reqwest 0.12.28",
+ "serde",
+ "serde_json",
+ "serenity",
+ "slack-morphism",
+ "tokio",
+ "tokio-tungstenite",
 ]
 
 [[package]]
