@@ -13,6 +13,7 @@ pub use order::{
     Order,
     OrderId,
     OrderPurpose,
+    Orders,
     OrderState,
     OrderType,
     TimeInForce,
