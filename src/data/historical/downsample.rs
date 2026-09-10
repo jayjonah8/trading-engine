@@ -5,7 +5,7 @@ use std::{
     time::Duration,
 };
 
-use crate::backtest::types::HistoricalTrade;
+use crate::data::historical::types::HistoricalTrade;
 
 // Reduces dense raw trade data using fixed time windows for each symbol.
 // Only the last trade from each window is kept, preserving the latest price

@@ -2,7 +2,6 @@ mod core;
 mod exchange;
 //mod strategies;
 mod indicators;
-mod backtest;
 mod market;
 mod shared;
 mod notifications;
