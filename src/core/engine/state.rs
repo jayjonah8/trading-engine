@@ -110,3 +110,29 @@ impl Default for EngineState {
         Self::new(RiskLimits::default())
     }
 }
+
+// ============================================================
+// CURRENT TRADING MODE
+// ============================================================
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExecutionMode {
+    Live,
+    Backtest, 
+    Simulation,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TradingPhase {
+    Normal,
+    ClosingTrades 
+}
+
+// ============================================================
+// last_px HASH VALUE
+// ============================================================
+#[derive(Debug, Clone, Copy)]
+pub struct LastPrice {
+    pub px: f64,
+    pub ts_ms: i64,
+}

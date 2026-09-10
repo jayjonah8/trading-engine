@@ -18,12 +18,12 @@ use tokio::{
 };
 
 use crate::{
-    backtest::{
-        alpaca::{
-            downsample_trades,
+    data::historical::{
+        alpaca::fetch::{
             fetch_historical_trades,
             HistoricalFetchConfig,
         },
+        downsample::downsample_trades,
         types::HistoricalTrade,
     },
 
@@ -31,9 +31,8 @@ use crate::{
         AppEvent,
         AppEventEnvelope,
         Bar,
-        Trade,
+        TapeTrade,
     },
-
 };
 
 use tokio::sync::{
@@ -41,12 +40,12 @@ use tokio::sync::{
     oneshot,
 };
 
-use crate::backtest::strategy_event::BacktestStrategyEvent;
-
-use crate::core::{
-    engine::EngineEvent,
-    engine_shared::engine_event_mapper::map_app_to_backtest_engine_event,
+use crate::data::historical::{
+    alpaca::event_mapper::map_app_to_backtest_engine_event,
+    strategy_event::BacktestStrategyEvent,
 };
+
+use crate::core::engine::engine::EngineEvent;
 
 // Fetches raw historical trades, builds accurate candles from the full
 // trade stream, downsamples the trades for strategy replay, then merges
@@ -270,8 +269,8 @@ pub async fn run_backtest_feed(
                             symbol.clone(),
 
                         event:
-                            AppEvent::Trade(
-                                Trade {
+                            AppEvent::TapeTrade(
+                                TapeTrade {
                                     symbol,
 
                                     price:
@@ -280,9 +279,8 @@ pub async fn run_backtest_feed(
                                     size:
                                         trade.size,
 
-                                    timestamp:
-                                        trade.timestamp
-                                            .to_rfc3339(),
+                                    timestamp_ms: trade.timestamp.timestamp_millis(),
+                                      
                                 }
                             ),
                     }

@@ -16,10 +16,6 @@ use crate::data::historical::{
 };
 
 
-// ============================================================
-// HISTORICAL FETCH CONFIG
-// ============================================================
-
 #[derive(Debug, Clone)]
 pub struct HistoricalFetchConfig {
     // Maximum number of trades Alpaca should return in a single API request/page.
@@ -33,9 +29,26 @@ pub struct HistoricalFetchConfig {
 
     // How long to wait before requesting the next page from Alpaca.
     //
-    // This throttles requests so large historical downloads do not hammer
-    // Alpaca's API or run into request-rate limits.
+    // This throttles our requests so a large backtest doesn't hammer the API
+    // and run into Alpaca's request-rate limits.
+    //
+    // 750ms = at most ~80 requests/minute from this fetch loop.
     pub delay_between_requests: Duration,
+
+    // Minimum amount of historical time that must pass before we keep
+    // another trade for the SAME symbol.
+    //
+    // Example:
+    // Duration::from_millis(100)
+    //
+    // AAPL @ 13:30:00.000 -> keep
+    // AAPL @ 13:30:00.020 -> remove
+    // AAPL @ 13:30:00.080 -> remove
+    // AAPL @ 13:30:00.101 -> keep
+    //
+    // Trades from OTHER symbols are handled independently.
+    pub min_trade_interval: Duration,
+
 }
 
 impl Default for HistoricalFetchConfig {
@@ -43,6 +56,7 @@ impl Default for HistoricalFetchConfig {
         Self {
             page_limit: 10_000,
             delay_between_requests: Duration::from_millis(250),
+            min_trade_interval: Duration::from_millis(300),
         }
     }
 }

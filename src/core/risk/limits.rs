@@ -34,14 +34,6 @@ pub struct RiskLimits {
     ///
     /// TODO: Replace with `Money`.
     pub max_symbol_notional: Option<f64>,
-
-    /// Maximum leverage permitted by engine risk policy.
-    ///
-    /// Example:
-    ///
-    /// `1.0` = no leverage
-    /// `2.0` = up to 2x account equity
-    pub max_leverage: Option<f64>,
 }
 
 impl RiskLimits {
@@ -51,7 +43,6 @@ impl RiskLimits {
             max_order_notional: None,
             max_gross_notional: None,
             max_symbol_notional: None,
-            max_leverage: None,
         }
     }
 }

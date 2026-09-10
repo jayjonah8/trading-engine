@@ -12,24 +12,21 @@ use tokio::sync::{
 };
 
 use crate::core::{
-    config::Config,
-    engine::{
+    config::Config, engine::{
         shared::{
             get_execution_mode,
             verify_engine_config,
+        },
+        state::{
+            EngineState,
             ExecutionMode,
         },
-        state::EngineState,
-    },
-    engine_view::EngineView,
-    execution::{
+    }, engine_view::EngineView, execution::{
         ExecCommand,
         ExecEvent,
         OrderChanges,
         OrderId,
-    },
-    risk::RiskLimits,
-    trade_intent::TradeIntent,
+    }, general::General, risk::RiskLimits, trade_intent::TradeIntent,
 };
 
 use crate::notifications::env_helpers::validate_notification_env;
@@ -66,49 +63,37 @@ pub enum EngineEvent {
     OpenTrade(TradeIntent),
 
     /// Requests cancellation of an active engine order.
-    CancelOrder {
-        order_id: OrderId,
-        reason: String,
-    },
+    CancelOrder { order_id: OrderId, reason: String },
 
     /// Requests replacement/modification of an active engine order.
-    ReplaceOrder {
-        order_id: OrderId,
-        quantity: Option<f64>,
-        limit_px: Option<f64>,
-        stop_px: Option<f64>,
-        reason: String,
-    },
+    ReplaceOrder { order_id: OrderId, quantity: Option<f64>, limit_px: Option<f64>, stop_px: Option<f64>, reason: String },
 
     /// Requests closure of one strategy trade associated with a symbol.
     ///
     /// TODO: Eventually prefer `TradeId` once strategies and EngineView expose
     /// canonical trade identity directly.
-    CloseSingleTrade {
-        symbol: String,
-        reason: String,
-    },
+    CloseSingleTrade { symbol: String, reason: String },
 
     /// Requests closure of all active directional trades.
-    CloseAllTrades {
-        reason: String,
-    },
+    CloseAllTrades { reason: String },
 
     /// Market-price update used for valuation and strategy-level risk logic.
     ///
     /// `ts_ms` is always event time. During live trading this is live market
     /// time; during backtesting this is historical replay time.
-    PriceTick {
-        symbol: String,
-        px: f64,
-        ts_ms: i64,
-    },
+    PriceTick { symbol: String, px: f64, ts_ms: i64 },
 
-    /// Synchronization barrier primarily useful for deterministic testing and
-    /// historical replay.
-    Barrier {
-        done: oneshot::Sender<()>,
-    },
+    /// Historical market-price update used during backtesting.
+    ///
+    /// Uses the original historical timestamp so risk checks and
+    /// trade behavior remain tied to replay time instead of wall time.
+    PriceTickBacktest { symbol: String, px: f64, ts_ms: i64 },
+
+    /// Backtest synchronization barrier.
+    ///
+    /// Confirms that all EngineEvents queued before this event
+    /// have been processed before the backtest continues.
+    BacktestBarrier { done: oneshot::Sender<()> },
 }
 
 /// Main authoritative trading engine.
@@ -122,6 +107,8 @@ pub enum EngineEvent {
 pub struct Engine {
     /// Static/runtime engine configuration.
     pub cfg: Config,
+
+    pub general: General,
 
     /// Canonical execution, position, trade, and risk state.
     pub state: EngineState,
@@ -174,18 +161,23 @@ impl Engine {
         // ============================================================
 
         // TODO:
-        // Move this construction into something like:
-        //
-        //     cfg.risk_limits()
-        //
-        // once Config itself is cleaned up.
+        // Move this construction into the Config
         let risk_limits = RiskLimits {
             max_active_trades: Some(cfg.max_gross_positions),
             max_order_notional: None,
             max_gross_notional: None,
             max_symbol_notional: None,
-            max_leverage: Some(cfg.default_leverage as f64),
         };
+
+        // ============================================================
+        // INITIALIZE GENERAL STATE
+        // ============================================================
+        let general =
+            General {
+                realized_pnl: 0.0,
+                sim_realized_pnl: 0.0,
+                account_balance: 0.0, // @todo must get acount balance based on the venue / exchange
+            };
 
         // ============================================================
         // ENGINE
@@ -193,6 +185,7 @@ impl Engine {
 
         let engine = Self {
             cfg,
+            general,
             state: EngineState::new(risk_limits),
             last_px: HashMap::new(),
             tx_view,
@@ -200,8 +193,8 @@ impl Engine {
             tx_exec,
             execution_mode,
             trading_phase: TradingPhase::Normal,
-            owner_by_symbol: HashMap::new(),
-            last_decision_ts: HashMap::new(),
+            // owner_by_symbol: HashMap::new(),
+            // last_decision_ts: HashMap::new(),
             debug_mode: true,
         };
 
@@ -221,6 +214,7 @@ impl Engine {
     fn publish_view(&self) {
         let view = EngineView::from_parts(
             &self.cfg,
+            &self.general,
             &self.state,
         );
 
@@ -237,75 +231,39 @@ impl Engine {
     pub fn on_event(&mut self, event: EngineEvent) {
         match event {
             EngineEvent::OpenTrade(intent) => {
-                self.handle_open_trade(intent);
+                // self.handle_open_trade(intent);
             }
 
-            EngineEvent::CancelOrder {
-                order_id,
-                reason,
-            } => {
-                self.handle_cancel_order(order_id, reason);
+            EngineEvent::CancelOrder { order_id, reason } => {
+                // self.handle_cancel_order(order_id, reason);
             }
 
-            EngineEvent::ReplaceOrder {
-                order_id,
-                quantity,
-                limit_px,
-                stop_px,
-                reason,
-            } => {
-                let changes = OrderChanges {
-                    quantity,
-                    limit_px,
-                    stop_px,
-                };
-
-                self.handle_replace_order(
-                    order_id,
-                    changes,
-                    reason,
-                );
+            EngineEvent::ReplaceOrder { order_id, quantity, limit_px, stop_px, reason } => {
+                let changes = OrderChanges { quantity, limit_px, stop_px };
+                // self.handle_replace_order(order_id, changes, reason);
             }
 
-            EngineEvent::CloseSingleTrade {
-                symbol,
-                reason,
-            } => {
-                self.handle_close_single_trade(
-                    symbol,
-                    reason,
-                );
+            EngineEvent::CloseSingleTrade { symbol, reason } => {
+                // self.handle_close_single_trade(symbol, reason);
             }
 
-            EngineEvent::CloseAllTrades {
-                reason,
-            } => {
-                self.handle_close_all_trades(reason);
+            EngineEvent::CloseAllTrades { reason } => {
+                // self.handle_close_all_trades(reason);
             }
 
-            EngineEvent::PriceTick {
-                symbol,
-                px,
-                ts_ms,
-            } => {
-                self.last_px.insert(
-                    symbol.clone(),
-                    LastPrice {
-                        px,
-                        ts_ms,
-                    },
-                );
-
-                self.check_risk_for_symbol(
-                    &symbol,
-                    px,
-                    ts_ms,
-                );
+            EngineEvent::PriceTick { symbol, px, ts_ms } => {
+                self.last_px.insert(symbol.clone(), LastPrice { px, ts_ms });
+                // self.check_risk_for_symbol(&symbol, px, ts_ms);
             }
 
-            EngineEvent::Barrier {
-                done,
-            } => {
+            EngineEvent::PriceTickBacktest { symbol, px, ts_ms } => {
+                let sym = symbol.clone();
+
+                self.last_px.insert(symbol, LastPrice { px, ts_ms });
+                // self.check_risk_for_backtest_symbol(&sym, px, ts_ms);
+            }
+
+            EngineEvent::BacktestBarrier { done } => {
                 let _ = done.send(());
             }
         }
@@ -327,35 +285,35 @@ impl Engine {
     ) {
         match event {
             ExecEvent::OrderAccepted { .. } => {
-                self.handle_order_accepted(event);
+                // self.handle_order_accepted(event);
             }
 
             ExecEvent::OrderWorking { .. } => {
-                self.handle_order_working(event);
+                // self.handle_order_working(event);
             }
 
             ExecEvent::Fill { .. } => {
-                self.handle_exec_fill(event);
+                // self.handle_exec_fill(event);
             }
 
             ExecEvent::OrderCanceled { .. } => {
-                self.handle_order_canceled(event);
+                // self.handle_order_canceled(event);
             }
 
             ExecEvent::OrderExpired { .. } => {
-                self.handle_order_expired(event);
+                // self.handle_order_expired(event);
             }
 
             ExecEvent::OrderRejected { .. } => {
-                self.handle_order_rejected(event);
+                // self.handle_order_rejected(event);
             }
 
             ExecEvent::OrderReplaced { .. } => {
-                self.handle_order_replaced(event);
+                // self.handle_order_replaced(event);
             }
 
             ExecEvent::Error { .. } => {
-                self.handle_exec_error(event);
+                // self.handle_exec_error(event);
             }
         }
 

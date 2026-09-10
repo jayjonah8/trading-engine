@@ -22,10 +22,11 @@ async fn test_get_alpaca_historical_trades() {
 
     // Uses custom settings for the test
     // - up to 10,000 trades per API request
-    // - waits 500ms between paginated requests
+    // - waits 750ms between paginated requests
     let fetch_config = HistoricalFetchConfig {
         page_limit: 10_000,
         delay_between_requests: Duration::from_millis(500),
+        min_trade_interval: Duration::from_millis(300),
     };
 
     let trades = fetch_historical_trades(
