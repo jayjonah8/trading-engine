@@ -29,20 +29,25 @@ pub enum CandleFeedError {
 
 
 // ============================================================
-// PROCESS TAPE TRADE FOR CANDLES
+// PROCESS LIVE TAPE TRADE FOR CANDLES
 // ============================================================
 
-/// Feeds one canonical tape trade into the shared CandleManager.
+/// Feeds one canonical live tape trade into the shared `CandleManager`.
 ///
-/// This is intentionally provider-independent.
+/// This helper is provider-independent and should be used by live market-data
+/// providers such as Hyperliquid, Alpaca, IBKR, Databento, and future venues.
 ///
-/// Hyperliquid, Alpaca, IBKR, Databento, and future market-data
-/// providers should all use this same path for live candle construction.
+/// The venue's actual trade timestamp is used for candle placement. Any
+/// completed candles are immediately published as canonical
+/// `AppEvent::BarClosed` events through the master event channel.
 ///
-/// The venue's actual trade timestamp is used for candle placement.
+/// IMPORTANT: Do NOT use this helper for historical/backtest feeds.
 ///
-/// Completed candles are published as canonical `AppEvent::BarClosed`
-/// events through the master event channel.
+/// Historical backtests must build candles directly through `CandleManager`
+/// from the complete raw trade stream, collect the completed bars, then merge
+/// them with historical trade events and sort the combined replay timeline.
+/// Publishing candles immediately through this helper would bypass that
+/// deterministic historical replay ordering.
 pub fn process_trade_for_candles(
     candle_manager: &mut CandleManager,
     tx_master: &UnboundedSender<AppEventEnvelope>,
