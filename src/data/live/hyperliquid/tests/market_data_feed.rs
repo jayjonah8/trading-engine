@@ -14,7 +14,7 @@ use crate::{
         config::Config,
         events::AppEvent,
     },
-    exchange::hyperliquid::market_data::run_hyperliquid_feed,
+    data::live::hyperliquid::market_data::run_hyperliquid_feed,
 };
 
 // Run test:

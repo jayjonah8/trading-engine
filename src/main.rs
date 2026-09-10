@@ -6,6 +6,7 @@ mod backtest;
 mod market;
 mod shared;
 mod notifications;
+mod data;
 
 use std::sync::Arc;
 

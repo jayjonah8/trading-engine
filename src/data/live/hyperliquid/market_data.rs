@@ -24,7 +24,7 @@ use crate::{
         },
     },
 
-    exchange::hyperliquid::market_data_ws::{
+    data::live::hyperliquid::market_data_ws::{
         connect_hyperliquid_market_data_ws,
         sleep_and_increase_backoff,
         INITIAL_BACKOFF_SECS,
