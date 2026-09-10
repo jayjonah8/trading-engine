@@ -1,11 +1,11 @@
 #![allow(dead_code)]
 
-use crate::backtest::types::{
-    HistoricalTrade,
+use std::{
+    collections::HashMap,
+    time::Duration,
 };
 
-use std::time::Duration;
-use std::collections::HashMap;
+use crate::backtest::types::HistoricalTrade;
 
 // Reduces dense raw trade data using fixed time windows for each symbol.
 // Only the last trade from each window is kept, preserving the latest price

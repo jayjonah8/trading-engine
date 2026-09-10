@@ -4,16 +4,14 @@ use std::time::Duration;
 
 use tokio::time::sleep;
 
-use crate::data::historical::{
-    alpaca::types::{
-        AlpacaBarsResponse,
-        AlpacaTradesResponse,
-    },
+use crate::backtest::types::{
+    HistoricalBar,
+    HistoricalTrade,
+};
 
-    types::{
-        HistoricalBar,
-        HistoricalTrade,
-    },
+use crate::data::historical::alpaca::types::{
+    AlpacaBarsResponse,
+    AlpacaTradesResponse,
 };
 
 
