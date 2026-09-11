@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 /// Unique key identifying an actual venue position.
 ///
 /// Positions are keyed by venue, account, and symbol rather than symbol alone

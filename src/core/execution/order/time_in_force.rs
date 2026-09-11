@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 /// Controls how long an order remains active and how unfilled quantity
 /// should be handled by the execution venue.
 ///

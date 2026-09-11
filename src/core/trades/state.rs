@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 /// Lifecycle state of a strategy trade.
 ///
 /// `TradeState` represents the logical strategy-level lifecycle of a trade,

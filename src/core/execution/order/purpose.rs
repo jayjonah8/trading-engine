@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 /// Describes why an order exists from the engine's perspective.
 ///
 /// `OrderPurpose` is engine-owned metadata and is not necessarily sent to the

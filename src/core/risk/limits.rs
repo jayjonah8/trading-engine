@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 /// Configured limits used by the engine's risk system.
 ///
 /// `RiskLimits` contains policy values only. It does not inspect engine state

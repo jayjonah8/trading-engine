@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use std::fmt;
 
 /// Internal engine identifier for an order.

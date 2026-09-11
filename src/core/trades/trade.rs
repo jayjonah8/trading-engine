@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use std::time::{Instant, SystemTime};
 
 use crate::core::trades::{

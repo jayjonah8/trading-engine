@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use crate::core::positions::key::PositionKey;
 
 /// Canonical engine representation of an actual venue position.

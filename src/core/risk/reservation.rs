@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use crate::core::{
     execution::order::OrderId,
     trades::TradeId,

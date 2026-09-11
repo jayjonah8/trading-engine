@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 /// Execution type of an order.
 ///
 /// `OrderType` describes how an order becomes executable at a venue.

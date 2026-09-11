@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 /// Lifecycle state of an order inside the trading engine.
 ///
 /// Partial fills are intentionally NOT represented as a separate state.

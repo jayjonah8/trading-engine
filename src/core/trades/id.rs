@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use std::fmt;
 
 // TradeId(17)                 Logical strategy trade

@@ -2,14 +2,9 @@
 
 #[derive(Debug, Default, Clone)]
 pub struct Config {
-    /// List of trading strategies that are enabled and allowed to run.
-    pub enabled_strategies: Vec<String>,
-
+   
     /// List of market symbols/assets the bot is allowed to trade.
     pub symbols: Vec<String>,
-
-    /// Minimum cooldown time in milliseconds before a symbol can be traded again.
-    pub cooldown_ms: i64,
 
     /// Maximum number of positions the bot can have open at the same time.
     pub max_gross_positions: usize,

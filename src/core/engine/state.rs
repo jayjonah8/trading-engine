@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use crate::core::{
     execution::{
         FillLedger,
@@ -14,6 +16,26 @@ use crate::core::{
         Trades,
     },
 };
+
+
+// EngineState
+// │
+// ├── Orders
+// │    └── what we asked venues to execute
+// │
+// ├── FillLedger
+// │    └── what actually executed
+// │
+// ├── Positions
+// │    └── actual venue/account exposure
+// │
+// ├── Trades
+// │    └── strategy lifecycle
+// │
+// └── RiskState
+//      ├── RiskLimits
+//      └── RiskReservations
+
 
 /// Authoritative mutable state owned by the trading engine.
 ///
