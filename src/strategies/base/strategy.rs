@@ -138,7 +138,7 @@ impl Strategy for BaseStrategy {
             AppEvent::TapeTrade(trade) => {
                 print_log(
                     self.debug_mode,
-                    true,
+                    false,
                     format!(
                         "[BaseStrategy][{}] TRADE | price=${:.2} | size={} | timestamp_ms={}",
                         ev.symbol,
@@ -170,6 +170,20 @@ impl Strategy for BaseStrategy {
                 // → inspect EngineView
                 // → construct canonical TradeIntent
                 // → EngineEvent::OpenTrade
+
+                print_log(
+                    self.debug_mode,
+                    true,
+                    format!(
+                        "[BaseStrategy][{}] QUOTE | bid=${:.4} ({}) | ask=${:.4} ({}) | timestamp_ms={}",
+                        ev.symbol,
+                        quote.bid_price,
+                        quote.bid_size,
+                        quote.ask_price,
+                        quote.ask_size,
+                        quote.timestamp_ms,
+                    ),
+                );
 
 
                 // ====================================================
