@@ -102,10 +102,18 @@ async fn main() -> Result<()> {
         ],
 
         symbols: vec![
-            "AAPL".to_string(),
-            "MSFT".to_string(),
-            "NVDA".to_string(),
+            "BTC".to_string(),
+            "ETH".to_string(),
+            "SOL".to_string(),
+            "HYPE".to_string(),
+            "ZEC".to_string(),
         ],
+
+        // symbols: vec![
+        //     "AAPL".to_string(),
+        //     "MSFT".to_string(),
+        //     "NVDA".to_string(),
+        // ],
 
         cooldown_ms: 1_000,
 
@@ -115,7 +123,7 @@ async fn main() -> Result<()> {
 
         enable_simulation_mode: false,
 
-        enable_backtest_mode: true,
+        enable_backtest_mode: false,
 
         backtest_starting_balance: 100_000.0,
 
@@ -488,9 +496,10 @@ async fn main() -> Result<()> {
 
     let market_data_cfg = cfg.clone();
 
-        data::live::alpaca::market_data::run_alpaca_feed(
-            market_data_cfg,
+        data::live::hyperliquid::market_data::run_hyperliquid_feed(
+            market_data_cfg.clone(),
             tx_master,
+            market_data_cfg.symbols.clone(),
         )
         .await
         .map_err(
@@ -498,6 +507,17 @@ async fn main() -> Result<()> {
                 e.to_string()
             )
         )?;
+
+        // data::live::alpaca::market_data::run_alpaca_feed(
+        //     market_data_cfg,
+        //     tx_master,
+        // )
+        // .await
+        // .map_err(
+        //     |e| anyhow::anyhow!(
+        //         e.to_string()
+        //     )
+        // )?;
     }
 
     Ok(())
