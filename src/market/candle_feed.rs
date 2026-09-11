@@ -16,6 +16,8 @@ use crate::{
     market::candle_manager::CandleManager,
 };
 
+use std::fmt;
+
 
 // ============================================================
 // CANDLE FEED ERROR
@@ -26,6 +28,22 @@ pub enum CandleFeedError {
     InvalidTimestamp,
     MasterChannelClosed,
 }
+
+impl fmt::Display for CandleFeedError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::InvalidTimestamp => {
+                write!(f, "invalid candle trade timestamp")
+            }
+
+            Self::MasterChannelClosed => {
+                write!(f, "master event channel closed")
+            }
+        }
+    }
+}
+
+impl std::error::Error for CandleFeedError {}
 
 
 // ============================================================

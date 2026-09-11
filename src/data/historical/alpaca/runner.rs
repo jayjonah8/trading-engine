@@ -43,7 +43,7 @@ use tokio::sync::{
 };
 
 use crate::data::historical::{
-    alpaca::event_mapper::map_app_to_backtest_engine_event,
+    event_mapper::map_app_to_backtest_engine_event,
     strategy_event::BacktestStrategyEvent,
 };
 
@@ -52,7 +52,7 @@ use crate::core::engine::engine::EngineEvent;
 // Fetches raw historical trades, builds accurate candles from the full
 // trade stream, downsamples the trades for strategy replay, then merges
 // trades and closed candles into one chronological backtest event stream.
-pub async fn run_backtest_feed(
+pub async fn run_alpaca_backtest_feed(
     tx_backtest_strategies:
         &[Sender<BacktestStrategyEvent>],
 

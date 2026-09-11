@@ -4,3 +4,4 @@ pub mod downsample;
 pub mod hyperliquid;
 pub mod strategy_event;
 pub mod types;
+pub mod event_mapper;
