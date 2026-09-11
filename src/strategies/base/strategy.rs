@@ -171,12 +171,19 @@ impl Strategy for BaseStrategy {
                 // → construct canonical TradeIntent
                 // → EngineEvent::OpenTrade
 
+                // Use the midpoint between the current best bid and ask
+                // as the strategy's current reference market price.
+                let mid =
+                    (quote.bid_price + quote.ask_price) / 2.0;
+
+
                 print_log(
                     self.debug_mode,
                     true,
                     format!(
-                        "[BaseStrategy][{}] QUOTE | bid=${:.4} ({}) | ask=${:.4} ({}) | timestamp_ms={}",
+                        "[BaseStrategy][{}] QUOTE | mid=${:.4} | bid=${:.4} ({}) | ask=${:.4} ({}) | timestamp_ms={}",
                         ev.symbol,
+                        mid,
                         quote.bid_price,
                         quote.bid_size,
                         quote.ask_price,
@@ -204,12 +211,6 @@ impl Strategy for BaseStrategy {
 
                     return;
                 };
-
-
-                // Use the midpoint between the current best bid and ask
-                // as the strategy's current reference market price.
-                let mid =
-                    (quote.bid_price + quote.ask_price) / 2.0;
 
 
                 // ====================================================
