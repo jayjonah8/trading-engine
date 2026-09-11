@@ -11,7 +11,7 @@ use tokio::sync::{
 
 use crate::{
     core::{
-        engine::EngineEvent,
+        engine::engine::EngineEvent,
         engine_view::EngineView,
         events::{
             AppEvent,
@@ -116,7 +116,7 @@ impl Strategy
             // LIVE TRADE
             // ================================================
 
-            AppEvent::Trade(trade) => {
+            AppEvent::TapeTrade(trade) => {
                 if self.debug_mode {
                     println!(
                         "[MEAN REVERSION LIVE TRADE][{}] \

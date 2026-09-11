@@ -13,11 +13,10 @@ use tokio::sync::{
 };
 
 use crate::core::{
-    engine::EngineEvent,
+    engine::engine::EngineEvent,
     engine_view::EngineView,
     events::AppEventEnvelope,
 };
-
 #[derive(Clone, Debug)]
 pub enum StrategyKind {
     Base,

@@ -14,7 +14,7 @@ use tokio::sync::{
 
 use crate::{
     core::{
-        engine::EngineEvent,
+        engine::engine::EngineEvent,
         engine_view::EngineView,
     },
 

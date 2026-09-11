@@ -64,8 +64,7 @@ impl Trades {
     /// Active trades include trades that are `Opening`, `Open`, or `Closing`.
     ///
     /// This should NOT be used by itself for production risk gating because
-    /// working orders may reserve exposure before a trade becomes active.
-    /// `RiskState` accounts for both established and reserved exposure.
+    /// `RiskState` also accounts for reserved exposure from working orders.
     pub fn count_active(&self) -> usize {
         self.trades.values().filter(|trade| trade.state.is_active()).count()
     }

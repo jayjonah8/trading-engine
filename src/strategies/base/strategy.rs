@@ -1,46 +1,65 @@
-use std::collections::HashMap;
-use std::sync::Arc;
-use std::time::Instant;
-use chrono::Utc;
+#![allow(dead_code)]
+
+use std::{
+    collections::HashMap,
+    sync::Arc,
+    time::Instant,
+};
+
+use chrono::{
+    DateTime,
+    Utc,
+};
 
 use tokio::sync::{
     mpsc::UnboundedSender as TokioUnboundedSender,
     watch,
 };
 
-use crate::core::{
-    engine::EngineEvent,
-    engine_view::EngineView,
-    trade_intent::TradeIntent,
-    events::{
-        AppEvent,
-        AppEventEnvelope,
+use crate::{
+    core::{
+        engine::engine::EngineEvent,
+        engine_view::EngineView,
+        events::{
+            AppEvent,
+            AppEventEnvelope,
+        },
+        execution::order::{
+            OrderType,
+            TimeInForce,
+        },
+        trade_intent::TradeIntent,
+        trades::Direction,
+    },
+
+    market::{
+        candle::CandleConfig,
+        candle_history::CandleHistory,
+        session::regular_market_session,
+    },
+
+    shared::print_log,
+
+    strategies::{
+        base::{
+            state::BaseStrategy,
+            strategy_session::strategy_trading_window,
+            strategy_utils::send_base_strategy_start_message,
+        },
+        Strategy,
     },
 };
 
-use crate::market::{
-    candle::CandleConfig,
-    candle_history::CandleHistory,
-};
 
-use crate::strategies::Strategy;
-
-use super::state::BaseStrategy;
-use crate::shared::print_log;
-
-use crate::market::session::regular_market_session;
-use crate::strategies::base::strategy_utils::send_base_strategy_start_message;
-
-use crate::strategies::base::strategy_session::{
-    strategy_trading_window,
-};
+// ============================================================
+// BASE STRATEGY
+// ============================================================
 
 impl BaseStrategy {
     pub fn new(
         tx_engine: TokioUnboundedSender<EngineEvent>,
         rx_view: watch::Receiver<Arc<EngineView>>,
     ) -> Self {
-
         let candle_config = CandleConfig::default();
 
         let strategy = Self {
@@ -59,9 +78,7 @@ impl BaseStrategy {
             enable_trade_duration: true,
             trade_duration_secs: Some(3600),
             track_price_window_while_in_trade: false,
-            candle_history: CandleHistory::new(
-                candle_config.history_retention
-            ),
+            candle_history: CandleHistory::new(candle_config.history_retention),
             market_open_delay_minutes: 15,
             market_close_buffer_minutes: 15,
             close_all_before_market_close_minutes: 10,
@@ -76,6 +93,11 @@ impl BaseStrategy {
     }
 }
 
+
+// ============================================================
+// STRATEGY FACTORY
+// ============================================================
+
 pub fn make_base(
     tx_engine: TokioUnboundedSender<EngineEvent>,
     rx_view: watch::Receiver<Arc<EngineView>>,
@@ -87,6 +109,11 @@ pub fn make_base(
         )
     )
 }
+
+
+// ============================================================
+// STRATEGY IMPLEMENTATION
+// ============================================================
 
 #[async_trait::async_trait]
 impl Strategy for BaseStrategy {
@@ -103,86 +130,106 @@ impl Strategy for BaseStrategy {
         }
 
         match ev.event {
-            AppEvent::Trade(trade) => {
+
+            // ========================================================
+            // TAPE TRADE
+            // ========================================================
+
+            AppEvent::TapeTrade(trade) => {
                 print_log(
                     self.debug_mode,
                     true,
                     format!(
-                        "[BaseStrategy][{}] TRADE | price=${:.2} | size={} | {}",
+                        "[BaseStrategy][{}] TRADE | price=${:.2} | size={} | timestamp_ms={}",
                         ev.symbol,
                         trade.price,
                         trade.size,
-                        trade.timestamp,
+                        trade.timestamp_ms,
                     ),
                 );
             }
 
+
+            // ========================================================
+            // QUOTE
+            // ========================================================
+
             AppEvent::Quote(quote) => {
 
                 // Live entry flow:
-                // Regular-hours filter
-                // → Reset state for a new market session
-                // → Calculate the strategy trading window
-                // → Optionally track prices during the opening delay
-                // → Optionally stop tracking prices while already in a trade
-                // → Update the rolling price window
-                // → Check whether entries are currently allowed
-                // → Check the latest EngineView state
-                // → Send a live short or long trade intent
+                //
+                // Quote event
+                // → restore DateTime<Utc> from timestamp_ms
+                // → regular-hours filter
+                // → reset state for a new market session
+                // → calculate strategy trading window
+                // → optionally track prices during opening delay
+                // → optionally stop tracking while already in a trade
+                // → update rolling price window
+                // → check entry gates
+                // → inspect EngineView
+                // → construct canonical TradeIntent
+                // → EngineEvent::OpenTrade
 
-                // Use one wall-clock timestamp for all market-session
-                // decisions made for this quote.
-                let timestamp = Utc::now();
+
+                // ====================================================
+                // LIVE EVENT TIME
+                // ====================================================
+
+                // Use the exchange/event timestamp carried by the quote rather
+                // than wall-clock time so all strategy decisions are tied to
+                // the actual market event that triggered them.
+                let Some(timestamp): Option<DateTime<Utc>> =
+                    DateTime::from_timestamp_millis(quote.timestamp_ms)
+                else {
+                    eprintln!(
+                        "[BASE LIVE][{}] invalid timestamp_ms={}",
+                        ev.symbol,
+                        quote.timestamp_ms,
+                    );
+
+                    return;
+                };
+
 
                 // Use the midpoint between the current best bid and ask
-                // as the strategy's current market price.
+                // as the strategy's current reference market price.
                 let mid =
                     (quote.bid_price + quote.ask_price) / 2.0;
 
 
-                // ============================================================
+                // ====================================================
                 // REGULAR MARKET SESSION
-                // ============================================================
+                // ====================================================
 
-                let Some((
-                    session_start,
-                    session_end,
-                )) = regular_market_session(
-                    timestamp
-                ) else {
+                let Some((session_start, session_end)) =
+                    regular_market_session(timestamp)
+                else {
                     return;
                 };
 
                 // Ignore all premarket and after-hours quotes.
-                if timestamp < session_start
-                    || timestamp >= session_end
-                {
+                if timestamp < session_start || timestamp >= session_end {
                     return;
                 }
 
 
-                // ============================================================
+                // ====================================================
                 // NEW SESSION RESET
-                // ============================================================
+                // ====================================================
 
                 let previous_session =
                     self.current_session_start_by_symbol
                         .get(&ev.symbol)
                         .copied();
 
-                if previous_session
-                    != Some(session_start)
-                {
-                    // Remove all rolling prices belonging to the
-                    // previous trading session for this symbol.
-                    self.window_prices
-                        .remove(&ev.symbol);
+                if previous_session != Some(session_start) {
+                    self.window_prices.remove(&ev.symbol);
 
-                    self.current_session_start_by_symbol
-                        .insert(
-                            ev.symbol.clone(),
-                            session_start,
-                        );
+                    self.current_session_start_by_symbol.insert(
+                        ev.symbol.clone(),
+                        session_start,
+                    );
 
                     print_log(
                         self.debug_mode,
@@ -196,60 +243,39 @@ impl Strategy for BaseStrategy {
                 }
 
 
-                // ============================================================
+                // ====================================================
                 // STRATEGY TRADING WINDOW
-                // ============================================================
+                // ====================================================
 
-                let Some((
-                    trading_start,
-                    trading_end,
-                )) = strategy_trading_window(
-                    timestamp,
-                    self.market_open_delay_minutes,
-                    self.market_close_buffer_minutes,
-                ) else {
+                let Some((trading_start, trading_end)) =
+                    strategy_trading_window(
+                        timestamp,
+                        self.market_open_delay_minutes,
+                        self.market_close_buffer_minutes,
+                    )
+                else {
                     return;
                 };
 
 
-                // ============================================================
+                // ====================================================
                 // END-OF-SESSION FORCE CLOSE
-                // ============================================================
+                // ====================================================
 
-                // The force-close time is independent from trading_end.
-                //
                 // market_close_buffer_minutes:
-                //     Controls when NEW trade entries stop.
+                // Stops NEW entries before market close.
                 //
                 // close_all_before_market_close_minutes:
-                //     Controls when any remaining open trades are force-closed.
-                //
-                // Example:
-                //
-                //     Market close = 4:00 PM
-                //
-                //     market_close_buffer_minutes = 15
-                //         → Stop new entries at 3:45 PM
-                //
-                //     close_all_before_market_close_minutes = 10
-                //         → Force-close remaining trades at 3:50 PM
+                // Requests closure of remaining trades.
                 let close_all_time =
                     session_end
                         - chrono::Duration::minutes(
                             self.close_all_before_market_close_minutes
                         );
 
-
-                // Only send one global close-all request for each market session.
-                //
-                // Because CloseAllTrades closes every open trade in the engine,
-                // this state is tracked once for the strategy rather than per symbol.
                 if timestamp >= close_all_time {
-                    if self.close_all_sent_for_session
-                        != Some(session_start)
-                    {
-                        self.close_all_sent_for_session =
-                            Some(session_start);
+                    if self.close_all_sent_for_session != Some(session_start) {
+                        self.close_all_sent_for_session = Some(session_start);
 
                         print_log(
                             self.debug_mode,
@@ -278,52 +304,47 @@ impl Strategy for BaseStrategy {
                             );
                     }
 
-                    // Do not perform any more strategy work once the force-close
-                    // period for this market session has been reached.
                     return;
                 }
 
 
-                // ============================================================
+                // ====================================================
                 // OPENING DELAY PRICE TRACKING
-                // ============================================================
+                // ====================================================
 
-                // When disabled, completely ignore prices during the
-                // opening delay instead of adding them to the rolling window.
                 if !self.track_prices_during_open_delay
                     && timestamp < trading_start
                 {
                     return;
                 }
 
-                // ============================================================
+
+                // ====================================================
                 // ENGINE VIEW
-                // ============================================================
+                // ====================================================
 
                 let view: Arc<EngineView> =
                     self.rx_view.borrow().clone();
 
-                    
-                // ============================================================
-                // OPEN TRADE PRICE-WINDOW TRACKING
-                // ============================================================
 
-                // When disabled, stop tracking this symbol's rolling price
-                // window while it already has an open trade.
+                // ====================================================
+                // OPEN TRADE PRICE-WINDOW TRACKING
+                // ====================================================
+
+                // This remains a strategy-level duplicate-entry gate.
+                //
+                // Authoritative engine risk checks must still consider
+                // trades, working orders, and reserved exposure separately.
                 if !self.track_price_window_while_in_trade
-                    && view.trades
-                        .has_open_trade_for_symbol(&ev.symbol)
+                    && view.trades.has_active_trade_for_symbol(&ev.symbol)
                 {
-                    if self.window_prices
-                        .remove(&ev.symbol)
-                        .is_some()
-                    {
+                    if self.window_prices.remove(&ev.symbol).is_some() {
                         print_log(
                             self.debug_mode,
                             false,
                             format!(
                                 "[BASE LIVE WINDOW CLEARED][{}] \
-                                open trade detected; price window cleared",
+                                active trade detected; price window cleared",
                                 ev.symbol,
                             ),
                         );
@@ -331,11 +352,11 @@ impl Strategy for BaseStrategy {
 
                     return;
                 }
- 
 
-                // ============================================================
+
+                // ====================================================
                 // ROLLING PRICE WINDOW
-                // ============================================================
+                // ====================================================
 
                 if let Some((
                     pct_from_min,
@@ -368,33 +389,24 @@ impl Strategy for BaseStrategy {
                     );
 
 
-                    // ============================================================
+                    // ====================================================
                     // ENTRY TIME GATE
-                    // ============================================================
+                    // ====================================================
 
-                    // Prices may be collected during the opening delay,
-                    // but entries cannot be sent until trading_start.
                     if timestamp < trading_start {
                         return;
                     }
 
-                    // Stop generating new entries before the market closes.
                     if timestamp >= trading_end {
                         return;
                     }
 
 
-                    // ============================================================
-                    // EXISTING OPEN TRADE GATE
-                    // ============================================================
+                    // ====================================================
+                    // EXISTING ACTIVE TRADE GATE
+                    // ====================================================
 
-                    // Do not generate another intent when this symbol
-                    // already has an open position.
-                    if view.trades
-                        .has_open_trade_for_symbol(
-                            &ev.symbol
-                        )
-                    {
+                    if view.trades.has_active_trade_for_symbol(&ev.symbol) {
                         return;
                     }
 
@@ -415,27 +427,34 @@ impl Strategy for BaseStrategy {
                     );
 
 
-                    // ============================================================
+                    // ====================================================
                     // SHORT ENTRY
-                    // ============================================================
+                    // ====================================================
 
                     // Price has risen by the configured percentage from
                     // the rolling low. Enter short expecting mean reversion.
                     if pct_from_min >= self.entry_percent {
                         let intent = TradeIntent {
-                            strategy: self.name().to_string(),
+                            strategy_id: self.name().to_string(),
                             symbol: ev.symbol.clone(),
-                            is_long: false,
-                            price: mid,
-                            trade_amount_usd: self.trade_amount_usd,
-                            entry_percent: pct_from_min,
-                            exit_profit_percent: self.exit_profit_percent,
-                            exit_loss_percent: self.exit_loss_percent,
-                            emergency_exit_percent: self.emergency_exit_percent,
-                            min_sl_delay: self.min_sl_delay,
-                            enable_trade_duration: self.enable_trade_duration,
-                            trade_duration_secs: self.trade_duration_secs,
-                            ts_ms: timestamp.timestamp_millis(),
+                            direction: Direction::Short,
+                            signal_px: mid,
+                            target_notional: self.trade_amount_usd,
+                            order_type: OrderType::Market,
+                            time_in_force: TimeInForce::Day,
+                            limit_px: None,
+                            stop_px: None,
+                            post_only: false,
+                            take_profit_percent: Some(self.exit_profit_percent),
+                            stop_loss_percent: Some(self.exit_loss_percent),
+                            emergency_stop_percent: Some(self.emergency_exit_percent),
+                            stop_loss_delay_secs: Some(self.min_sl_delay),
+                            max_duration_secs: if self.enable_trade_duration {
+                                self.trade_duration_secs
+                            } else {
+                                None
+                            },
+                            ts_ms: quote.timestamp_ms,
                         };
 
                         print_log(
@@ -454,35 +473,43 @@ impl Strategy for BaseStrategy {
                             ),
                         );
 
-                        let _ = self.tx_engine.send(
-                            EngineEvent::OpenMarketOrder(
-                                intent
-                            )
-                        );
+                        let _ =
+                            self.tx_engine.send(
+                                EngineEvent::OpenTrade(
+                                    intent
+                                )
+                            );
                     }
 
 
-                    // ============================================================
+                    // ====================================================
                     // LONG ENTRY
-                    // ============================================================
+                    // ====================================================
 
                     // Price has fallen by the configured percentage from
                     // the rolling high. Enter long expecting mean reversion.
                     else if pct_from_max >= self.entry_percent {
                         let intent = TradeIntent {
-                            strategy: self.name().to_string(),
+                            strategy_id: self.name().to_string(),
                             symbol: ev.symbol.clone(),
-                            is_long: true,
-                            price: mid,
-                            trade_amount_usd: self.trade_amount_usd,
-                            entry_percent: pct_from_max,
-                            exit_profit_percent: self.exit_profit_percent,
-                            exit_loss_percent: self.exit_loss_percent,
-                            emergency_exit_percent: self.emergency_exit_percent,
-                            min_sl_delay: self.min_sl_delay,
-                            enable_trade_duration: self.enable_trade_duration,
-                            trade_duration_secs: self.trade_duration_secs,
-                            ts_ms: timestamp.timestamp_millis(),
+                            direction: Direction::Long,
+                            signal_px: mid,
+                            target_notional: self.trade_amount_usd,
+                            order_type: OrderType::Market,
+                            time_in_force: TimeInForce::Day,
+                            limit_px: None,
+                            stop_px: None,
+                            post_only: false,
+                            take_profit_percent: Some(self.exit_profit_percent),
+                            stop_loss_percent: Some(self.exit_loss_percent),
+                            emergency_stop_percent: Some(self.emergency_exit_percent),
+                            stop_loss_delay_secs: Some(self.min_sl_delay),
+                            max_duration_secs: if self.enable_trade_duration {
+                                self.trade_duration_secs
+                            } else {
+                                None
+                            },
+                            ts_ms: quote.timestamp_ms,
                         };
 
                         print_log(
@@ -501,18 +528,19 @@ impl Strategy for BaseStrategy {
                             ),
                         );
 
-                        let _ = self.tx_engine.send(
-                            EngineEvent::OpenMarketOrder(
-                                intent
-                            )
-                        );
+                        let _ =
+                            self.tx_engine.send(
+                                EngineEvent::OpenTrade(
+                                    intent
+                                )
+                            );
                     }
                 }
 
 
-                // ============================================================
+                // ====================================================
                 // QUOTE LOG
-                // ============================================================
+                // ====================================================
 
                 print_log(
                     self.debug_mode,
@@ -532,12 +560,12 @@ impl Strategy for BaseStrategy {
                 );
             }
 
-            
-            AppEvent::BarClosed(bar) => {
-                // Candle history may not contain enough data yet.
-                // Always check for None / required length before using candles.
-                // If data is missing, safely skip the trading decision.
 
+            // ========================================================
+            // BAR CLOSED
+            // ========================================================
+
+            AppEvent::BarClosed(bar) => {
                 let timeframe =
                     bar.timeframe;
 
@@ -546,7 +574,7 @@ impl Strategy for BaseStrategy {
                     true,
                     format!(
                         "[BaseStrategy][{}][{}s] BAR CLOSED | \
-                         O={:.2} H={:.2} L={:.2} C={:.2} V={}",
+                        O={:.2} H={:.2} L={:.2} C={:.2} V={}",
                         ev.symbol,
                         timeframe.as_secs(),
                         bar.open,
@@ -557,9 +585,7 @@ impl Strategy for BaseStrategy {
                     ),
                 );
 
-                // Store the newly completed candle in the strategy's candle history.
-                self.candle_history
-                    .push(bar);
+                self.candle_history.push(bar);
             }
         }
     }

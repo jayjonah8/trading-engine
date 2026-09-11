@@ -19,7 +19,7 @@ use tokio::sync::{
 };
 
 use crate::core::{
-    engine::EngineEvent,
+    engine::engine::EngineEvent,
     engine_view::EngineView,
     events::{
         AppEvent,
@@ -35,6 +35,10 @@ use crate::market::{
 use crate::strategies::Strategy;
 
 
+// ============================================================
+// MEAN REVERSION BACKTEST STRATEGY
+// ============================================================
+
 pub struct MeanReversionBacktestStrategy {
     tx_engine: UnboundedSender<EngineEvent>,
     rx_view: watch::Receiver<Arc<EngineView>>,
@@ -42,7 +46,7 @@ pub struct MeanReversionBacktestStrategy {
     pub enable_strategy: bool,
     pub debug_mode: bool,
 
-    // Total historical Trade events processed.
+    // Total historical TapeTrade events processed.
     pub total_trade_events: u64,
 
     // Rolling historical price window for each symbol.
@@ -63,6 +67,10 @@ pub struct MeanReversionBacktestStrategy {
 }
 
 
+// ============================================================
+// CONSTRUCTOR
+// ============================================================
+
 impl MeanReversionBacktestStrategy {
     // Creates the historical MeanReversion strategy and initializes
     // its rolling price window and candle history.
@@ -70,7 +78,6 @@ impl MeanReversionBacktestStrategy {
         tx_engine: UnboundedSender<EngineEvent>,
         rx_view: watch::Receiver<Arc<EngineView>>,
     ) -> Self {
-
         // Uses the default candle history prune duration.
         let candle_config =
             CandleConfig::default();
@@ -106,6 +113,10 @@ impl MeanReversionBacktestStrategy {
 }
 
 
+// ============================================================
+// FACTORY
+// ============================================================
+
 pub fn make_mean_reversion_backtest(
     tx_engine: UnboundedSender<EngineEvent>,
     rx_view: watch::Receiver<Arc<EngineView>>,
@@ -118,6 +129,10 @@ pub fn make_mean_reversion_backtest(
     )
 }
 
+
+// ============================================================
+// STRATEGY IMPLEMENTATION
+// ============================================================
 
 #[async_trait::async_trait]
 impl Strategy for MeanReversionBacktestStrategy {
@@ -139,32 +154,37 @@ impl Strategy for MeanReversionBacktestStrategy {
             // HISTORICAL TRADE
             // ====================================================
 
-            AppEvent::Trade(trade) => {
+            AppEvent::TapeTrade(trade) => {
                 self.total_trade_events += 1;
 
-                // Convert the historical timestamp stored in the
-                // normal Trade event back into DateTime<Utc>.
-                let timestamp =
-                    match DateTime::parse_from_rfc3339(
-                        &trade.timestamp
-                    ) {
-                        Ok(timestamp) => {
-                            timestamp
-                                .with_timezone(&Utc)
-                        }
 
-                        Err(err) => {
-                            eprintln!(
-                                "[MEAN REVERSION BACKTEST][{}] invalid timestamp {}: {}",
-                                ev.symbol,
-                                trade.timestamp,
-                                err,
-                            );
+                // ====================================================
+                // HISTORICAL EVENT TIME
+                // ====================================================
 
-                            return;
-                        }
-                    };
+                // TapeTrade now stores canonical Unix milliseconds.
+                //
+                // Convert timestamp_ms back into DateTime<Utc> because
+                // this strategy's rolling historical window currently
+                // operates on DateTime<Utc>.
+                let Some(timestamp): Option<DateTime<Utc>> =
+                    DateTime::from_timestamp_millis(
+                        trade.timestamp_ms
+                    )
+                else {
+                    eprintln!(
+                        "[MEAN REVERSION BACKTEST][{}] invalid timestamp_ms={}",
+                        ev.symbol,
+                        trade.timestamp_ms,
+                    );
 
+                    return;
+                };
+
+
+                // ====================================================
+                // ROLLING HISTORICAL PRICE WINDOW
+                // ====================================================
 
                 // Feed the historical price and timestamp into
                 // the rolling historical price-window calculation.
@@ -200,9 +220,7 @@ impl Strategy for MeanReversionBacktestStrategy {
 
                     // Makes it easy to verify that this strategy is
                     // receiving and processing the same trade stream.
-                    if pct_from_min
-                        >= self.entry_percent
-                    {
+                    if pct_from_min >= self.entry_percent {
                         println!(
                             "[MEAN REVERSION BACKTEST ENTRY THRESHOLD][{}] \
                              price=${:.4} | \
@@ -216,15 +234,19 @@ impl Strategy for MeanReversionBacktestStrategy {
                 }
 
 
+                // ====================================================
+                // TRADE LOG
+                // ====================================================
+
                 if self.debug_mode {
                     println!(
                         "[MEAN REVERSION BACKTEST TRADE #{}][{}] \
-                         price=${:.4} | size={} | {}",
+                         price=${:.4} | size={} | timestamp_ms={}",
                         self.total_trade_events,
                         ev.symbol,
                         trade.price,
                         trade.size,
-                        trade.timestamp,
+                        trade.timestamp_ms,
                     );
                 }
             }
@@ -275,14 +297,11 @@ impl Strategy for MeanReversionBacktestStrategy {
                     );
                 }
 
-
                 let timeframe =
                     bar.timeframe;
 
-
                 self.candle_history
                     .push(bar);
-
 
                 if self.debug_mode {
                     println!(
@@ -295,7 +314,6 @@ impl Strategy for MeanReversionBacktestStrategy {
                         ),
                     );
                 }
-
             }
         }
     }
