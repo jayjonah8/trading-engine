@@ -290,8 +290,8 @@ impl Engine {
                 self.handle_order_accepted(order_id, venue_order_id, ts_ms);
             }
 
-            ExecEvent::OrderWorking { .. } => {
-                // self.handle_order_working(event);
+            ExecEvent::OrderWorking { order_id, ts_ms } => {
+                self.handle_order_working(order_id, ts_ms);
             }
 
             ExecEvent::Fill { fill } => {
@@ -306,16 +306,16 @@ impl Engine {
                 // self.handle_order_expired(event);
             }
 
-            ExecEvent::OrderRejected { .. } => {
-                // self.handle_order_rejected(event);
+            ExecEvent::OrderRejected { order_id, reason, ts_ms } => {
+                self.handle_order_rejected(order_id, reason, ts_ms);
             }
 
             ExecEvent::OrderReplaced { .. } => {
                 // self.handle_order_replaced(event);
             }
 
-            ExecEvent::Error { .. } => {
-                // self.handle_exec_error(event);
+            ExecEvent::Error { order_id, message, ts_ms } => {
+                self.handle_exec_error(order_id, message, ts_ms);
             }
         }
 

@@ -5,3 +5,4 @@ mod order_expired;
 mod order_rejected;
 mod order_replaced;
 mod order_working;
+mod error;
