@@ -4,6 +4,7 @@ pub mod event;
 pub mod fill;
 pub mod order;
 pub mod side;
+pub mod venue;
 
 pub use capabilities::VenueCapabilities;
 pub use command::{ExecCommand, OrderChanges};
@@ -19,3 +20,4 @@ pub use order::{
     TimeInForce,
 };
 pub use side::Side;
+pub use venue::Venue;

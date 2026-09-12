@@ -11,6 +11,9 @@ use crate::core::execution::{
     side::Side,
 };
 
+use crate::core::trades::TradeId;
+use crate::core::execution::Venue;
+
 /// Canonical engine representation of an execution order.
 ///
 /// `Order` is venue-independent and represents the complete lifecycle of an
@@ -28,7 +31,6 @@ use crate::core::execution::{
 ///
 /// - `String` venue -> `Venue`
 /// - `String` strategy ID -> `StrategyId`
-/// - `u64` trade ID -> `TradeId`
 /// - `f64` quantities -> `Quantity`
 /// - `f64` prices -> `Price`
 ///
@@ -44,9 +46,7 @@ pub struct Order {
     pub id: OrderId,
 
     /// Venue responsible for executing this order.
-    ///
-    /// TODO: Replace with `Venue`.
-    pub venue: String,
+    pub venue: Venue,
 
     /// Order identifier assigned by the execution venue.
     ///
@@ -67,9 +67,7 @@ pub struct Order {
     ///
     /// `None` is valid for orders that do not belong to a directional trade,
     /// such as market-making quotes.
-    ///
-    /// TODO: Replace with `Option<TradeId>`.
-    pub trade_id: Option<u64>,
+    pub trade_id: Option<TradeId>,
 
     /// Instrument symbol being traded.
     pub symbol: String,

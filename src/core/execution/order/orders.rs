@@ -81,7 +81,7 @@ impl Orders {
         self.orders
             .values()
             .filter(move |order| {
-                order.trade_id == Some(trade_id.as_u64())
+                order.trade_id == Some(trade_id)
                     && order.state.is_active()
             })
     }

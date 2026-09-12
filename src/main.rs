@@ -44,12 +44,7 @@ use crate::core::{
 use crate::data::historical::strategy_event::BacktestStrategyEvent;
 use crate::exchange::alpaca::adapter::run_alpaca_exchange_adapter;
 use crate::data::live::event_mapper::map_app_to_live_engine_event;
-
-
-// #[tokio::main]
-// async fn main() -> Result<()> {
-//      Ok(())
-// }
+use crate::core::execution::Venue;
 
 
 #[tokio::main]
@@ -97,6 +92,8 @@ async fn main() -> Result<()> {
     // ============================================================
 
     let cfg = Config {
+
+        execution_venue: Venue::Hyperliquid,
         
         symbols: vec![
             "BTC".to_string(),
@@ -167,7 +164,7 @@ async fn main() -> Result<()> {
 
     let (tx_view, rx_view) =
         watch::channel::<Arc<EngineView>>(
-            EngineView::empty()
+            EngineView::empty(cfg.clone())
         );
 
     

@@ -1,7 +1,12 @@
 #![allow(dead_code)]
 
-#[derive(Debug, Default, Clone)]
+use crate::core::execution::Venue;
+
+#[derive(Debug, Clone)]
 pub struct Config {
+
+    /// Default execution venue used when the engine creates live orders.
+    pub execution_venue: Venue,
    
     /// List of market symbols/assets the bot is allowed to trade.
     pub symbols: Vec<String>,

@@ -1,3 +1,6 @@
+#![allow(dead_code)]
+
+
 use crate::core::execution::order::{Order, OrderId};
 
 // It’s simply SubmitOrder, CancelOrder, and ReplaceOrder. The Order itself tells 

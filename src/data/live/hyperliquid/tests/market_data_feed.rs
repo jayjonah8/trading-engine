@@ -17,6 +17,8 @@ use crate::{
     data::live::hyperliquid::market_data::run_hyperliquid_feed,
 };
 
+use crate::core::execution::Venue;
+
 // Run test:
 // cargo test test_hyperliquid_market_data_feed -- --nocapture
 
@@ -38,17 +40,27 @@ async fn test_hyperliquid_market_data_feed() -> Result<()> {
     // CONFIG
     // ============================================================
 
-    let mut cfg = Config::default();
+    let cfg = Config {
+        execution_venue: Venue::Hyperliquid,
 
-    cfg.enable_slack_notifications = true;
-    cfg.enable_discord_notifications = true;
+        symbols: vec![
+            "BTC".to_string(),
+            "ETH".to_string(),
+            "SOL".to_string(),
+            "HYPE".to_string(),
+            "ZEC".to_string(),
+        ],
 
-    let symbols = vec![
-        "BTC".to_string(),
-        "ETH".to_string(),
-        "SOL".to_string(),
-        "HYPE".to_string(),
-    ];
+        max_gross_positions: 4,
+        min_trade_age_before_exit_secs: 1,
+
+        enable_simulation_mode: false,
+        enable_backtest_mode: false,
+        backtest_starting_balance: 100_000.0,
+
+        enable_slack_notifications: true,
+        enable_discord_notifications: true,
+    };
 
     // ============================================================
     // MASTER EVENT CHANNEL
@@ -61,11 +73,8 @@ async fn test_hyperliquid_market_data_feed() -> Result<()> {
     // START PRODUCTION FEED
     // ============================================================
 
-    let feed_cfg =
-        cfg.clone();
-
-    let feed_symbols =
-        symbols.clone();
+    let feed_cfg = cfg.clone();
+    let feed_symbols = cfg.symbols.clone();
 
     let feed_handle =
         tokio::spawn(
@@ -87,17 +96,12 @@ async fn test_hyperliquid_market_data_feed() -> Result<()> {
     println!("========================================");
     println!("HYPERLIQUID PRODUCTION MARKET DATA TEST");
     println!("========================================");
-    println!("Symbols: {:?}", symbols);
+    println!("Symbols: {:?}", cfg.symbols);
     println!();
 
-    let mut quote_count =
-        0usize;
-
-    let mut tape_trade_count =
-        0usize;
-
-    let mut bar_count =
-        0usize;
+    let mut quote_count = 0usize;
+    let mut tape_trade_count = 0usize;
+    let mut bar_count = 0usize;
 
     let receiver =
         async {

@@ -89,6 +89,8 @@ pub enum EngineEvent {
     /// trade behavior remain tied to replay time instead of wall time.
     PriceTickBacktest { symbol: String, px: f64, ts_ms: i64 },
 
+    // TODO add TradeClosed
+
     /// Backtest synchronization barrier.
     ///
     /// Confirms that all EngineEvents queued before this event
