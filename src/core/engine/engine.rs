@@ -233,7 +233,7 @@ impl Engine {
     pub fn on_event(&mut self, event: EngineEvent) {
         match event {
             EngineEvent::OpenTrade(intent) => {
-                // self.handle_open_trade(intent);
+                self.handle_open_trade(intent);
             }
 
             EngineEvent::CancelOrder { order_id, reason } => {
