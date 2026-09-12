@@ -212,6 +212,7 @@ impl Engine {
             direction: intent.direction,
             state: TradeState::Opening,
             quantity: 0.0,
+            exited_quantity: 0.0,
             avg_entry_px: None,
             avg_exit_px: None,
             entry_signal_px: intent.signal_px,

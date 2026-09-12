@@ -25,14 +25,6 @@ use crate::{
 };
 
 
-// TODO:
-// Replace the temporary `"default"` account ID with the canonical execution
-// account associated with the venue/order.
-//
-// Once multiple accounts per venue are supported, account identity should be
-// carried through canonical engine/execution state rather than hard-coded here.
-
-
 // ============================================================
 // HANDLE FILL
 // ============================================================
@@ -146,6 +138,28 @@ impl Engine {
         let order_purpose =
             order.purpose;
 
+
+        // ============================================================
+        // VALIDATE ASSOCIATED TRADE
+        // ============================================================
+
+        if let Some(trade_id) = trade_id {
+            if self.state.trades.get(trade_id).is_none() {
+                print_log(
+                    self.debug_mode,
+                    true,
+                    format!(
+                        "[ENGINE] FILL ORDER HAS UNKNOWN TRADE | order_id={} | trade_id={}",
+                        fill.order_id,
+                        trade_id,
+                    ),
+                );
+
+                return;
+            }
+        }
+
+
         // ============================================================
         // DEDUPLICATE FILL
         // ============================================================
@@ -239,13 +253,18 @@ impl Engine {
         // UPDATE POSITION
         // ============================================================
 
-        // TODO:
-        // Replace "default" with the canonical account ID associated with
-        // this execution venue/account.
+        // WARNING:
+        // The engine currently assumes one execution account per venue.
+        //
+        // `"primary"` is therefore a placeholder account identity used only to
+        // preserve the PositionKey(venue, account, symbol) shape.
+        //
+        // If multi-account execution is added later, replace this with a canonical
+        // AccountId carried through Order -> Fill -> PositionKey.
         let position_key =
             PositionKey::new(
                 fill.venue,
-                "default",
+                "primary",
                 fill.symbol.clone(),
             );
 
@@ -268,22 +287,12 @@ impl Engine {
         if let Some(trade_id) =
             trade_id
         {
-            let Some(trade) =
+            let trade =
                 self.state.trades
                     .get_mut(trade_id)
-            else {
-                print_log(
-                    self.debug_mode,
-                    true,
-                    format!(
-                        "[ENGINE] FILL ORDER HAS UNKNOWN TRADE | order_id={} | trade_id={}",
-                        fill.order_id,
-                        trade_id,
-                    ),
-                );
-
-                return;
-            };
+                    .expect(
+                        "validated trade disappeared before fill application"
+                    );
 
             match order_purpose {
                 // ====================================================
@@ -341,22 +350,25 @@ impl Engine {
                 | OrderPurpose::StopLoss
                 | OrderPurpose::TakeProfit
                 | OrderPurpose::EmergencyExit => {
+                    let old_exited_quantity =
+                        trade.exited_quantity;
+
+                    trade.avg_exit_px =
+                        Some(
+                            weighted_average(
+                                trade.avg_exit_px,
+                                old_exited_quantity,
+                                fill.price,
+                                fill.quantity,
+                            )
+                        );
+
+                    trade.exited_quantity +=
+                        fill.quantity;
+
                     trade.quantity =
                         (trade.quantity - fill.quantity)
                             .max(0.0);
-
-                    // TODO:
-                    // Add cumulative exited quantity to Trade so avg_exit_px
-                    // can be calculated as a true VWAP across multiple exit
-                    // orders and partial fills.
-                    //
-                    // Until that field exists, preserve the first observed
-                    // exit execution price rather than calculating an
-                    // incorrect weighted average.
-                    if trade.avg_exit_px.is_none() {
-                        trade.avg_exit_px =
-                            Some(fill.price);
-                    }
 
                     if trade.quantity <= f64::EPSILON {
                         trade.quantity = 0.0;
@@ -522,9 +534,42 @@ fn apply_fill_to_position(
 
 
 // ============================================================
-// WEIGHTED AVERAGE
+// WEIGHTED AVERAGE EXECUTION PRICE
 // ============================================================
 
+// ENTRY FILLS
+//     ↓
+// quantity ↑
+// avg_entry_px = entry VWAP
+
+// EXIT FILLS
+//     ↓
+// quantity ↓
+// exited_quantity ↑
+// avg_exit_px = exit VWAP
+
+// quantity reaches 0
+//     ↓
+// TradeState::Closed
+
+/// Calculates the quantity-weighted average execution price after applying
+/// a new fill to an existing set of executions.
+///
+/// This is used when an Order or Trade receives multiple fills at different
+/// prices. The existing average is weighted by the quantity already executed,
+/// while the new fill price is weighted by the new fill quantity.
+///
+/// Example:
+///
+///     existing: 0.25 BTC @ $80,000
+///     new fill:  0.50 BTC @ $81,000
+///
+/// The resulting average represents the true average execution price across
+/// the full 0.75 BTC rather than simply using the newest or oldest fill price.
+///
+/// `current_quantity` must represent the quantity that contributed to
+/// `current_avg`. For entry VWAP this is previously entered quantity; for
+/// exit VWAP this is previously exited quantity.
 fn weighted_average(
     current_avg: Option<f64>,
     current_quantity: f64,

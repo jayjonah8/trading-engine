@@ -54,13 +54,39 @@ pub struct Trade {
     /// Current logical trade lifecycle state.
     pub state: TradeState,
 
-    /// Current quantity established for this trade.
+    /// Current remaining open quantity for this trade.
     ///
-    /// Unlike `Position`, this quantity is trade-specific and is always
-    /// represented as a positive magnitude. Direction is stored separately.
+    /// This value is trade-specific and is always represented as a positive
+    /// magnitude. Direction is stored separately.
+    ///
+    /// Confirmed entry fills increase this quantity. Confirmed exit fills decrease
+    /// it until the trade reaches zero and is fully closed.
+    ///
+    /// This value also represents the previously entered quantity while the trade
+    /// is being opened, allowing it to be used when calculating entry VWAP.
+    /// Once exits begin, it represents only the remaining open quantity and must
+    /// NOT be used as the historical weight for exit VWAP. `exited_quantity`
+    /// tracks that separately.
+    ///
+    ///     quantity        = current remaining OPEN quantity
+    ///     exited_quantity = cumulative quantity already EXITED
     ///
     /// TODO: Replace with `Quantity`.
     pub quantity: f64,
+
+    /// Total quantity that has been exited through confirmed fills.
+    ///
+    /// This is cumulative and is used to calculate the volume-weighted average
+    /// exit execution price across partial fills and multiple exit orders.
+    ///
+    /// Unlike `quantity`, which decreases as the trade is exited, this value
+    /// only increases as confirmed exit fills are applied.
+    ///
+    /// quantity        = currently OPEN quantity
+    /// exited_quantity = total quantity already EXITED
+    ///
+    /// TODO: Replace with `Quantity`.
+    pub exited_quantity: f64,
 
     /// Average entry execution price accumulated from confirmed entry fills.
     ///
