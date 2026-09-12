@@ -8,6 +8,22 @@ use crate::{
     shared::print_log,
 };
 
+
+// OrderAccepted
+//     = venue acknowledged the order
+//     = venue_order_id is now known
+//     = does NOT necessarily mean the order is Working
+
+// OrderWorking
+//     = order is actually resting/active at the venue
+//     = canonical OrderState becomes Working
+//     = capable of receiving future fills
+
+// Fill
+//     = execution actually happened
+//     = changes Order / Position / Trade / Risk state
+
+
 impl Engine {
     /// Applies a venue acknowledgement to an existing canonical order.
     ///
