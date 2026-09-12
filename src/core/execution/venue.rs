@@ -9,10 +9,4 @@ pub enum Venue {
     Alpaca,
     InteractiveBrokers,
     Hyperliquid,
-
-    /// Internal simulated execution venue.
-    Simulation,
-
-    /// Historical execution venue used during backtesting.
-    Backtest,
 }

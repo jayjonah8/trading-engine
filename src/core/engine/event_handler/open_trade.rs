@@ -41,6 +41,10 @@ use crate::shared::print_log;
 // instrument constraints are implemented.
 
 // TODO:
+// Complete canonical gross/symbol risk checks and final quantity sizing
+// once position valuation and instrument-specific execution rules are wired.
+
+// TODO:
 // Replace the temporary client_order_id format with the final
 // canonical client-order ID scheme if needed.
 
@@ -63,6 +67,8 @@ impl Engine {
     ///     -> Order creation (PendingSubmit)
     ///     -> authoritative state insertion
     ///     -> ExecCommand::SubmitOrder
+    ///     -> execution router
+    ///     -> venue adapter
     pub fn handle_open_trade(
         &mut self,
         intent: TradeIntent,
@@ -284,9 +290,12 @@ impl Engine {
         // ============================================================
 
 
-        // A successful channel send only means the execution adapter received
-        // the command. The order remains PendingSubmit until canonical
-        // ExecEvents report what actually happened at the venue.
+        // A successful channel send only means the execution router received
+        // the command. The router forwards it to the adapter selected by
+        // `order.venue`.
+        //
+        // The order remains PendingSubmit until canonical ExecEvents report
+        // what actually happened at the execution venue.
         if let Err(err) =
             self.tx_exec.send(
                 ExecCommand::SubmitOrder {
