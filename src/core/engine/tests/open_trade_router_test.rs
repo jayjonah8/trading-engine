@@ -33,7 +33,7 @@ use crate::{
     },
 
     exchange::{
-        hyperliquid::adapter::run_hyperliquid_exchange_adapter,
+        hyperliquid::adapter::run_hyperliquid_adapter,
 
         router::{
             run_execution_router,
@@ -147,7 +147,7 @@ async fn test_open_trade_routes_to_hyperliquid_adapter() {
 
     let adapter_handle =
         tokio::spawn(
-            run_hyperliquid_exchange_adapter(
+            run_hyperliquid_adapter(
                 cfg.clone(),
                 rx_hyperliquid_exec,
                 tx_exec_evt,

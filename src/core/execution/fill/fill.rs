@@ -1,8 +1,9 @@
 #![allow(dead_code)]
 
 use crate::core::execution::{
-    order::OrderId,
-    side::Side,
+    OrderId,
+    Side,
+    Venue,
 };
 
 /// Unique identifier for an individual execution/fill.
@@ -21,12 +22,11 @@ pub struct ExecutionId(pub u64);
 /// prices. Each fill represents an execution that actually occurred and
 /// should never be modified after it has been recorded.
 ///
-/// Fills are the authoritative facts used to update orders, positions,
+/// Fills are authoritative execution facts used to update orders, positions,
 /// trades, fees, and execution accounting.
 ///
 /// TODO: Replace temporary primitive types with canonical strongly typed values:
 ///
-/// - `String` venue -> `Venue`
 /// - `f64` quantity -> `Quantity`
 /// - `f64` price -> `Price`
 /// - `f64` fee -> `Money`
@@ -38,10 +38,12 @@ pub struct Fill {
     /// Internal order that produced this fill.
     pub order_id: OrderId,
 
-    /// Venue where the execution occurred.
+    /// Canonical execution venue where the fill occurred.
     ///
-    /// TODO: Replace with `Venue`.
-    pub venue: String,
+    /// Venue-specific API behavior remains outside the engine, but retaining
+    /// canonical venue identity allows fills from multiple execution venues
+    /// to coexist safely in the same engine state.
+    pub venue: Venue,
 
     /// Execution identifier reported by the venue when available.
     ///

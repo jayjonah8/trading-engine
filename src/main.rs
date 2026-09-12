@@ -54,7 +54,7 @@ use crate::exchange::router::{
 };
 
 use crate::exchange::hyperliquid::adapter::{
-    run_hyperliquid_exchange_adapter,
+    run_hyperliquid_adapter,
 };
 
 
@@ -280,7 +280,7 @@ async fn main() -> Result<()> {
 
         tokio::spawn(
             async move {
-                run_hyperliquid_exchange_adapter(
+                run_hyperliquid_adapter(
                     adapter_cfg,
                     rx_hyperliquid_exec,
                     tx_exec_evt,

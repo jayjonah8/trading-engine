@@ -4,6 +4,8 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+hyperliquid_rust_sdk = "0.6.0"
+ethers = { version = "2.0.14", features = ["eip712", "abigen"] }
 anyhow = "1"
 async-trait = "0.1"
 dotenvy = "0.15.7"

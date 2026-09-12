@@ -19,7 +19,7 @@ use crate::{
     },
 
     exchange::{
-        hyperliquid::adapter::run_hyperliquid_exchange_adapter,
+        hyperliquid::adapter::run_hyperliquid_adapter,
         router::{
             run_execution_router,
             ExecutionRoutes,
@@ -119,7 +119,7 @@ async fn test_hyperliquid_router_to_adapter() {
     // ============================================================
 
     tokio::spawn(
-        run_hyperliquid_exchange_adapter(
+        run_hyperliquid_adapter(
             cfg,
             rx_hyperliquid,
             tx_evt,

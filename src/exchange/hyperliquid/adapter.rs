@@ -1,5 +1,12 @@
 #![allow(dead_code)]
 
+use ethers::signers::LocalWallet;
+
+use hyperliquid_rust_sdk::{
+    BaseUrl,
+    ExchangeClient,
+};
+
 use tokio::sync::mpsc::{
     UnboundedReceiver,
     UnboundedSender,
@@ -16,6 +23,12 @@ use crate::{
         },
     },
 
+    exchange::hyperliquid::commands::{
+        handle_cancel_order,
+        handle_replace_order,
+        handle_submit_order,
+    },
+
     shared::print_log,
 };
 
@@ -26,34 +39,67 @@ use crate::{
 
 /// Runs the Hyperliquid execution adapter.
 ///
-/// This adapter is the venue-specific boundary between the canonical trading
-/// engine and Hyperliquid.
+/// The adapter owns the Hyperliquid execution client and consumes canonical
+/// `ExecCommand`s routed from the Engine.
 ///
-/// Flow:
+/// Venue-specific command translation lives in `commands/*`.
 ///
-/// Engine
-///     -> ExecCommand
-///     -> Execution Router
-///     -> Hyperliquid Adapter
-///     -> Hyperliquid API
-///
-/// Hyperliquid
-///     -> Hyperliquid Adapter
-///     -> ExecEvent
-///     -> Engine
-///
-/// The Engine remains the authoritative owner of Order, Trade, Position,
-/// FillLedger, and RiskState. This adapter must never directly mutate engine
-/// state.
-///
-/// This initial implementation only establishes the canonical command loop.
-/// Hyperliquid SDK execution and ExecEvent mapping will be added next.
-pub async fn run_hyperliquid_exchange_adapter(
+/// The adapter never mutates authoritative Engine state. Hyperliquid execution
+/// results are translated into canonical `ExecEvent`s and sent back to the
+/// Engine.
+pub async fn run_hyperliquid_adapter(
     _cfg: Config,
     mut rx_cmd: UnboundedReceiver<ExecCommand>,
-    _tx_evt: UnboundedSender<ExecEvent>,
+    tx_evt: UnboundedSender<ExecEvent>,
 ) {
     let debug_mode = true;
+
+
+    // ============================================================
+    // WALLET
+    // ============================================================
+
+    let private_key =
+    std::env::var(
+        "HYPERLIQUID_PRIVATE_KEY"
+    )
+    .expect(
+        "HYPERLIQUID_PRIVATE_KEY env var missing"
+    );
+
+    let wallet: LocalWallet =
+        private_key
+            .parse()
+            .expect(
+                "Invalid HYPERLIQUID_PRIVATE_KEY"
+            );
+
+
+    // ============================================================
+    // EXCHANGE CLIENT
+    // ============================================================
+
+    // TODO:
+    // Fetch/cache Hyperliquid `Meta` once during startup and pass
+    // `Some(meta)` here.
+    //
+    // Supplying cached Meta avoids the SDK performing an additional metadata
+    // request during ExchangeClient initialization.
+    //
+    // `None` is acceptable for the initial implementation.
+    let exchange_client =
+        ExchangeClient::new(
+            None,
+            wallet,
+            Some(BaseUrl::Mainnet),
+            None, // TODO: add Some(meta),  
+            None,
+        )
+        .await
+        .expect(
+            "Failed to create Hyperliquid ExchangeClient"
+        );
+
 
     print_log(
         debug_mode,
@@ -78,9 +124,6 @@ pub async fn run_hyperliquid_exchange_adapter(
             ExecCommand::SubmitOrder {
                 order,
             } => {
-                // The execution router should only send Hyperliquid orders
-                // to this adapter. Keep this defensive check so accidental
-                // routing mistakes are visible during development.
                 if order.venue != Venue::Hyperliquid {
                     print_log(
                         debug_mode,
@@ -96,81 +139,13 @@ pub async fn run_hyperliquid_exchange_adapter(
                 }
 
 
-                print_log(
+                handle_submit_order(
+                    &exchange_client,
+                    &tx_evt,
+                    order,
                     debug_mode,
-                    true,
-                    format!(
-                        "[HYPERLIQUID ADAPTER] SUBMIT ORDER | order_id={} | trade_id={:?} | strategy={} | symbol={} | side={:?} | type={:?} | qty={} | limit_px={:?} | stop_px={:?} | reduce_only={} | post_only={}",
-                        order.id,
-                        order.trade_id,
-                        order.strategy_id,
-                        order.symbol,
-                        order.side,
-                        order.order_type,
-                        order.quantity,
-                        order.limit_px,
-                        order.stop_px,
-                        order.reduce_only,
-                        order.post_only,
-                    ),
-                );
-
-
-                // TODO:
-                // Translate the canonical Order into the appropriate
-                // Hyperliquid SDK request.
-                //
-                // Examples:
-                //
-                // OrderType::Market
-                //     -> marketable Hyperliquid order
-                //
-                // OrderType::Limit
-                //     -> Hyperliquid limit order
-                //
-                // OrderType::StopMarket / StopLimit
-                //     -> Hyperliquid trigger order behavior
-                //
-                // Keep all Hyperliquid-specific translation in this adapter
-                // or its command_handler module rather than in Engine.
-
-
-                // TODO:
-                // Normalize quantity according to Hyperliquid's asset-specific
-                // size precision before submitting the request.
-                //
-                // The Engine owns the desired canonical quantity.
-                // Hyperliquid-specific rounding/formatting belongs here.
-
-
-                // TODO:
-                // Submit the translated order through ExchangeClient.
-
-
-                // TODO:
-                // Convert the immediate Hyperliquid response into canonical
-                // ExecEvents.
-                //
-                // Expected mappings include:
-                //
-                // accepted/resting
-                //     -> ExecEvent::OrderAccepted / OrderWorking
-                //
-                // immediate execution
-                //     -> ExecEvent::OrderAccepted
-                //     -> ExecEvent::Fill
-                //
-                // rejection
-                //     -> ExecEvent::OrderRejected
-                //
-                // transport/internal failure
-                //     -> ExecEvent::Error
-
-
-                // TODO:
-                // Do not assume an order is filled merely because the submit
-                // request succeeded. Authoritative execution state must come
-                // from confirmed Hyperliquid execution information.
+                )
+                .await;
             }
 
 
@@ -197,38 +172,13 @@ pub async fn run_hyperliquid_exchange_adapter(
                 }
 
 
-                print_log(
+                handle_cancel_order(
+                    &exchange_client,
+                    &tx_evt,
+                    order_id,
                     debug_mode,
-                    true,
-                    format!(
-                        "[HYPERLIQUID ADAPTER] CANCEL ORDER | order_id={}",
-                        order_id,
-                    ),
-                );
-
-
-                // TODO:
-                // Resolve the Hyperliquid venue order identifier associated
-                // with this canonical OrderId.
-                //
-                // Decide whether the adapter keeps a lightweight correlation
-                // map or receives enough execution identity from the command.
-
-
-                // TODO:
-                // Submit the Hyperliquid cancel request.
-
-
-                // TODO:
-                // Map the confirmed result into:
-                //
-                // ExecEvent::OrderCanceled
-                //
-                // or:
-                //
-                // ExecEvent::Error / OrderRejected
-                //
-                // depending on the canonical event semantics we finalize.
+                )
+                .await;
             }
 
 
@@ -256,36 +206,14 @@ pub async fn run_hyperliquid_exchange_adapter(
                 }
 
 
-                print_log(
+                handle_replace_order(
+                    &exchange_client,
+                    &tx_evt,
+                    order_id,
+                    changes,
                     debug_mode,
-                    true,
-                    format!(
-                        "[HYPERLIQUID ADAPTER] REPLACE ORDER | order_id={} | quantity={:?} | limit_px={:?} | stop_px={:?}",
-                        order_id,
-                        changes.quantity,
-                        changes.limit_px,
-                        changes.stop_px,
-                    ),
-                );
-
-
-                // TODO:
-                // Translate canonical OrderChanges into Hyperliquid's order
-                // modification mechanism.
-
-
-                // TODO:
-                // If Hyperliquid implements the requested change as
-                // cancel-and-replace, preserve correct canonical order
-                // correlation and venue order identity.
-
-
-                // TODO:
-                // Map the confirmed venue result into:
-                //
-                // ExecEvent::OrderReplaced
-                //
-                // or the appropriate canonical error event.
+                )
+                .await;
             }
         }
     }
