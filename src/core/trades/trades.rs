@@ -61,6 +61,27 @@ impl Trades {
             .any(|trade| trade.symbol == symbol && trade.state.is_active())
     }
 
+   /// Returns true if the given strategy already has an active logical trade
+    /// for the specified symbol.
+    ///
+    /// `Opening`, `Open`, and `Closing` trades are all considered active.
+    ///
+    /// This prevents the same strategy from accidentally creating multiple
+    /// independent `Trade` lifecycles for the same symbol. It does NOT restrict
+    /// the number of market, limit, stop, or exit `Order`s associated with that
+    /// trade. A single active `Trade` may own many simultaneous orders.
+    pub fn has_active_trade_for_strategy_symbol(
+        &self,
+        strategy_id: &str,
+        symbol: &str,
+    ) -> bool {
+        self.trades.values().any(|trade| {
+            trade.strategy_id == strategy_id
+                && trade.symbol == symbol
+                && trade.state.is_active()
+        })
+    }
+
     /// Returns the number of active strategy trades.
     ///
     /// Active trades include trades that are `Opening`, `Open`, or `Closing`.

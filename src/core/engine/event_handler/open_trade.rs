@@ -24,8 +24,12 @@ use crate::core::{
 use crate::shared::print_log;
 
 // TODO:
-// Add duplicate-symbol / strategy ownership / cooldown gates here
-// if those policies are still part of the final engine behavior.
+// Add detail Intent printout thats formatted and detailed 
+// for the new archictecture. 
+
+// TODO:
+// Add any remaining strategy ownership / cooldown admission rules here
+// if those policies remain part of the final engine behavior.
 
 // TODO:
 // Add max_gross_notional and max_symbol_notional checks once
@@ -63,6 +67,7 @@ impl Engine {
         &mut self,
         intent: TradeIntent,
     ) {
+
         // ============================================================
         // VALIDATE INTENT
         // ============================================================
@@ -81,6 +86,36 @@ impl Engine {
 
             return;
         }
+ 
+
+        // ============================================================
+        // ACTIVE STRATEGY TRADE GATE
+        // ============================================================
+
+        // Prevent the same strategy from accidentally creating another
+        // independent logical Trade for this symbol while one is already
+        // Opening, Open, or Closing.
+        //
+        // This does NOT restrict the number of market, limit, stop, or exit
+        // Orders that may belong to the existing Trade. One Trade may own
+        // many simultaneous Orders throughout its execution lifecycle.
+        if self.state.trades.has_active_trade_for_strategy_symbol(
+            &intent.strategy_id,
+            &intent.symbol,
+        ) {
+            print_log(
+                self.debug_mode,
+                true,
+                format!(
+                    "[ENGINE] OPEN TRADE REJECTED | strategy={} | symbol={} | reason=active strategy trade already exists",
+                    intent.strategy_id,
+                    intent.symbol,
+                ),
+            );
+
+            return;
+        }
+
 
         // ============================================================
         // RISK CHECKS
@@ -126,6 +161,7 @@ impl Engine {
             return;
         }
 
+
         // ============================================================
         // REQUESTED QUANTITY
         // ============================================================
@@ -137,6 +173,7 @@ impl Engine {
         let quantity =
             intent.target_notional
                 / intent.signal_px;
+
 
         // ============================================================
         // IDS
@@ -154,6 +191,7 @@ impl Engine {
                 intent.strategy_id,
                 order_id,
             );
+
 
         // ============================================================
         // TRADE
@@ -213,6 +251,7 @@ impl Engine {
             updated_ts_ms: intent.ts_ms,
         };
 
+
         // ============================================================
         // RISK RESERVATION
         // ============================================================
@@ -231,6 +270,7 @@ impl Engine {
             updated_ts_ms: intent.ts_ms,
         };
 
+
         // ============================================================
         // COMMIT ENGINE STATE
         // ============================================================
@@ -242,6 +282,7 @@ impl Engine {
         // ============================================================
         // SUBMIT ORDER
         // ============================================================
+
 
         // A successful channel send only means the execution adapter received
         // the command. The order remains PendingSubmit until canonical
@@ -282,6 +323,7 @@ impl Engine {
 
             return;
         }
+
 
         // ============================================================
         // SUBMITTED
