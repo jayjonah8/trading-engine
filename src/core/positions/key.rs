@@ -1,4 +1,7 @@
 #![allow(dead_code)]
+
+use crate::core::execution::Venue;
+
 /// Unique key identifying an actual venue position.
 ///
 /// Positions are keyed by venue, account, and symbol rather than symbol alone
@@ -15,14 +18,12 @@
 ///
 /// are two separate positions.
 ///
-/// TODO: Replace temporary `String` values with canonical strongly typed
-/// `Venue`, `AccountId`, and `Symbol` types.
+/// TODO: Replace temporary `String` account/symbol values with canonical
+/// `AccountId` and `Symbol` types.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct PositionKey {
     /// Execution venue where the position exists.
-    ///
-    /// TODO: Replace with `Venue`.
-    pub venue: String,
+    pub venue: Venue,
 
     /// Venue account that owns the position.
     ///
@@ -38,12 +39,12 @@ pub struct PositionKey {
 impl PositionKey {
     /// Creates a new position key.
     pub fn new(
-        venue: impl Into<String>,
+        venue: Venue,
         account_id: impl Into<String>,
         symbol: impl Into<String>,
     ) -> Self {
         Self {
-            venue: venue.into(),
+            venue,
             account_id: account_id.into(),
             symbol: symbol.into(),
         }

@@ -11,7 +11,11 @@
 /// fill before the venue confirms the cancellation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum OrderState {
-    /// Created by the engine but not yet acknowledged by the venue.
+    /// Created/submitted by the engine but not yet confirmed as working,
+    /// filled, rejected, canceled, or otherwise terminal.
+    ///
+    /// A venue acknowledgement may already have supplied `venue_order_id`
+    /// while the order remains briefly in this state.
     PendingSubmit,
 
     /// Accepted by the venue and eligible to receive fills.

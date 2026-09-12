@@ -286,16 +286,16 @@ impl Engine {
         event: ExecEvent,
     ) {
         match event {
-            ExecEvent::OrderAccepted { .. } => {
-                // self.handle_order_accepted(event);
+            ExecEvent::OrderAccepted { order_id, venue_order_id, ts_ms } => {
+                self.handle_order_accepted(order_id, venue_order_id, ts_ms);
             }
 
             ExecEvent::OrderWorking { .. } => {
                 // self.handle_order_working(event);
             }
 
-            ExecEvent::Fill { .. } => {
-                // self.handle_exec_fill(event);
+            ExecEvent::Fill { fill } => {
+                self.handle_exec_fill(fill);
             }
 
             ExecEvent::OrderCanceled { .. } => {

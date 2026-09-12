@@ -98,7 +98,7 @@ pub async fn run_hyperliquid_adapter(
         .await
         .expect(
             "Failed to create Hyperliquid ExchangeClient"
-        );
+        ); 
 
 
     print_log(
