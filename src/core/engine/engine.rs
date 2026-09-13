@@ -298,8 +298,8 @@ impl Engine {
                 self.handle_exec_fill(fill);
             }
 
-            ExecEvent::OrderCanceled { .. } => {
-                // self.handle_order_canceled(event);
+            ExecEvent::OrderCanceled { order_id, ts_ms } => {
+                self.handle_order_canceled(order_id, ts_ms);
             }
 
             ExecEvent::OrderExpired { .. } => {
