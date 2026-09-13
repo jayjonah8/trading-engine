@@ -63,7 +63,7 @@ pub enum EngineEvent {
     OpenTrade(TradeIntent),
 
     /// Requests cancellation of an active engine order.
-    CancelOrder { order_id: OrderId, reason: String },
+    CancelOrder { order_id: OrderId, reason: String, ts_ms: i64 },
 
     /// Requests replacement/modification of an active engine order.
     ReplaceOrder { order_id: OrderId, quantity: Option<f64>, limit_px: Option<f64>, stop_px: Option<f64>, reason: String, ts_ms: i64 },
@@ -236,8 +236,8 @@ impl Engine {
                 self.handle_open_trade(intent);
             }
 
-            EngineEvent::CancelOrder { order_id, reason } => {
-                // self.handle_cancel_order(order_id, reason);
+            EngineEvent::CancelOrder { order_id, reason, ts_ms } => {
+                self.handle_cancel_order(order_id, reason, ts_ms);
             }
 
             EngineEvent::ReplaceOrder { order_id, quantity, limit_px, stop_px, reason, ts_ms } => {
