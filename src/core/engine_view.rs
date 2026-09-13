@@ -4,7 +4,10 @@ use crate::core::{
     config::Config,
     engine::state::EngineState,
     general::General,
-    trades::Trades,
+    trades::{
+        TradeId,
+        Trades,
+    },
 };
 
 /// Read-only snapshot published by Engine.
@@ -35,6 +38,27 @@ impl EngineView {
             trades: state.trades.clone(),
             open_trades: state.trades.count_open(),
         })
+    }
+
+    /// Returns the active TradeId owned by a specific strategy for a symbol.
+    ///
+    /// Strategies often make decisions using symbols, while engine commands use
+    /// canonical TradeIds so multiple strategies or trades on the same symbol
+    /// cannot be confused.
+    ///
+    /// This is a read-only lookup against the published EngineView snapshot.
+    ///
+    /// Returns `None` when no active matching trade exists.
+    pub fn active_trade_id_for_strategy_symbol(
+        &self,
+        strategy_id: &str,
+        symbol: &str,
+    ) -> Option<TradeId> {
+        self.trades
+            .active_trade_id_for_strategy_symbol(
+                strategy_id,
+                symbol,
+            )
     }
 
     /// Placeholder snapshot used only when creating the watch channel.

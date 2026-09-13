@@ -12,7 +12,8 @@ use tokio::sync::{
 };
 
 use crate::core::{
-    config::Config, engine::{
+    config::Config,
+    engine::{
         shared::{
             get_execution_mode,
             verify_engine_config,
@@ -21,12 +22,18 @@ use crate::core::{
             EngineState,
             ExecutionMode,
         },
-    }, engine_view::EngineView, execution::{
+    },
+    engine_view::EngineView,
+    execution::{
         ExecCommand,
         ExecEvent,
         OrderChanges,
         OrderId,
-    }, general::General, risk::RiskLimits, trade_intent::TradeIntent,
+    },
+    general::General,
+    risk::RiskLimits,
+    trade_intent::TradeIntent,
+    trades::TradeId,
 };
 
 use crate::notifications::env_helpers::validate_notification_env;
@@ -68,11 +75,14 @@ pub enum EngineEvent {
     /// Requests replacement/modification of an active engine order.
     ReplaceOrder { order_id: OrderId, quantity: Option<f64>, limit_px: Option<f64>, stop_px: Option<f64>, reason: String, ts_ms: i64 },
 
-    /// Requests closure of one strategy trade associated with a symbol.
+    /// Requests closure of one specific logical strategy trade.
     ///
-    /// TODO: Eventually prefer `TradeId` once strategies and EngineView expose
-    /// canonical trade identity directly.
-    CloseSingleTrade { symbol: String, reason: String },
+    /// `TradeId` is used instead of symbol so multiple strategies or multiple
+    /// trades can safely exist on the same symbol without ambiguity.
+    ///
+    /// `ts_ms` is event time and is used consistently across live trading,
+    /// simulation, and historical backtesting.
+    CloseTrade { trade_id: TradeId, reason: String, ts_ms: i64 },
 
     /// Requests closure of all active directional trades.
     CloseAllTrades { reason: String },
@@ -209,10 +219,6 @@ impl Engine {
     // ============================================================
 
     /// Publishes the latest read-only engine state to strategies.
-    ///
-    /// TODO:
-    /// Update `EngineView::from_parts()` so it consumes canonical EngineState
-    /// directly instead of depending on legacy state structures.
     fn publish_view(&self) {
         let view = EngineView::from_parts(
             &self.cfg,
@@ -245,8 +251,8 @@ impl Engine {
                 self.handle_replace_order(order_id, changes, reason, ts_ms);
             }
 
-            EngineEvent::CloseSingleTrade { symbol, reason } => {
-                // self.handle_close_single_trade(symbol, reason);
+            EngineEvent::CloseTrade { trade_id, reason, ts_ms } => {
+                self.handle_close_trade(trade_id, reason, ts_ms);
             }
 
             EngineEvent::CloseAllTrades { reason } => {

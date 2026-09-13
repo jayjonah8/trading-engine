@@ -82,6 +82,28 @@ impl Trades {
         })
     }
 
+    /// Returns the active TradeId owned by a specific strategy for a symbol.
+    ///
+    /// Strategies often make decisions using symbols, while engine commands use
+    /// canonical `TradeId`s so multiple strategies or trades on the same symbol
+    /// cannot be confused.
+    ///
+    /// Returns `None` when no active matching trade exists.
+    pub fn active_trade_id_for_strategy_symbol(
+        &self,
+        strategy_id: &str,
+        symbol: &str,
+    ) -> Option<TradeId> {
+        self.trades
+            .values()
+            .find(|trade| {
+                trade.strategy_id == strategy_id
+                    && trade.symbol == symbol
+                    && trade.state.is_active()
+            })
+            .map(|trade| trade.id)
+    }
+
     /// Returns the number of active strategy trades.
     ///
     /// Active trades include trades that are `Opening`, `Open`, or `Closing`.
