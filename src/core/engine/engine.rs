@@ -85,7 +85,7 @@ pub enum EngineEvent {
     CloseTrade { trade_id: TradeId, reason: String, ts_ms: i64 },
 
     /// Requests closure of all active directional trades.
-    CloseAllTrades { reason: String },
+    CloseAllTrades { reason: String, ts_ms: i64 },
 
     /// Market-price update used for valuation and strategy-level risk logic.
     ///
@@ -255,8 +255,8 @@ impl Engine {
                 self.handle_close_trade(trade_id, reason, ts_ms);
             }
 
-            EngineEvent::CloseAllTrades { reason } => {
-                // self.handle_close_all_trades(reason);
+            EngineEvent::CloseAllTrades { reason, ts_ms } => {
+                self.handle_close_all_trades(reason, ts_ms);
             }
 
             EngineEvent::PriceTick { symbol, px, ts_ms } => {

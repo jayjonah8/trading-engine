@@ -281,7 +281,7 @@ impl Strategy for BaseStrategy {
                 // Stops NEW entries before market close.
                 //
                 // close_all_before_market_close_minutes:
-                // Requests closure of remaining trades.
+                // Requests closure of all remaining engine trades.
                 let close_all_time =
                     session_end
                         - chrono::Duration::minutes(
@@ -290,7 +290,8 @@ impl Strategy for BaseStrategy {
 
                 if timestamp >= close_all_time {
                     if self.close_all_sent_for_session != Some(session_start) {
-                        self.close_all_sent_for_session = Some(session_start);
+                        self.close_all_sent_for_session =
+                            Some(session_start);
 
                         print_log(
                             self.debug_mode,
@@ -315,6 +316,7 @@ impl Strategy for BaseStrategy {
                                         "Forced close {} minutes before market close",
                                         self.close_all_before_market_close_minutes,
                                     ),
+                                    ts_ms: quote.timestamp_ms,
                                 }
                             );
                     }
