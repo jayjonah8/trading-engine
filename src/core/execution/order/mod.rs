@@ -1,15 +1,19 @@
+pub mod changes;
 pub mod id;
 pub mod order;
 pub mod order_type;
 pub mod orders;
+pub mod pending_replace;
 pub mod purpose;
 pub mod state;
 pub mod time_in_force;
 
+pub use changes::OrderChanges;
 pub use id::OrderId;
 pub use order::Order;
 pub use order_type::OrderType;
 pub use orders::Orders;
+pub use pending_replace::PendingOrderReplace;
 pub use purpose::OrderPurpose;
 pub use state::OrderState;
 pub use time_in_force::TimeInForce;

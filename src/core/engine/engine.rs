@@ -66,7 +66,7 @@ pub enum EngineEvent {
     CancelOrder { order_id: OrderId, reason: String },
 
     /// Requests replacement/modification of an active engine order.
-    ReplaceOrder { order_id: OrderId, quantity: Option<f64>, limit_px: Option<f64>, stop_px: Option<f64>, reason: String },
+    ReplaceOrder { order_id: OrderId, quantity: Option<f64>, limit_px: Option<f64>, stop_px: Option<f64>, reason: String, ts_ms: i64 },
 
     /// Requests closure of one strategy trade associated with a symbol.
     ///
@@ -240,9 +240,9 @@ impl Engine {
                 // self.handle_cancel_order(order_id, reason);
             }
 
-            EngineEvent::ReplaceOrder { order_id, quantity, limit_px, stop_px, reason } => {
+            EngineEvent::ReplaceOrder { order_id, quantity, limit_px, stop_px, reason, ts_ms } => {
                 let changes = OrderChanges { quantity, limit_px, stop_px };
-                // self.handle_replace_order(order_id, changes, reason);
+                self.handle_replace_order(order_id, changes, reason, ts_ms);
             }
 
             EngineEvent::CloseSingleTrade { symbol, reason } => {
@@ -310,8 +310,8 @@ impl Engine {
                 self.handle_order_rejected(order_id, reason, ts_ms);
             }
 
-            ExecEvent::OrderReplaced { .. } => {
-                // self.handle_order_replaced(event);
+            ExecEvent::OrderReplaced { order_id, venue_order_id, ts_ms } => {
+                self.handle_order_replaced(order_id, venue_order_id, ts_ms);
             }
 
             ExecEvent::Error { order_id, message, ts_ms } => {

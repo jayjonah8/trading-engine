@@ -253,6 +253,7 @@ impl Engine {
             post_only: intent.post_only,
             filled_quantity: 0.0,
             avg_fill_px: None,
+            pending_replace: None,
             state: OrderState::PendingSubmit,
             created_ts_ms: intent.ts_ms,
             updated_ts_ms: intent.ts_ms,

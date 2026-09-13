@@ -134,6 +134,32 @@ impl RiskReservations {
             .sum()
     }
 
+    /// Updates the remaining quantity/notional reserved by an existing order.
+    ///
+    /// Used after a confirmed order replacement changes the order's remaining
+    /// execution exposure.
+    pub fn update(
+        &mut self,
+        order_id: OrderId,
+        quantity: f64,
+        notional: f64,
+        ts_ms: i64,
+    ) -> bool {
+        let Some(reservation) = self.reservations.get_mut(&order_id) else {
+            return false;
+        };
+
+        reservation.quantity = quantity.max(0.0);
+        reservation.notional = notional.max(0.0);
+        reservation.updated_ts_ms = ts_ms;
+
+        if reservation.quantity <= f64::EPSILON {
+            self.reservations.remove(&order_id);
+        }
+
+        true
+    }
+
     /// Returns total notional reserved by all active entry orders.
     pub fn total_entry_notional(&self) -> f64 {
         self.reservations

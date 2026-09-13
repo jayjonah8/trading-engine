@@ -149,6 +149,7 @@ async fn test_hyperliquid_router_to_adapter() {
         post_only: false,
         filled_quantity: 0.0,
         avg_fill_px: None,
+        pending_replace: None,
         state: OrderState::PendingSubmit,
         created_ts_ms: 1,
         updated_ts_ms: 1,

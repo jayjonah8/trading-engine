@@ -3,6 +3,7 @@
 use crate::core::execution::{
     order::{
         Order,
+        OrderChanges,
         OrderId,
     },
     Venue,
@@ -95,28 +96,3 @@ impl ExecCommand {
 }
 
 
-// ============================================================
-// ORDER CHANGES
-// ============================================================
-
-/// Requested changes to an existing order.
-///
-/// Only fields containing `Some(...)` should be changed. All other order
-/// properties remain unchanged.
-///
-/// The execution adapter determines how the requested changes are implemented
-/// by its venue. For example, a venue may support native modification while
-/// another may require cancel-and-replace.
-///
-/// TODO: Replace `f64` with canonical `Quantity` and `Price` types.
-#[derive(Debug, Clone, Default)]
-pub struct OrderChanges {
-    /// New total requested quantity.
-    pub quantity: Option<f64>,
-
-    /// New limit price.
-    pub limit_px: Option<f64>,
-
-    /// New stop trigger price.
-    pub stop_px: Option<f64>,
-}

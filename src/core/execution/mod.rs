@@ -7,16 +7,18 @@ pub mod side;
 pub mod venue;
 
 pub use capabilities::VenueCapabilities;
-pub use command::{ExecCommand, OrderChanges};
+pub use command::ExecCommand;
 pub use event::ExecEvent;
 pub use fill::{ExecutionId, Fill, FillLedger};
 pub use order::{
     Order,
+    OrderChanges,
     OrderId,
     OrderPurpose,
-    Orders,
     OrderState,
     OrderType,
+    Orders,
+    PendingOrderReplace,
     TimeInForce,
 };
 pub use side::Side;

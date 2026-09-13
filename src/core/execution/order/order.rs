@@ -1,18 +1,20 @@
 #![allow(dead_code)]
 
-use crate::core::execution::{
-    order::{
-        id::OrderId,
-        order_type::OrderType,
-        purpose::OrderPurpose,
-        state::OrderState,
-        time_in_force::TimeInForce,
+use crate::core::{
+    execution::{
+        order::{
+            id::OrderId,
+            order_type::OrderType,
+            pending_replace::PendingOrderReplace,
+            purpose::OrderPurpose,
+            state::OrderState,
+            time_in_force::TimeInForce,
+        },
+        side::Side,
+        Venue,
     },
-    side::Side,
+    trades::TradeId,
 };
-
-use crate::core::trades::TradeId;
-use crate::core::execution::Venue;
 
 /// Canonical engine representation of an execution order.
 ///
@@ -120,6 +122,15 @@ pub struct Order {
     ///
     /// TODO: Replace with `Option<Price>`.
     pub avg_fill_px: Option<f64>,
+
+    /// Replacement request currently awaiting venue confirmation.
+    ///
+    /// `Some(...)` means the engine has requested an asynchronous modification
+    /// but has not yet received confirmation that the venue applied it.
+    ///
+    /// The canonical order fields are not changed until `OrderReplaced` confirms
+    /// the replacement.
+    pub pending_replace: Option<PendingOrderReplace>,
 
     /// Current engine lifecycle state.
     pub state: OrderState,
