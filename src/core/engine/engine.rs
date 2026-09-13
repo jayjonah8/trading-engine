@@ -302,8 +302,8 @@ impl Engine {
                 self.handle_order_canceled(order_id, ts_ms);
             }
 
-            ExecEvent::OrderExpired { .. } => {
-                // self.handle_order_expired(event);
+            ExecEvent::OrderExpired { order_id, ts_ms } => {
+                self.handle_order_expired(order_id, ts_ms);
             }
 
             ExecEvent::OrderRejected { order_id, reason, ts_ms } => {
