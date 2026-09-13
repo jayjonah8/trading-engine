@@ -84,7 +84,11 @@ pub enum EngineEvent {
     /// simulation, and historical backtesting.
     CloseTrade { trade_id: TradeId, reason: String, ts_ms: i64 },
 
-    /// Requests closure of all active directional trades.
+    /// Requests closure of every eligible open Trade owned by this Engine instance.
+    ///
+    /// This is intentionally engine-wide rather than strategy-specific.
+    /// It is used for bot-wide liquidation events such as end-of-session shutdown
+    /// or emergency risk reduction.
     CloseAllTrades { reason: String, ts_ms: i64 },
 
     /// Market-price update used for valuation and strategy-level risk logic.
