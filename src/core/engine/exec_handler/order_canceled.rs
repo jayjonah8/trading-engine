@@ -1,10 +1,5 @@
 #![allow(dead_code)]
 
-use std::time::{
-    Instant,
-    SystemTime,
-};
-
 use crate::{
     core::{
         engine::engine::Engine,
@@ -17,6 +12,82 @@ use crate::{
     },
     shared::print_log,
 };
+
+
+// IMPORTANT: Canceled / Expired describe ORDER LIFECYCLE outcomes,
+// not execution OrderType.
+//
+// They are separate concepts:
+//
+// OrderType:
+//     Market / Limit / StopMarket / StopLimit
+//     = describes HOW an order becomes executable.
+//
+// OrderState:
+//     Working / Filled / Canceled / Rejected / Expired / ...
+//     = describes WHAT happened to the order during its lifecycle.
+//
+// A canceled or expired order may already have received partial fills.
+//
+// Example:
+//
+//     Limit order requests 100 shares
+//         ↓
+//     30 shares fill
+//         ↓
+//     70 shares remain active
+//         ↓
+//     remaining 70 shares are canceled or expire
+//
+// The original 30-share Fill remains real and authoritative.
+// Cancellation/expiration only terminates the REMAINING unfilled quantity.
+//
+// Therefore:
+//
+//     ZERO fills + entry canceled/expired
+//         -> no exposure exists
+//         -> remove the still-Opening Trade
+//
+//     PARTIAL fills + entry canceled/expired
+//         -> real exposure exists
+//         -> keep the Trade
+//         -> Opening becomes Open with the quantity actually filled
+//
+// `handle_exec_fill()` already applied every confirmed fill to the Order,
+// Position, Trade, and RiskReservation before this terminal lifecycle event.
+// It also sets `Trade.opened_ts_ms` from the first confirmed entry Fill.
+//
+// These handlers must NEVER undo previously confirmed fills.
+
+// NOTE:
+// `OrderCanceled` and `OrderExpired` may be relatively uncommon for the
+// engine's initial market-order strategies, but they are important parts of
+// the canonical order lifecycle.
+//
+// They become significantly more important with limit orders and basic
+// market-making strategies. Market making in particular frequently involves
+// canceling and repricing working orders, making `OrderCanceled` a common
+// execution event.
+//
+// Supporting these states also allows every execution adapter to translate
+// venue-specific behavior into the same canonical engine lifecycle:
+//
+//     Order
+//         ↓
+//     Working
+//         ↓
+//     Fill(s)
+//         ↓
+//     Filled / Canceled / Expired / Rejected
+//
+// Even if cancellation and expiration are rarely encountered by the initial
+// strategies, keeping them as first-class lifecycle events makes the execution
+// architecture complete and ready for more advanced order-management flows.
+
+
+// ============================================================
+// 
+// ============================================================
 
 
 // OrderCanceled
@@ -107,10 +178,6 @@ impl Engine {
         // DUPLICATE CANCELLATION
         // ============================================================
 
-        // Repeated cancellation confirmations are harmless.
-        //
-        // Reconnects, polling, or repeated venue lifecycle updates may report
-        // the same cancellation more than once.
         if order.state == OrderState::Canceled {
             print_log(
                 self.debug_mode,
@@ -162,8 +229,6 @@ impl Engine {
         // CAPTURE ORDER METADATA
         // ============================================================
 
-        // Capture everything needed below before mutating Orders so we do not
-        // keep an immutable borrow while touching RiskState and Trades.
         let trade_id =
             order.trade_id;
 
@@ -293,6 +358,7 @@ impl Engine {
                     //
                     // - Trade.quantity
                     // - Trade.avg_entry_px
+                    // - Trade.opened_ts_ms
                     // - Position
                     // - Order.filled_quantity
                     //
@@ -301,25 +367,16 @@ impl Engine {
                     //
                     // The logical Trade therefore becomes Open with only the
                     // quantity that actually executed.
+                    //
+                    // No wall-clock timing is created here. The first confirmed
+                    // entry Fill already established `opened_ts_ms`, which is
+                    // the canonical opening time used by live, simulation, and
+                    // historical backtest risk logic.
                     if filled_quantity > f64::EPSILON
                         && trade.state == TradeState::Opening
                     {
                         trade.state =
                             TradeState::Open;
-
-                        if trade.entry_time.is_none() {
-                            trade.entry_time =
-                                Some(
-                                    Instant::now()
-                                );
-                        }
-
-                        if trade.entry_wall_time.is_none() {
-                            trade.entry_wall_time =
-                                Some(
-                                    SystemTime::now()
-                                );
-                        }
 
                         print_log(
                             self.debug_mode,

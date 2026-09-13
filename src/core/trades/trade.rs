@@ -139,12 +139,12 @@ pub struct Trade {
     /// Timestamp when the final remaining exposure was closed.
     pub closed_ts_ms: Option<i64>,
 
-    /// Monotonic timer captured when the trade becomes open.
-    ///
-    /// Used for reliable elapsed-duration checks during the current process.
-    pub entry_time: Option<Instant>,
+    // /// Monotonic timer captured when the trade becomes open.
+    // ///
+    // /// Used for reliable elapsed-duration checks during the current process.
+    // pub entry_time: Option<Instant>,
 
-    /// Real-world clock time captured when the trade becomes open.
-    pub entry_wall_time: Option<SystemTime>,
+    // /// Real-world clock time captured when the trade becomes open.
+    // pub entry_wall_time: Option<SystemTime>,
 }
 

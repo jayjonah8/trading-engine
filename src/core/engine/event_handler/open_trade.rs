@@ -226,8 +226,6 @@ impl Engine {
             created_ts_ms: intent.ts_ms,
             opened_ts_ms: None,
             closed_ts_ms: None,
-            entry_time: None,
-            entry_wall_time: None,
         };
 
         // ============================================================

@@ -144,17 +144,30 @@ pub enum ExecutionMode {
     Simulation,
 }
 
+
+/// Current high-level operating phase of the engine.
+///
+/// TODO: Expand this later if the engine gains explicit startup,
+/// reconciliation, shutdown, or recovery phases.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TradingPhase {
     Normal,
     ClosingTrades 
 }
 
+
 // ============================================================
 // last_px HASH VALUE
 // ============================================================
+
+/// Most recent market price known by the engine for a symbol.
+///
+/// TODO: Replace primitive types with canonical `Symbol` and `Price`
 #[derive(Debug, Clone, Copy)]
 pub struct LastPrice {
     pub px: f64,
     pub ts_ms: i64,
 }
+
+
+

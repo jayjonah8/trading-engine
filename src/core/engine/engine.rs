@@ -21,6 +21,8 @@ use crate::core::{
         state::{
             EngineState,
             ExecutionMode,
+            LastPrice,
+            TradingPhase,
         },
     },
     engine_view::EngineView,
@@ -38,23 +40,6 @@ use crate::core::{
 
 use crate::notifications::env_helpers::validate_notification_env;
 
-/// Current high-level operating phase of the engine.
-///
-/// TODO: Expand this later if the engine gains explicit startup,
-/// reconciliation, shutdown, or recovery phases.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TradingPhase {
-    Normal,
-}
-
-/// Most recent market price known by the engine for a symbol.
-///
-/// TODO: Replace primitive types with canonical `Symbol` and `Price`.
-#[derive(Debug, Clone, Copy)]
-pub struct LastPrice {
-    pub px: f64,
-    pub ts_ms: i64,
-}
 
 /// Events entering the authoritative engine loop.
 ///
@@ -264,15 +249,12 @@ impl Engine {
             }
 
             EngineEvent::PriceTick { symbol, px, ts_ms } => {
-                self.last_px.insert(symbol.clone(), LastPrice { px, ts_ms });
-                // self.check_risk_for_symbol(&symbol, px, ts_ms);
+                self.handle_price_tick(symbol, px, ts_ms);
             }
 
+            // TODO: delete this later (all will go through PriceTick)
             EngineEvent::PriceTickBacktest { symbol, px, ts_ms } => {
-                let sym = symbol.clone();
-
-                self.last_px.insert(symbol, LastPrice { px, ts_ms });
-                // self.check_risk_for_backtest_symbol(&sym, px, ts_ms);
+                self.handle_price_tick(symbol, px, ts_ms);
             }
 
             EngineEvent::BacktestBarrier { done } => {
