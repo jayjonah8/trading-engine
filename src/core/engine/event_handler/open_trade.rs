@@ -393,17 +393,38 @@ impl Engine {
             intent.target_notional
                 / intent.signal_px;
 
+
         // TODO:
-        // Replace this temporary normalization with canonical venue/instrument
-        // quantity rules once instrument metadata is added to the engine.
+        // Replace this temporary symbol-specific normalization with canonical
+        // venue/instrument quantity rules loaded from Hyperliquid Meta.
         //
-        // For the current Hyperliquid BTC test, normalize to 5 decimal places so
-        // Order.quantity and RiskReservation.quantity match the quantity actually
-        // submitted to the venue.
+        // Hyperliquid quantity precision is asset-specific:
+        //
+        // BTC -> 5 decimals
+        // ETH -> 4 decimals
+        //
+        // The canonical Order quantity must match the quantity that will actually
+        // be submitted to the venue so fills cannot appear as overfills.
+        let quantity_decimals =
+            match intent.symbol.as_str() {
+                "BTC" => 5,
+                "ETH" => 4,
+
+                // Temporary fallback only.
+                _ => 5,
+            };
+
+
+        let scale =
+            10_f64.powi(
+                quantity_decimals
+            );
+
+
         let quantity =
-            (raw_quantity * 100_000.0)
-                .floor()
-                / 100_000.0;
+            (raw_quantity * scale)
+                .round()
+                / scale;
 
 
         // ============================================================

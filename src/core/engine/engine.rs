@@ -13,6 +13,7 @@ use tokio::sync::{
 
 use crate::core::{
     config::Config,
+    venue_state::VenueState,
     engine::{
         shared::{
             get_execution_mode,
@@ -37,6 +38,7 @@ use crate::core::{
     trade_intent::TradeIntent,
     trades::TradeId,
 };
+
 
 use crate::notifications::env_helpers::validate_notification_env;
 
@@ -113,6 +115,12 @@ pub struct Engine {
 
     /// Canonical execution, position, trade, and risk state.
     pub state: EngineState,
+
+    /// External venue/account/instrument state.
+    ///
+    /// This contains normalized account information and instrument execution
+    /// metadata supplied by venue-specific runtime components.
+    pub venue_state: VenueState,
 
     /// Most recent known price by symbol.
     pub last_px: HashMap<String, LastPrice>,
@@ -206,6 +214,7 @@ impl Engine {
             cfg,
             general,
             state: EngineState::new(risk_limits),
+            venue_state: VenueState::new(),
             last_px: HashMap::new(),
             tx_view,
             tx_engine,

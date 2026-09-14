@@ -8,3 +8,4 @@ pub mod positions;
 pub mod risk;
 pub mod trade_intent;
 pub mod trades;
+pub mod venue_state;

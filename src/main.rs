@@ -95,7 +95,7 @@ async fn main() -> Result<()> {
         // ============================================================
 
         // Maximum active directional Trades across the entire Engine.
-        max_active_trades: Some(2),
+        max_active_trades: Some(0),
 
         // Maximum number of distinct assets with active Trades.
         max_active_assets: Some(2),
