@@ -150,6 +150,19 @@ impl Engine {
             // query or otherwise reconcile venue state using venue_order_id,
             // client_order_id, or another stable correlation identifier.
 
+            // TODO:
+            // Add explicit handling for authoritative order replacement rejection/failure.
+            //
+            // A confirmed replacement failure can safely roll back:
+            // - Order.pending_replace
+            // - OrderState::PendingReplace -> Working
+            // - any additional risk capacity reserved for the pending replacement
+            //
+            // Keep this separate from ExecEvent::Error, which is ambiguous and must
+            // preserve canonical state until venue reconciliation determines what happened.
+
+
+
             return;
         }
 

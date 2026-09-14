@@ -8,12 +8,17 @@ use crate::{
             ExecCommand,
             OrderChanges,
             OrderId,
+            OrderPurpose,
             OrderState,
             OrderType,
             PendingOrderReplace,
         },
 
-        risk::checks::check_order_notional,
+        risk::checks::{
+            check_gross_notional,
+            check_order_notional,
+            check_symbol_notional,
+        },
     },
 
     shared::print_log,
@@ -42,7 +47,7 @@ use crate::{
 //
 // --------------------------------------------------------------------------
 //
-// Canonical order identity is intentionally IMMUTABLE:
+// Canonical order identity is IMMUTABLE:
 //
 // - OrderId
 // - venue
@@ -58,12 +63,6 @@ use crate::{
 // - limit_px
 // - stop_px
 //
-// Some venues may support broader modifications, including fields such as
-// side, order type, reduce-only, or other venue-specific parameters.
-//
-// The core engine intentionally exposes a smaller, safer common subset.
-// Venue-specific capabilities must not leak into canonical engine semantics.
-//
 // --------------------------------------------------------------------------
 //
 // Replacement is asynchronous:
@@ -74,7 +73,7 @@ use crate::{
 //     ↓
 // validate requested changes
 //     ↓
-// risk-check proposed order
+// risk-check proposed replacement
 //     ↓
 // store PendingOrderReplace
 //     ↓
@@ -101,18 +100,18 @@ use crate::{
 // IMPORTANT:
 //
 // This request-side handler does NOT permanently modify quantity, limit_px,
-// or stop_px. Those canonical fields are changed only after the venue
-// confirms the replacement through ExecEvent::OrderReplaced.
-
-
-// TODO:
-// When max_gross_notional and max_symbol_notional risk checks are implemented,
-// replacement requests that increase exposure must reserve the additional
-// risk capacity while PendingReplace is outstanding.
+// or stop_px. Those canonical fields change only after the venue confirms
+// replacement through ExecEvent::OrderReplaced.
 //
-// The current first version performs the available per-order notional check.
-// Full pending-replacement risk-delta reservation will be added alongside
-// canonical gross/symbol exposure accounting.
+// For Entry Orders, replacement risk checks account for:
+//
+// established Position exposure
+//     +
+// existing Entry reservations
+//     +
+// additional risk introduced by this replacement
+//
+// The existing reservation for this Order must NOT be counted twice.
 
 
 // ============================================================
@@ -120,16 +119,9 @@ use crate::{
 // ============================================================
 
 impl Engine {
-    /// Requests modification of an existing active canonical order.
+    /// Requests modification of an existing active canonical Order.
     ///
-    /// This is the REQUEST side of the asynchronous replacement lifecycle.
-    ///
-    /// It validates the proposed changes, stores them in `pending_replace`,
-    /// transitions the order to `PendingReplace`, and sends the canonical
-    /// `ExecCommand::ReplaceOrder` to the execution router.
-    ///
-    /// The actual Order fields are not changed here. They are applied only
-    /// after `ExecEvent::OrderReplaced` confirms the venue accepted them.
+    /// This is the request side of the asynchronous replacement lifecycle.
     pub fn handle_replace_order(
         &mut self,
         order_id: OrderId,
@@ -141,9 +133,7 @@ impl Engine {
         // FIND ORDER
         // ============================================================
 
-        let Some(order) =
-            self.state.orders.get(order_id)
-        else {
+        let Some(order) = self.state.orders.get(order_id) else {
             print_log(
                 self.debug_mode,
                 true,
@@ -153,10 +143,6 @@ impl Engine {
                 ),
             );
 
-            // TODO:
-            // Send a remote Slack/Discord error notification in live trading
-            // when replacement requests reference unknown canonical orders.
-
             return;
         };
 
@@ -165,18 +151,6 @@ impl Engine {
         // ORDER STATE
         // ============================================================
 
-        // For the initial canonical implementation, replacement is only
-        // allowed for an order that is actively Working.
-        //
-        // Do not replace:
-        //
-        // PendingSubmit
-        // PendingCancel
-        // PendingReplace
-        // Filled
-        // Canceled
-        // Rejected
-        // Expired
         if order.state != OrderState::Working {
             print_log(
                 self.debug_mode,
@@ -197,11 +171,6 @@ impl Engine {
         // EXISTING PENDING REPLACEMENT
         // ============================================================
 
-        // Only one replacement may be outstanding for an Order at a time.
-        //
-        // Allowing multiple asynchronous replacements before confirmation
-        // would make it ambiguous which requested changes a venue response
-        // actually confirmed.
         if order.pending_replace.is_some() {
             print_log(
                 self.debug_mode,
@@ -241,9 +210,7 @@ impl Engine {
         // ============================================================
 
         if let Some(quantity) = changes.quantity {
-            if !quantity.is_finite()
-                || quantity <= 0.0
-            {
+            if !quantity.is_finite() || quantity <= 0.0 {
                 print_log(
                     self.debug_mode,
                     true,
@@ -259,19 +226,15 @@ impl Engine {
             }
 
 
-            // Replacement quantity represents NEW TOTAL requested quantity,
-            // not remaining quantity.
+            // Replacement quantity represents NEW TOTAL requested quantity.
             //
             // Example:
             //
             // original total = 10
-            // already filled = 2
+            // filled         = 2
             // replacement    = 6
             //
-            // new remaining = 6 - 2 = 4
-            //
-            // The new total therefore cannot be less than quantity that has
-            // already executed.
+            // new remaining = 4
             if quantity < order.filled_quantity {
                 print_log(
                     self.debug_mode,
@@ -289,14 +252,7 @@ impl Engine {
             }
 
 
-            // Setting total quantity exactly equal to the quantity already
-            // filled would leave zero remaining quantity.
-            //
-            // Use CancelOrder to remove the remaining working quantity instead
-            // of encoding cancellation as a replacement.
-            if quantity <= order.filled_quantity
-                + f64::EPSILON
-            {
+            if quantity <= order.filled_quantity + f64::EPSILON {
                 print_log(
                     self.debug_mode,
                     true,
@@ -319,9 +275,7 @@ impl Engine {
         // ============================================================
 
         if let Some(limit_px) = changes.limit_px {
-            if !limit_px.is_finite()
-                || limit_px <= 0.0
-            {
+            if !limit_px.is_finite() || limit_px <= 0.0 {
                 print_log(
                     self.debug_mode,
                     true,
@@ -339,9 +293,7 @@ impl Engine {
 
 
         if let Some(stop_px) = changes.stop_px {
-            if !stop_px.is_finite()
-                || stop_px <= 0.0
-            {
+            if !stop_px.is_finite() || stop_px <= 0.0 {
                 print_log(
                     self.debug_mode,
                     true,
@@ -362,24 +314,9 @@ impl Engine {
         // ORDER-TYPE FIELD VALIDATION
         // ============================================================
 
-        // Canonical replacement fields must make sense for the OrderType.
-        //
-        // Market
-        //     quantity only
-        //
-        // Limit
-        //     quantity / limit_px
-        //
-        // StopMarket
-        //     quantity / stop_px
-        //
-        // StopLimit
-        //     quantity / limit_px / stop_px
         match order.order_type {
             OrderType::Market => {
-                if changes.limit_px.is_some()
-                    || changes.stop_px.is_some()
-                {
+                if changes.limit_px.is_some() || changes.stop_px.is_some() {
                     print_log(
                         self.debug_mode,
                         true,
@@ -427,8 +364,7 @@ impl Engine {
             }
 
             OrderType::StopLimit => {
-                // Quantity, limit price, and stop price are all valid
-                // replacement parameters for a canonical StopLimit order.
+                // quantity / limit_px / stop_px are all valid.
             }
         }
 
@@ -437,45 +373,28 @@ impl Engine {
         // ACTUAL CHANGE CHECK
         // ============================================================
 
-        // Reject requests that technically contain fields but would not change
-        // the canonical Order at all.
-        let quantity_changed =
-            changes.quantity
-                .map(|value| {
-                    (value - order.quantity).abs()
-                        > f64::EPSILON
-                })
-                .unwrap_or(false);
+        let quantity_changed = changes.quantity
+            .map(|value| (value - order.quantity).abs() > f64::EPSILON)
+            .unwrap_or(false);
 
-        let limit_changed =
-            changes.limit_px
-                .map(|value| {
-                    order.limit_px
-                        .map(|current| {
-                            (value - current).abs()
-                                > f64::EPSILON
-                        })
-                        .unwrap_or(true)
-                })
-                .unwrap_or(false);
+        let limit_changed = changes.limit_px
+            .map(|value| {
+                order.limit_px
+                    .map(|current| (value - current).abs() > f64::EPSILON)
+                    .unwrap_or(true)
+            })
+            .unwrap_or(false);
 
-        let stop_changed =
-            changes.stop_px
-                .map(|value| {
-                    order.stop_px
-                        .map(|current| {
-                            (value - current).abs()
-                                > f64::EPSILON
-                        })
-                        .unwrap_or(true)
-                })
-                .unwrap_or(false);
+        let stop_changed = changes.stop_px
+            .map(|value| {
+                order.stop_px
+                    .map(|current| (value - current).abs() > f64::EPSILON)
+                    .unwrap_or(true)
+            })
+            .unwrap_or(false);
 
 
-        if !quantity_changed
-            && !limit_changed
-            && !stop_changed
-        {
+        if !quantity_changed && !limit_changed && !stop_changed {
             print_log(
                 self.debug_mode,
                 true,
@@ -491,88 +410,241 @@ impl Engine {
 
 
         // ============================================================
-        // PROJECTED ORDER NOTIONAL
+        // PROJECTED EXECUTION VALUES
         // ============================================================
 
-        // Replacement can increase risk even when quantity does not change.
+        let projected_quantity = changes.quantity.unwrap_or(order.quantity);
+
+        let projected_remaining_quantity =
+            (projected_quantity - order.filled_quantity).max(0.0);
+
+        let reference_px = changes.limit_px
+            .or(order.limit_px)
+            .or(changes.stop_px)
+            .or(order.stop_px)
+            .or_else(|| {
+                self.last_px
+                    .get(&order.symbol)
+                    .map(|last| last.px)
+            });
+
+
+        // ============================================================
+        // ENTRY EXPOSURE RISK CHECKS
+        // ============================================================
+
+        // Exit-like Orders reduce existing exposure and should not be blocked
+        // by entry exposure limits.
         //
-        // Example:
-        //
-        // BUY 10 @ $100
-        //     -> replace
-        // BUY 10 @ $120
-        //
-        // The quantity is unchanged but requested notional increased.
-        //
-        // Use the best canonical reference price currently available:
-        //
-        // 1. proposed limit price
-        // 2. existing limit price
-        // 3. proposed stop price
-        // 4. existing stop price
-        // 5. latest engine market price
-        let projected_quantity =
-            changes.quantity
-                .unwrap_or(order.quantity);
-
-        let reference_px =
-            changes.limit_px
-                .or(order.limit_px)
-                .or(changes.stop_px)
-                .or(order.stop_px)
-                .or_else(|| {
-                    self.last_px
-                        .get(&order.symbol)
-                        .map(|last| last.px)
-                });
+        // For now, these replacement exposure checks apply specifically to
+        // directional Entry Orders.
+        if order.purpose == OrderPurpose::Entry {
+            let notional_limits_enabled =
+                self.state.risk.limits.max_order_notional.is_some()
+                    || self.state.risk.limits.max_gross_notional.is_some()
+                    || self.state.risk.limits.max_symbol_notional.is_some();
 
 
-        // Only perform this calculation when the engine currently has a
-        // max-order-notional limit configured.
-        //
-        // If no such limit exists, no per-order notional gate is required.
-        if self.state.risk.limits.max_order_notional.is_some() {
-            let Some(reference_px) =
-                reference_px
-            else {
-                print_log(
-                    self.debug_mode,
-                    true,
-                    format!(
-                        "[ENGINE] REPLACE ORDER REJECTED | order_id={} | symbol={} | reason=no price available for order-notional risk check",
-                        order.id,
-                        order.symbol,
-                    ),
-                );
+            let reference_px =
+                if notional_limits_enabled {
+                    let Some(reference_px) = reference_px else {
+                        print_log(
+                            self.debug_mode,
+                            true,
+                            format!(
+                                "[ENGINE] REPLACE ORDER REJECTED | order_id={} | symbol={} | reason=no price available for replacement risk checks",
+                                order.id,
+                                order.symbol,
+                            ),
+                        );
 
-                return;
-            };
+                        return;
+                    };
 
-
-            let projected_notional =
-                projected_quantity
-                    * reference_px;
+                    Some(reference_px)
+                } else {
+                    None
+                };
 
 
-            if let Err(err) =
-                check_order_notional(
-                    &self.state.risk.limits,
-                    projected_notional,
-                )
-            {
-                print_log(
-                    self.debug_mode,
-                    true,
-                    format!(
-                        "[ENGINE] REPLACE ORDER REJECTED | order_id={} | symbol={} | projected_notional={} | error={:?}",
-                        order.id,
-                        order.symbol,
-                        projected_notional,
-                        err,
-                    ),
-                );
+            if let Some(reference_px) = reference_px {
+                // ====================================================
+                // MAX ORDER NOTIONAL
+                // ====================================================
 
-                return;
+                // Per-order notional uses the replacement's NEW TOTAL quantity.
+                let projected_order_notional =
+                    projected_quantity * reference_px;
+
+
+                if let Err(err) =
+                    check_order_notional(
+                        &self.state.risk.limits,
+                        projected_order_notional,
+                    )
+                {
+                    print_log(
+                        self.debug_mode,
+                        true,
+                        format!(
+                            "[ENGINE] REPLACE ORDER REJECTED | order_id={} | symbol={} | projected_order_notional={} | error={:?}",
+                            order.id,
+                            order.symbol,
+                            projected_order_notional,
+                            err,
+                        ),
+                    );
+
+                    return;
+                }
+
+
+                // ====================================================
+                // PROJECTED REMAINING ENTRY NOTIONAL
+                // ====================================================
+
+                // Only unfilled quantity still represents reserved future
+                // exposure.
+                let projected_remaining_notional =
+                    projected_remaining_quantity * reference_px;
+
+
+                let existing_reserved_notional =
+                    self.state
+                        .risk
+                        .reservations
+                        .get(order_id)
+                        .filter(|reservation| {
+                            reservation.purpose
+                                == crate::core::risk::ReservationPurpose::Entry
+                        })
+                        .map(|reservation| reservation.notional)
+                        .unwrap_or(0.0);
+
+
+                // check_gross_notional() already includes every active Entry
+                // reservation, including this Order's CURRENT reservation.
+                //
+                // Therefore only add the replacement's INCREASE beyond the
+                // currently reserved amount.
+                let additional_entry_notional =
+                    (projected_remaining_notional - existing_reserved_notional)
+                        .max(0.0);
+
+
+                // ====================================================
+                // CURRENT GROSS POSITION NOTIONAL
+                // ====================================================
+
+                let current_gross_notional =
+                    self.state
+                        .positions
+                        .iter()
+                        .map(|(_, position)| {
+                            let px =
+                                self.last_px
+                                    .get(&position.key.symbol)
+                                    .map(|last| last.px)
+                                    .or(position.avg_entry_px)
+                                    .unwrap_or(0.0);
+
+                            position.absolute_quantity() * px
+                        })
+                        .sum::<f64>();
+
+
+                // ====================================================
+                // MAX GROSS NOTIONAL
+                // ====================================================
+
+                if let Err(err) =
+                    check_gross_notional(
+                        &self.state.risk.limits,
+                        &self.state.risk.reservations,
+                        current_gross_notional,
+                        additional_entry_notional,
+                    )
+                {
+                    print_log(
+                        self.debug_mode,
+                        true,
+                        format!(
+                            "[ENGINE] REPLACE ORDER REJECTED | order_id={} | symbol={} | additional_notional={} | error={:?}",
+                            order.id,
+                            order.symbol,
+                            additional_entry_notional,
+                            err,
+                        ),
+                    );
+
+                    return;
+                }
+
+
+                // ====================================================
+                // CURRENT SYMBOL POSITION NOTIONAL
+                // ====================================================
+
+                let current_symbol_notional =
+                    self.state
+                        .positions
+                        .iter()
+                        .filter(|(_, position)| {
+                            position.key.symbol == order.symbol
+                        })
+                        .map(|(_, position)| {
+                            let px =
+                                self.last_px
+                                    .get(&position.key.symbol)
+                                    .map(|last| last.px)
+                                    .or(position.avg_entry_px)
+                                    .unwrap_or(reference_px);
+
+                            position.absolute_quantity() * px
+                        })
+                        .sum::<f64>();
+
+
+                // ====================================================
+                // RESERVED SYMBOL NOTIONAL
+                // ====================================================
+
+                let reserved_symbol_notional =
+                    self.state
+                        .risk
+                        .reservations
+                        .entry_notional_for_symbol(
+                            &order.symbol
+                        );
+
+
+                // ====================================================
+                // MAX SYMBOL NOTIONAL
+                // ====================================================
+
+                if let Err(err) =
+                    check_symbol_notional(
+                        &self.state.risk.limits,
+                        &order.symbol,
+                        current_symbol_notional,
+                        reserved_symbol_notional,
+                        additional_entry_notional,
+                    )
+                {
+                    print_log(
+                        self.debug_mode,
+                        true,
+                        format!(
+                            "[ENGINE] REPLACE ORDER REJECTED | order_id={} | symbol={} | additional_notional={} | error={:?}",
+                            order.id,
+                            order.symbol,
+                            additional_entry_notional,
+                            err,
+                        ),
+                    );
+
+                    return;
+                }
             }
         }
 
@@ -581,28 +653,19 @@ impl Engine {
         // CAPTURE ROUTING INFORMATION
         // ============================================================
 
-        let venue =
-            order.venue;
-
-        let symbol =
-            order.symbol.clone();
+        let venue = order.venue;
+        let symbol = order.symbol.clone();
 
 
         // ============================================================
         // STORE PENDING REPLACEMENT
         // ============================================================
 
-        // Do NOT change quantity / limit_px / stop_px here.
+        // Do NOT modify canonical quantity / limit_px / stop_px yet.
         //
-        // The venue has not confirmed anything yet.
-        //
-        // Store exactly what the engine requested so OrderReplaced can apply
-        // the confirmed changes later without relying on a venue-specific
-        // response to echo every field.
+        // The venue has not confirmed the replacement.
         {
-            let Some(order) =
-                self.state.orders.get_mut(order_id)
-            else {
+            let Some(order) = self.state.orders.get_mut(order_id) else {
                 print_log(
                     self.debug_mode,
                     true,
@@ -612,11 +675,6 @@ impl Engine {
                         symbol,
                     ),
                 );
-
-                // TODO:
-                // Send a remote Slack/Discord critical error notification in live
-                // trading. The order was validated immediately before this point,
-                // so disappearing here indicates an internal engine-state inconsistency.
 
                 return;
             };
@@ -629,12 +687,8 @@ impl Engine {
                     )
                 );
 
-            order.state =
-                OrderState::PendingReplace;
-
-            order.updated_ts_ms =
-                order.updated_ts_ms
-                    .max(ts_ms);
+            order.state = OrderState::PendingReplace;
+            order.updated_ts_ms = order.updated_ts_ms.max(ts_ms);
         }
 
 
@@ -651,22 +705,10 @@ impl Engine {
                 }
             )
         {
-            // The command never reached the execution router.
-            //
-            // Since the replacement request was not handed off, restore the
-            // canonical Order to Working and remove the pending replacement.
-            if let Some(order) =
-                self.state.orders.get_mut(order_id)
-            {
-                order.pending_replace =
-                    None;
-
-                order.state =
-                    OrderState::Working;
-
-                order.updated_ts_ms =
-                    order.updated_ts_ms
-                        .max(ts_ms);
+            if let Some(order) = self.state.orders.get_mut(order_id) {
+                order.pending_replace = None;
+                order.state = OrderState::Working;
+                order.updated_ts_ms = order.updated_ts_ms.max(ts_ms);
             }
 
 
@@ -681,10 +723,6 @@ impl Engine {
                     err,
                 ),
             );
-
-            // TODO:
-            // Send a remote Slack/Discord critical error notification in
-            // live trading when an execution command cannot reach the router.
 
             return;
         }
@@ -704,31 +742,16 @@ impl Engine {
                 venue,
                 self.state.orders
                     .get(order_id)
-                    .and_then(|order| {
-                        order.pending_replace
-                            .as_ref()
-                    })
-                    .and_then(|pending| {
-                        pending.changes.quantity
-                    }),
+                    .and_then(|order| order.pending_replace.as_ref())
+                    .and_then(|pending| pending.changes.quantity),
                 self.state.orders
                     .get(order_id)
-                    .and_then(|order| {
-                        order.pending_replace
-                            .as_ref()
-                    })
-                    .and_then(|pending| {
-                        pending.changes.limit_px
-                    }),
+                    .and_then(|order| order.pending_replace.as_ref())
+                    .and_then(|pending| pending.changes.limit_px),
                 self.state.orders
                     .get(order_id)
-                    .and_then(|order| {
-                        order.pending_replace
-                            .as_ref()
-                    })
-                    .and_then(|pending| {
-                        pending.changes.stop_px
-                    }),
+                    .and_then(|order| order.pending_replace.as_ref())
+                    .and_then(|pending| pending.changes.stop_px),
                 reason,
             ),
         );

@@ -505,11 +505,17 @@ impl Engine {
         // LOG
         // ============================================================
 
+        let final_state =
+            self.state
+                .orders
+                .get(order_id)
+                .map(|order| order.state);
+
         print_log(
             self.debug_mode,
             true,
             format!(
-                "[ENGINE] ORDER REPLACED | order_id={} | venue_order_id={} | symbol={} | quantity={} | filled_qty={} | remaining_qty={} | limit_px={:?} | stop_px={:?} | state=Working",
+                "[ENGINE] ORDER REPLACED | order_id={} | venue_order_id={} | symbol={} | quantity={} | filled_qty={} | remaining_qty={} | limit_px={:?} | stop_px={:?} | state={:?}",
                 order_id,
                 venue_order_id,
                 symbol,
@@ -518,6 +524,7 @@ impl Engine {
                 new_remaining_quantity,
                 new_limit_px,
                 new_stop_px,
+                final_state,
             ),
         );
     }
