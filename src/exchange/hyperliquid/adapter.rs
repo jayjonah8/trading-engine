@@ -1,10 +1,16 @@
 #![allow(dead_code)]
 
-use ethers::signers::LocalWallet;
+use ethers::{
+    signers::{
+        LocalWallet,
+        Signer,
+    },
+};
 
 use hyperliquid_rust_sdk::{
     BaseUrl,
     ExchangeClient,
+    Message,
 };
 
 use tokio::sync::mpsc::{
@@ -23,10 +29,24 @@ use crate::{
         },
     },
 
-    exchange::hyperliquid::commands::{
-        handle_cancel_order,
-        handle_replace_order,
-        handle_submit_order,
+    exchange::hyperliquid::{
+        commands::{
+            handle_cancel_order,
+            handle_replace_order,
+            handle_submit_order,
+        },
+
+        correlation::HyperliquidOrderCorrelation,
+
+        execution_ws::{
+            health::wait_until_execution_ws_ready,
+            start_execution_ws,
+        },
+
+        mapper::{
+            handle_order_updates,
+            handle_user_event,
+        },
     },
 
     shared::print_log,
@@ -39,20 +59,49 @@ use crate::{
 
 /// Runs the Hyperliquid execution adapter.
 ///
-/// The adapter owns the Hyperliquid execution client and consumes canonical
-/// `ExecCommand`s routed from the Engine.
+/// The adapter owns:
 ///
-/// Venue-specific command translation lives in `commands/*`.
+/// - the Hyperliquid execution client
+/// - canonical Engine execution commands routed to Hyperliquid
+/// - execution-critical WebSocket infrastructure
+/// - adapter-local order correlation
 ///
-/// The adapter never mutates authoritative Engine state. Hyperliquid execution
-/// results are translated into canonical `ExecEvent`s and sent back to the
-/// Engine.
+/// The adapter never mutates authoritative Engine state.
+///
+/// Venue-specific REST/SDK responses and asynchronous WebSocket events are
+/// translated into canonical `ExecEvent`s and sent back to the Engine.
+///
+/// Runtime flow:
+///
+///     Engine
+///         ↓
+///     ExecCommand
+///         ↓
+///     execution router
+///         ↓
+///     Hyperliquid adapter
+///         │
+///         ├── Submit / Cancel / Replace
+///         │
+///         └── execution WebSockets
+///               ├── OrderUpdates
+///               └── UserEvents
+///                         ↓
+///                      mapper
+///                         ↓
+///                     ExecEvent
+///                         ↓
+///                       Engine
+///
+/// The adapter keeps only transport/correlation state. Canonical Orders,
+/// Trades, Positions, risk state, and accounting remain owned by the Engine.
 pub async fn run_hyperliquid_adapter(
     _cfg: Config,
     mut rx_cmd: UnboundedReceiver<ExecCommand>,
     tx_evt: UnboundedSender<ExecEvent>,
 ) {
-    let debug_mode = true;
+    let debug_mode =
+        true;
 
 
     // ============================================================
@@ -60,12 +109,13 @@ pub async fn run_hyperliquid_adapter(
     // ============================================================
 
     let private_key =
-    std::env::var(
-        "HYPERLIQUID_PRIVATE_KEY"
-    )
-    .expect(
-        "HYPERLIQUID_PRIVATE_KEY env var missing"
-    );
+        std::env::var(
+            "HYPERLIQUID_PRIVATE_KEY"
+        )
+        .expect(
+            "HYPERLIQUID_PRIVATE_KEY env var missing"
+        );
+
 
     let wallet: LocalWallet =
         private_key
@@ -75,30 +125,115 @@ pub async fn run_hyperliquid_adapter(
             );
 
 
+    // Capture the public wallet address before moving `wallet` into the
+    // ExchangeClient.
+    //
+    // Hyperliquid execution WebSocket subscriptions are user-address scoped.
+    let user =
+        wallet.address();
+
+
     // ============================================================
     // EXCHANGE CLIENT
     // ============================================================
 
+    // NOTE:
+    // The Hyperliquid SDK currently handles the venue-specific metadata
+    // required for the supported order submission paths.
+    //
     // TODO:
-    // Fetch/cache Hyperliquid `Meta` once during startup and pass
-    // `Some(meta)` here.
-    //
-    // Supplying cached Meta avoids the SDK performing an additional metadata
-    // request during ExchangeClient initialization.
-    //
-    // `None` is acceptable for the initial implementation.
+    // Cache Hyperliquid Meta during adapter startup and pass `Some(meta)`
+    // here as a performance optimization to avoid redundant metadata
+    // requests.
     let exchange_client =
         ExchangeClient::new(
             None,
             wallet,
             Some(BaseUrl::Mainnet),
-            None, // TODO: add Some(meta),  
+            None, // TODO: Some(cached_meta)
             None,
         )
         .await
         .expect(
             "Failed to create Hyperliquid ExchangeClient"
-        ); 
+        );
+
+
+    // ============================================================
+    // EXECUTION WEBSOCKETS
+    // ============================================================
+
+    // Hyperliquid execution state is observed through two independent,
+    // execution-critical user streams:
+    //
+    // OrderUpdates
+    //     -> order lifecycle
+    //
+    // UserEvents
+    //     -> actual individual executions / fills
+    //
+    // The adapter does not begin consuming execution commands until both
+    // subscriptions have successfully connected.
+    let mut execution_ws =
+        start_execution_ws(
+            user,
+            debug_mode,
+        );
+
+
+    print_log(
+        debug_mode,
+        true,
+        "[HYPERLIQUID ADAPTER] waiting for execution WebSockets",
+    );
+
+
+    if let Err(error) =
+        wait_until_execution_ws_ready(
+            &mut execution_ws.health_rx
+        )
+        .await
+    {
+        print_log(
+            debug_mode,
+            true,
+            format!(
+                "[HYPERLIQUID ADAPTER] execution WebSocket health channel closed before readiness | error={}",
+                error,
+            ),
+        );
+
+        return;
+    }
+
+
+    print_log(
+        debug_mode,
+        true,
+        "[HYPERLIQUID ADAPTER] execution WebSockets ready",
+    );
+
+
+    // ============================================================
+    // ORDER CORRELATION
+    // ============================================================
+
+    // Hyperliquid receives the Engine's ClientOrderId as CLOID and returns
+    // that CLOID through OrderUpdates and UserEvents.
+    //
+    // This lightweight adapter-local map resolves:
+    //
+    //     CLOID
+    //       ↓
+    //     ClientOrderId
+    //       ↓
+    //     OrderId
+    //
+    // It is transport correlation only.
+    //
+    // Authoritative canonical Order state remains entirely inside EngineState.
+    let mut correlation =
+        HyperliquidOrderCorrelation::new();
 
 
     print_log(
@@ -109,111 +244,267 @@ pub async fn run_hyperliquid_adapter(
 
 
     // ============================================================
-    // COMMAND LOOP
+    // ADAPTER EVENT LOOP
     // ============================================================
 
-    while let Some(command) =
-        rx_cmd.recv().await
-    {
-        match command {
+    // The adapter consumes two asynchronous input sources:
+    //
+    // 1. Engine commands
+    //
+    //     rx_cmd
+    //         ↓
+    //     Submit / Cancel / Replace
+    //
+    // 2. Hyperliquid execution events
+    //
+    //     execution_ws.raw_rx
+    //         ↓
+    //     mapper
+    //         ↓
+    //     ExecEvent
+    //
+    // Keeping both inside the same adapter task means correlation state does
+    // not require Arc<Mutex<...>> or other shared mutable synchronization.
+    loop {
+        tokio::select! {
 
-            // ========================================================
-            // SUBMIT ORDER
-            // ========================================================
+            // ====================================================
+            // ENGINE COMMAND
+            // ====================================================
 
-            ExecCommand::SubmitOrder {
-                order,
-            } => {
-                if order.venue != Venue::Hyperliquid {
-                    print_log(
-                        debug_mode,
-                        true,
-                        format!(
-                            "[HYPERLIQUID ADAPTER] INVALID ROUTE | order_id={} | venue={:?}",
+            command =
+                rx_cmd.recv() =>
+            {
+                let Some(command) =
+                    command
+                else {
+                    // Engine/router command channel has closed.
+                    //
+                    // This is a normal shutdown condition for the adapter.
+                    break;
+                };
+
+
+                match command {
+
+                    // ================================================
+                    // SUBMIT ORDER
+                    // ================================================
+
+                    ExecCommand::SubmitOrder {
+                        order,
+                    } => {
+                        // --------------------------------------------
+                        // ROUTE VALIDATION
+                        // --------------------------------------------
+
+                        if order.venue != Venue::Hyperliquid {
+                            print_log(
+                                debug_mode,
+                                true,
+                                format!(
+                                    "[HYPERLIQUID ADAPTER] INVALID ROUTE | order_id={} | venue={:?}",
+                                    order.id,
+                                    order.venue,
+                                ),
+                            );
+
+                            continue;
+                        }
+
+
+                        // --------------------------------------------
+                        // REGISTER CORRELATION
+                        // --------------------------------------------
+
+                        // Register BEFORE awaiting venue submission.
+                        //
+                        // Hyperliquid execution events can arrive extremely
+                        // quickly. In the real diagnostic test, UserEvents
+                        // could arrive at essentially the same time as the
+                        // immediate API response.
+                        //
+                        // Registering first guarantees that any CLOID returned
+                        // by the WebSocket already has a canonical OrderId
+                        // available for mapping.
+                        correlation.insert(
+                            order.client_order_id,
                             order.id,
-                            order.venue,
-                        ),
-                    );
+                        );
 
-                    continue;
+
+                        // --------------------------------------------
+                        // SUBMIT
+                        // --------------------------------------------
+
+                        handle_submit_order(
+                            &exchange_client,
+                            &tx_evt,
+                            order,
+                            debug_mode,
+                        )
+                        .await;
+                    }
+
+
+                    // ================================================
+                    // CANCEL ORDER
+                    // ================================================
+
+                    ExecCommand::CancelOrder {
+                        venue,
+                        order_id,
+                    } => {
+                        if venue != Venue::Hyperliquid {
+                            print_log(
+                                debug_mode,
+                                true,
+                                format!(
+                                    "[HYPERLIQUID ADAPTER] INVALID CANCEL ROUTE | order_id={} | venue={:?}",
+                                    order_id,
+                                    venue,
+                                ),
+                            );
+
+                            continue;
+                        }
+
+
+                        handle_cancel_order(
+                            &exchange_client,
+                            &tx_evt,
+                            order_id,
+                            debug_mode,
+                        )
+                        .await;
+                    }
+
+
+                    // ================================================
+                    // REPLACE ORDER
+                    // ================================================
+
+                    ExecCommand::ReplaceOrder {
+                        venue,
+                        order_id,
+                        changes,
+                    } => {
+                        if venue != Venue::Hyperliquid {
+                            print_log(
+                                debug_mode,
+                                true,
+                                format!(
+                                    "[HYPERLIQUID ADAPTER] INVALID REPLACE ROUTE | order_id={} | venue={:?}",
+                                    order_id,
+                                    venue,
+                                ),
+                            );
+
+                            continue;
+                        }
+
+
+                        handle_replace_order(
+                            &exchange_client,
+                            &tx_evt,
+                            order_id,
+                            changes,
+                            debug_mode,
+                        )
+                        .await;
+                    }
                 }
-
-
-                handle_submit_order(
-                    &exchange_client,
-                    &tx_evt,
-                    order,
-                    debug_mode,
-                )
-                .await;
             }
 
 
-            // ========================================================
-            // CANCEL ORDER
-            // ========================================================
+            // ====================================================
+            // HYPERLIQUID EXECUTION WS MESSAGE
+            // ====================================================
 
-            ExecCommand::CancelOrder {
-                venue,
-                order_id,
-            } => {
-                if venue != Venue::Hyperliquid {
+            message =
+                execution_ws.raw_rx.recv() =>
+            {
+                let Some(message) =
+                    message
+                else {
                     print_log(
                         debug_mode,
                         true,
-                        format!(
-                            "[HYPERLIQUID ADAPTER] INVALID CANCEL ROUTE | order_id={} | venue={:?}",
-                            order_id,
-                            venue,
-                        ),
+                        "[HYPERLIQUID ADAPTER] execution WebSocket message channel closed",
                     );
 
-                    continue;
+                    // The raw channel should normally remain alive while the
+                    // execution WS runtime is running.
+                    //
+                    // Treat channel closure as adapter shutdown rather than
+                    // continuing to submit orders without execution events.
+                    break;
+                };
+
+
+                match message {
+
+                    // ================================================
+                    // ORDER LIFECYCLE
+                    // ================================================
+
+                    Message::OrderUpdates(
+                        order_updates
+                    ) => {
+                        // OrderUpdates is responsible for lifecycle facts such
+                        // as working and cancellation.
+                        //
+                        // A "filled" order update does NOT create a canonical
+                        // Fill here. Actual executions come from UserEvents.
+                        handle_order_updates(
+                            order_updates,
+                            &correlation,
+                            &tx_evt,
+                            debug_mode,
+                        );
+                    }
+
+
+                    // ================================================
+                    // USER EVENTS / EXECUTIONS
+                    // ================================================
+
+                    Message::User(
+                        user_event
+                    ) => {
+                        // UserEvents::Fills contains the authoritative
+                        // individual Hyperliquid executions.
+                        //
+                        // mapper/user_event.rs dispatches each TradeInfo to
+                        // mapper/fill.rs, which creates canonical Fill events.
+                        handle_user_event(
+                            user_event,
+                            &correlation,
+                            &tx_evt,
+                            debug_mode,
+                        );
+                    }
+
+
+                    // ================================================
+                    // OTHER SDK MESSAGE
+                    // ================================================
+
+                    other => {
+                        // The execution WS workers are intended to forward only
+                        // the two subscription types above, but ignore any
+                        // unrelated SDK message defensively rather than
+                        // changing execution state based on an unknown message.
+                        print_log(
+                            debug_mode,
+                            true,
+                            format!(
+                                "[HYPERLIQUID ADAPTER] IGNORED EXECUTION WS MESSAGE | message={:?}",
+                                other,
+                            ),
+                        );
+                    }
                 }
-
-
-                handle_cancel_order(
-                    &exchange_client,
-                    &tx_evt,
-                    order_id,
-                    debug_mode,
-                )
-                .await;
-            }
-
-
-            // ========================================================
-            // REPLACE ORDER
-            // ========================================================
-
-            ExecCommand::ReplaceOrder {
-                venue,
-                order_id,
-                changes,
-            } => {
-                if venue != Venue::Hyperliquid {
-                    print_log(
-                        debug_mode,
-                        true,
-                        format!(
-                            "[HYPERLIQUID ADAPTER] INVALID REPLACE ROUTE | order_id={} | venue={:?}",
-                            order_id,
-                            venue,
-                        ),
-                    );
-
-                    continue;
-                }
-
-
-                handle_replace_order(
-                    &exchange_client,
-                    &tx_evt,
-                    order_id,
-                    changes,
-                    debug_mode,
-                )
-                .await;
             }
         }
     }

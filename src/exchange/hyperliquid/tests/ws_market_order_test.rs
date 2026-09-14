@@ -39,6 +39,8 @@ use tokio::{
     },
 };
 
+use uuid::Uuid;
+
 
 // ============================================================
 // HYPERLIQUID MARKET ORDER + EXECUTION WS DIAGNOSTIC TEST
@@ -403,17 +405,37 @@ async fn test_hyperliquid_market_order_ws_updates() {
     println!("[TEST] side=BUY");
     println!("[TEST] qty={}", quantity);
 
+    // ============================================================
+    // OPEN CLOID
+    // ============================================================
 
-    let market_open_params =
-        MarketOrderParams {
-            asset: "BTC",
-            is_buy: true,
-            sz: quantity,
-            px: None,
-            slippage: Some(0.01),
-            cloid: None,
-            wallet: None,
-        };
+    let open_cloid =
+        Uuid::new_v4();
+
+    println!(
+        "[TEST] open_cloid={}",
+        open_cloid,
+    );
+
+
+   let market_open_params =
+    MarketOrderParams {
+        asset: "BTC",
+        is_buy: true,
+        sz: quantity,
+        px: None,
+        slippage: Some(0.01),
+
+        // Diagnostic correlation identity.
+        //
+        // We expect this exact UUID to come back through:
+        //
+        // - OrderUpdates.order.cloid
+        // - UserEvents::Fills[].cloid
+        cloid: Some(open_cloid),
+
+        wallet: None,
+    };
 
 
     let open_response =
@@ -522,17 +544,32 @@ async fn test_hyperliquid_market_order_ws_updates() {
     println!("[TEST] asset=BTC");
     println!("[TEST] sz=None -> close full position");
 
+    // ============================================================
+    // CLOSE CLOID
+    // ============================================================
+
+    let close_cloid =
+        Uuid::new_v4();
+
+    println!(
+        "[TEST] close_cloid={}",
+        close_cloid,
+    );
+
 
     let market_close_params =
         MarketCloseParams {
             asset: "BTC",
 
-            // None means close the entire current BTC position.
+            // Close entire current position.
             sz: None,
 
             px: None,
             slippage: Some(0.01),
-            cloid: None,
+
+            // Separate client identity for the exit Order.
+            cloid: Some(close_cloid),
+
             wallet: None,
         };
 

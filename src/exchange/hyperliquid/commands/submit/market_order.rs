@@ -6,6 +6,7 @@ use hyperliquid_rust_sdk::{
     ExchangeClient,
     ExchangeDataStatus,
     ExchangeResponseStatus,
+    MarketCloseParams,
     MarketOrderParams,
 };
 
@@ -13,45 +14,63 @@ use tokio::sync::mpsc::UnboundedSender;
 
 use crate::{
     core::execution::{
-        fill::{
-            ExecutionId,
-            Fill,
-        },
         ExecEvent,
         Order,
         OrderPurpose,
         Side,
     },
+
+    exchange::hyperliquid::mapper::to_hyperliquid_cloid,
+
     shared::print_log,
 };
+
 
 // ============================================================
 // HANDLE MARKET ORDER
 // ============================================================
 
-/// Submits a canonical market order to Hyperliquid.
+/// Submits a canonical market-style order to Hyperliquid.
 ///
-/// The first implementation supports directional entry orders.
+/// Supported directional purposes:
 ///
-/// Immediate Hyperliquid responses are translated as:
+/// Entry
+///     -> Hyperliquid `market_open()`
+///
+/// Exit
+///     -> Hyperliquid `market_close()`
+///
+/// Immediate SDK responses are used only for submission/lifecycle facts:
 ///
 /// Filled
 ///     -> OrderAccepted
-///     -> Fill
 ///
 /// Resting
 ///     -> OrderAccepted
 ///     -> OrderWorking
 ///
-/// Explicit venue error
+/// Explicit venue rejection
 ///     -> OrderRejected
 ///
 /// SDK / transport failure
 ///     -> Error
 ///
-/// Later, `execution_ws.rs` will subscribe to Hyperliquid `OrderUpdates`
-/// and `UserEvents` so asynchronous lifecycle changes and fills are also
-/// reported to the Engine.
+/// IMPORTANT:
+///
+/// The immediate Hyperliquid response does NOT create canonical `Fill`s.
+///
+/// Actual individual executions come exclusively from:
+///
+///     UserEvents::Fills
+///         ↓
+///     mapper/user_event.rs
+///         ↓
+///     mapper/fill.rs
+///         ↓
+///     ExecEvent::Fill
+///
+/// This gives the Engine one authoritative execution source containing the
+/// real Hyperliquid `tid`, execution price, quantity, fee, and timestamp.
 pub async fn handle_market_order(
     exchange_client: &ExchangeClient,
     tx_evt: &UnboundedSender<ExecEvent>,
@@ -59,150 +78,310 @@ pub async fn handle_market_order(
     debug_mode: bool,
 ) {
     // ============================================================
-    // PURPOSE
-    // ============================================================
-
-    // For now, only directional market-entry orders are implemented.
-    //
-    // Market exits will later use the same canonical Order model with
-    // OrderPurpose::Exit and reduce_only=true.
-    if order.purpose != OrderPurpose::Entry {
-        let ts_ms =
-            Utc::now()
-                .timestamp_millis();
-
-        let message =
-            format!(
-                "Hyperliquid market order purpose not implemented: {:?}",
-                order.purpose,
-            );
-
-        print_log(
-            debug_mode,
-            true,
-            format!(
-                "[HYPERLIQUID ADAPTER] MARKET PURPOSE NOT IMPLEMENTED | order_id={} | purpose={:?}",
-                order.id,
-                order.purpose,
-            ),
-        );
-
-        let _ =
-            tx_evt.send(
-                ExecEvent::Error {
-                    order_id: Some(order.id),
-                    message,
-                    ts_ms,
-                }
-            );
-
-        return;
-    }
-
-    // ============================================================
     // SIDE
     // ============================================================
 
+    // Hyperliquid market_open requires the venue execution direction.
+    //
+    // Market exits use market_close(), which determines the reducing
+    // direction from the existing Hyperliquid position.
     let is_buy =
         matches!(
             order.side,
             Side::Buy
         );
 
+
     // ============================================================
     // QUANTITY
     // ============================================================
 
-    // TODO:
-    // Normalize quantity using Hyperliquid asset metadata.
+    // The canonical Engine Order owns the intended execution quantity.
     //
-    // The Engine owns the desired canonical quantity. Hyperliquid-specific
-    // szDecimals / quantity-step requirements belong at this boundary.
+    // The Hyperliquid SDK currently handles the venue-specific market-order
+    // construction required for this path.
+    //
+    // Cached Hyperliquid Meta may later be supplied during adapter startup as
+    // a performance optimization.
     let quantity =
         order.quantity;
 
+
     // ============================================================
-    // MARKET ORDER PARAMS
+    // CLOID
     // ============================================================
 
-    let params =
-        MarketOrderParams {
-            asset: &order.symbol,
-            is_buy,
-            sz: quantity,
-            px: None,
+    // ClientOrderId is generated by the Engine and translated losslessly into
+    // Hyperliquid CLOID.
+    //
+    // Hyperliquid later returns the same CLOID through:
+    //
+    // - OrderUpdates
+    // - UserEvents
+    //
+    // allowing:
+    //
+    // CLOID
+    //     ↓
+    // ClientOrderId
+    //     ↓
+    // HyperliquidOrderCorrelation
+    //     ↓
+    // OrderId
+    let cloid =
+        to_hyperliquid_cloid(
+            order.client_order_id
+        );
 
-            // TODO:
-            // Move Hyperliquid market-order slippage into venue-specific
-            // execution configuration.
-            slippage: Some(0.01),
 
-            // TODO:
-            // Encode the canonical client_order_id as a Hyperliquid CLOID
-            // once the final CLOID format is implemented.
-            cloid: None,
-
-            wallet: None,
-        };
+    // ============================================================
+    // SUBMIT
+    // ============================================================
 
     print_log(
         debug_mode,
         true,
         format!(
-            "[HYPERLIQUID ADAPTER] MARKET SUBMIT | order_id={} | symbol={} | side={:?} | qty={}",
+            "[HYPERLIQUID ADAPTER] MARKET SUBMIT | order_id={} | client_order_id={} | purpose={:?} | symbol={} | side={:?} | qty={} | reduce_only={}",
             order.id,
+            order.client_order_id,
+            order.purpose,
             order.symbol,
             order.side,
             quantity,
+            order.reduce_only,
         ),
     );
 
-    // ============================================================
-    // SUBMIT TO HYPERLIQUID
-    // ============================================================
 
     let raw_response =
-        match exchange_client
-            .market_open(
-                params
-            )
-            .await
-        {
-            Ok(response) => {
-                response
+        match order.purpose {
+
+            // ========================================================
+            // ENTRY
+            // ========================================================
+
+            OrderPurpose::Entry => {
+                let params =
+                    MarketOrderParams {
+                        asset: &order.symbol,
+                        is_buy,
+                        sz: quantity,
+                        px: None,
+
+                        // TODO:
+                        // Move market slippage into Hyperliquid execution
+                        // configuration.
+                        slippage: Some(0.01),
+
+                        cloid: Some(cloid),
+
+                        wallet: None,
+                    };
+
+
+                match exchange_client
+                    .market_open(
+                        params
+                    )
+                    .await
+                {
+                    Ok(response) => {
+                        response
+                    }
+
+                    Err(error) => {
+                        let ts_ms =
+                            Utc::now()
+                                .timestamp_millis();
+
+
+                        print_log(
+                            debug_mode,
+                            true,
+                            format!(
+                                "[HYPERLIQUID ADAPTER] MARKET OPEN ERROR | order_id={} | symbol={} | error={:?}",
+                                order.id,
+                                order.symbol,
+                                error,
+                            ),
+                        );
+
+
+                        let _ =
+                            tx_evt.send(
+                                ExecEvent::Error {
+                                    order_id: Some(order.id),
+
+                                    message:
+                                        format!(
+                                            "Hyperliquid market_open failed: {:?}",
+                                            error,
+                                        ),
+
+                                    ts_ms,
+                                }
+                            );
+
+
+                        return;
+                    }
+                }
             }
 
-            Err(error) => {
+
+            // ========================================================
+            // EXIT
+            // ========================================================
+
+            OrderPurpose::Exit => {
+                // Use the canonical Order quantity rather than:
+                //
+                //     sz: None
+                //
+                // because `None` asks Hyperliquid to close the entire venue
+                // position.
+                //
+                // The Engine owns logical Trades independently, so an exit
+                // should reduce only the quantity represented by this Order.
+                //
+                // This becomes especially important if multiple logical Trades
+                // or strategies ever share the same venue position.
+                // let params =
+                //     MarketCloseParams {
+                //         asset: &order.symbol,
+
+                //         sz: Some(
+                //             quantity
+                //         ),
+
+                //         px: None,
+
+                //         // TODO:
+                //         // Move market slippage into Hyperliquid execution
+                //         // configuration.
+                //         slippage: Some(0.01),
+
+                //         cloid: Some(cloid),
+
+                //         wallet: None,
+                //     };
+
+                // sz: None
+                //      = close the entire current Hyperliquid position for that asset
+
+                // sz: Some(order.quantity)
+                //     = close only the quantity represented by this canonical exit Order
+                let params =
+                    MarketCloseParams {
+                        asset: &order.symbol,
+
+                        sz: Some(
+                            order.quantity
+                        ),
+
+                        px: None,
+                        slippage: Some(0.01),
+
+                        cloid: Some(cloid),
+
+                        wallet: None,
+                    };
+
+
+                match exchange_client
+                    .market_close(
+                        params
+                    )
+                    .await
+                {
+                    Ok(response) => {
+                        response
+                    }
+
+                    Err(error) => {
+                        let ts_ms =
+                            Utc::now()
+                                .timestamp_millis();
+
+
+                        print_log(
+                            debug_mode,
+                            true,
+                            format!(
+                                "[HYPERLIQUID ADAPTER] MARKET CLOSE ERROR | order_id={} | symbol={} | qty={} | error={:?}",
+                                order.id,
+                                order.symbol,
+                                quantity,
+                                error,
+                            ),
+                        );
+
+
+                        let _ =
+                            tx_evt.send(
+                                ExecEvent::Error {
+                                    order_id: Some(order.id),
+
+                                    message:
+                                        format!(
+                                            "Hyperliquid market_close failed: {:?}",
+                                            error,
+                                        ),
+
+                                    ts_ms,
+                                }
+                            );
+
+
+                        return;
+                    }
+                }
+            }
+
+
+            // ========================================================
+            // UNSUPPORTED PURPOSE
+            // ========================================================
+
+            other => {
                 let ts_ms =
                     Utc::now()
                         .timestamp_millis();
+
 
                 print_log(
                     debug_mode,
                     true,
                     format!(
-                        "[HYPERLIQUID ADAPTER] MARKET SUBMIT ERROR | order_id={} | symbol={} | error={:?}",
+                        "[HYPERLIQUID ADAPTER] MARKET PURPOSE NOT IMPLEMENTED | order_id={} | symbol={} | purpose={:?}",
                         order.id,
                         order.symbol,
-                        error,
+                        other,
                     ),
                 );
+
 
                 let _ =
                     tx_evt.send(
                         ExecEvent::Error {
                             order_id: Some(order.id),
-                            message: format!(
-                                "Hyperliquid market_open failed: {:?}",
-                                error,
-                            ),
+
+                            message:
+                                format!(
+                                    "Hyperliquid market-order purpose not implemented: {:?}",
+                                    other,
+                                ),
+
                             ts_ms,
                         }
                     );
 
+
                 return;
             }
         };
+
 
     // ============================================================
     // VENUE RESPONSE
@@ -219,32 +398,40 @@ pub async fn handle_market_order(
                     Utc::now()
                         .timestamp_millis();
 
+
                 print_log(
                     debug_mode,
                     true,
                     format!(
-                        "[HYPERLIQUID ADAPTER] MARKET REJECTED | order_id={} | symbol={} | error={:?}",
+                        "[HYPERLIQUID ADAPTER] MARKET REJECTED | order_id={} | symbol={} | purpose={:?} | error={:?}",
                         order.id,
                         order.symbol,
+                        order.purpose,
                         error,
                     ),
                 );
+
 
                 let _ =
                     tx_evt.send(
                         ExecEvent::OrderRejected {
                             order_id: order.id,
-                            reason: format!(
-                                "{:?}",
-                                error,
-                            ),
+
+                            reason:
+                                format!(
+                                    "{:?}",
+                                    error,
+                                ),
+
                             ts_ms,
                         }
                     );
 
+
                 return;
             }
         };
+
 
     // ============================================================
     // RESPONSE DATA
@@ -257,27 +444,40 @@ pub async fn handle_market_order(
             Utc::now()
                 .timestamp_millis();
 
+
         print_log(
             debug_mode,
             true,
             format!(
-                "[HYPERLIQUID ADAPTER] EMPTY MARKET RESPONSE | order_id={} | symbol={}",
+                "[HYPERLIQUID ADAPTER] EMPTY MARKET RESPONSE | order_id={} | symbol={} | purpose={:?}",
                 order.id,
                 order.symbol,
+                order.purpose,
             ),
         );
+
 
         let _ =
             tx_evt.send(
                 ExecEvent::Error {
                     order_id: Some(order.id),
-                    message: "Hyperliquid response contained no data".to_string(),
+
+                    message:
+                        "Hyperliquid market response contained no data"
+                            .to_string(),
+
                     ts_ms,
                 }
             );
 
+
         return;
     };
+
+
+    // ============================================================
+    // RESPONSE STATUS
+    // ============================================================
 
     let Some(status) =
         data.statuses
@@ -288,188 +488,92 @@ pub async fn handle_market_order(
             Utc::now()
                 .timestamp_millis();
 
+
         print_log(
             debug_mode,
             true,
             format!(
-                "[HYPERLIQUID ADAPTER] MARKET RESPONSE HAS NO STATUS | order_id={} | symbol={}",
+                "[HYPERLIQUID ADAPTER] MARKET RESPONSE HAS NO STATUS | order_id={} | symbol={} | purpose={:?}",
                 order.id,
                 order.symbol,
+                order.purpose,
             ),
         );
+
 
         let _ =
             tx_evt.send(
                 ExecEvent::Error {
                     order_id: Some(order.id),
-                    message: "Hyperliquid response contained no order status".to_string(),
+
+                    message:
+                        "Hyperliquid market response contained no order status"
+                            .to_string(),
+
                     ts_ms,
                 }
             );
 
+
         return;
     };
+
 
     // ============================================================
     // IMMEDIATE STATUS
     // ============================================================
 
     match status {
+
         // ========================================================
         // FILLED
         // ========================================================
 
-        ExchangeDataStatus::Filled(fill) => {
-            let avg_px =
-                match fill.avg_px
-                    .parse::<f64>()
-                {
-                    Ok(value) => {
-                        value
-                    }
-
-                    Err(error) => {
-                        let ts_ms =
-                            Utc::now()
-                                .timestamp_millis();
-
-                        print_log(
-                            debug_mode,
-                            true,
-                            format!(
-                                "[HYPERLIQUID ADAPTER] INVALID FILL PRICE | order_id={} | value={} | error={}",
-                                order.id,
-                                fill.avg_px,
-                                error,
-                            ),
-                        );
-
-                        let _ =
-                            tx_evt.send(
-                                ExecEvent::Error {
-                                    order_id: Some(order.id),
-                                    message: format!(
-                                        "Invalid Hyperliquid fill price {}: {}",
-                                        fill.avg_px,
-                                        error,
-                                    ),
-                                    ts_ms,
-                                }
-                            );
-
-                        return;
-                    }
-                };
-
-            let total_sz =
-                match fill.total_sz
-                    .parse::<f64>()
-                {
-                    Ok(value) => {
-                        value
-                    }
-
-                    Err(error) => {
-                        let ts_ms =
-                            Utc::now()
-                                .timestamp_millis();
-
-                        print_log(
-                            debug_mode,
-                            true,
-                            format!(
-                                "[HYPERLIQUID ADAPTER] INVALID FILL SIZE | order_id={} | value={} | error={}",
-                                order.id,
-                                fill.total_sz,
-                                error,
-                            ),
-                        );
-
-                        let _ =
-                            tx_evt.send(
-                                ExecEvent::Error {
-                                    order_id: Some(order.id),
-                                    message: format!(
-                                        "Invalid Hyperliquid fill size {}: {}",
-                                        fill.total_sz,
-                                        error,
-                                    ),
-                                    ts_ms,
-                                }
-                            );
-
-                        return;
-                    }
-                };
-
+        ExchangeDataStatus::Filled(filled) => {
             let venue_order_id =
-                fill.oid
+                filled.oid
                     .to_string();
+
 
             let ts_ms =
                 Utc::now()
                     .timestamp_millis();
 
+
             print_log(
                 debug_mode,
                 true,
                 format!(
-                    "[HYPERLIQUID ADAPTER] MARKET FILLED | order_id={} | symbol={} | avg_px={} | total_sz={} | venue_order_id={}",
+                    "[HYPERLIQUID ADAPTER] MARKET IMMEDIATE FILLED | order_id={} | symbol={} | purpose={:?} | venue_order_id={} | avg_px={} | total_sz={} | fill_source=UserEvents",
                     order.id,
                     order.symbol,
-                    avg_px,
-                    total_sz,
+                    order.purpose,
                     venue_order_id,
+                    filled.avg_px,
+                    filled.total_sz,
                 ),
             );
 
-            // The immediate Filled response proves the venue accepted the
-            // order and assigned its venue-side order identifier.
+
+            // The immediate Filled response proves:
+            //
+            // - Hyperliquid accepted the order
+            // - Hyperliquid assigned an OID
+            //
+            // It does NOT become our canonical Fill source.
+            //
+            // UserEvents::Fills will provide the real individual executions,
+            // including `tid`, fee, actual price/quantity, and venue timestamp.
             let _ =
                 tx_evt.send(
                     ExecEvent::OrderAccepted {
                         order_id: order.id,
-                        venue_order_id: venue_order_id.clone(),
+                        venue_order_id,
                         ts_ms,
                     }
                 );
-
-            // TODO:
-            // Hyperliquid's immediate Filled response is an order-level fill
-            // summary rather than necessarily one individual venue execution.
-            //
-            // For this first market-order implementation it is represented as
-            // one canonical Fill.
-            //
-            // Once `UserEvents` is wired in `execution_ws.rs`, use the real
-            // venue execution identity and let FillLedger deduplicate anything
-            // observed through both the immediate response and WebSocket.
-            //
-            // The temporary ExecutionId uses OrderId because only one immediate
-            // summary Fill is currently created for a market order.
-            let canonical_fill =
-                Fill {
-                    execution_id: ExecutionId(
-                        order.id.as_u64()
-                    ),
-                    order_id: order.id,
-                    venue: order.venue,
-                    venue_execution_id: None,
-                    symbol: order.symbol.clone(),
-                    side: order.side,
-                    quantity: total_sz,
-                    price: avg_px,
-                    fee: None,
-                    ts_ms,
-                };
-
-            let _ =
-                tx_evt.send(
-                    ExecEvent::Fill {
-                        fill: canonical_fill,
-                    }
-                );
         }
+
 
         // ========================================================
         // RESTING
@@ -480,20 +584,24 @@ pub async fn handle_market_order(
                 resting.oid
                     .to_string();
 
+
             let ts_ms =
                 Utc::now()
                     .timestamp_millis();
+
 
             print_log(
                 debug_mode,
                 true,
                 format!(
-                    "[HYPERLIQUID ADAPTER] MARKET RESTING | order_id={} | symbol={} | venue_order_id={}",
+                    "[HYPERLIQUID ADAPTER] MARKET RESTING | order_id={} | symbol={} | purpose={:?} | venue_order_id={}",
                     order.id,
                     order.symbol,
+                    order.purpose,
                     venue_order_id,
                 ),
             );
+
 
             let _ =
                 tx_evt.send(
@@ -504,6 +612,7 @@ pub async fn handle_market_order(
                     }
                 );
 
+
             let _ =
                 tx_evt.send(
                     ExecEvent::OrderWorking {
@@ -512,6 +621,7 @@ pub async fn handle_market_order(
                     }
                 );
         }
+
 
         // ========================================================
         // OTHER STATUS
@@ -522,25 +632,31 @@ pub async fn handle_market_order(
                 Utc::now()
                     .timestamp_millis();
 
+
             print_log(
                 debug_mode,
                 true,
                 format!(
-                    "[HYPERLIQUID ADAPTER] UNKNOWN MARKET STATUS | order_id={} | symbol={} | status={:?}",
+                    "[HYPERLIQUID ADAPTER] UNHANDLED MARKET STATUS | order_id={} | symbol={} | purpose={:?} | status={:?}",
                     order.id,
                     order.symbol,
+                    order.purpose,
                     other,
                 ),
             );
+
 
             let _ =
                 tx_evt.send(
                     ExecEvent::Error {
                         order_id: Some(order.id),
-                        message: format!(
-                            "Unhandled Hyperliquid market-order status: {:?}",
-                            other,
-                        ),
+
+                        message:
+                            format!(
+                                "Unhandled Hyperliquid market-order status: {:?}",
+                                other,
+                            ),
+
                         ts_ms,
                     }
                 );
