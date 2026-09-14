@@ -118,6 +118,52 @@ impl Engine {
 
 
         // ============================================================
+        // PRESERVE PENDING CANCEL / REPLACE
+        // ============================================================
+
+        // A Working event must not erase an asynchronous lifecycle request
+        // that the Engine has already initiated.
+        //
+        // Example:
+        //
+        // Working
+        //     -> PendingCancel
+        //     -> delayed/stale OrderWorking
+        //     -> MUST remain PendingCancel
+        //     -> OrderCanceled
+        //
+        // Likewise:
+        //
+        // Working
+        //     -> PendingReplace
+        //     -> delayed/stale OrderWorking
+        //     -> MUST remain PendingReplace
+        //     -> OrderReplaced
+        //
+        // The venue may still report the order as active while a cancel or
+        // replacement request is in flight. That does not mean the Engine
+        // should forget the pending request.
+        if matches!(
+            order.state,
+            OrderState::PendingCancel
+                | OrderState::PendingReplace
+        ) {
+            print_log(
+                self.debug_mode,
+                true,
+                format!(
+                    "[ENGINE] ORDER WORKING PRESERVED PENDING STATE | order_id={} | symbol={} | state={:?}",
+                    order.id,
+                    order.symbol,
+                    order.state,
+                ),
+            );
+
+            return;
+        }
+
+
+        // ============================================================
         // ALREADY WORKING
         // ============================================================
 

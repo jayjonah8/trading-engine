@@ -46,10 +46,6 @@ use crate::shared::print_log;
 // once position valuation and instrument-specific execution rules are wired.
 
 // TODO:
-// Replace the temporary client_order_id format with the final
-// canonical client-order ID scheme if needed.
-
-// TODO:
 // Add structured rejection/output events later so failed intents can
 // be surfaced to metrics, persistence, notifications, or strategies
 // without relying only on debug logs. Just print for now and add 
