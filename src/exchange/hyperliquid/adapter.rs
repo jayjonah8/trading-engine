@@ -52,6 +52,8 @@ use crate::{
     shared::print_log,
 };
 
+use std::sync::Arc;
+
 
 // ============================================================
 // RUN HYPERLIQUID EXECUTION ADAPTER
@@ -146,19 +148,21 @@ pub async fn run_hyperliquid_adapter(
     // here as a performance optimization to avoid redundant metadata
     // requests.
     let exchange_client =
-        ExchangeClient::new(
-            None,
-            wallet,
-            Some(BaseUrl::Mainnet),
-            None, // TODO: Some(cached_meta)
-            None,
-        )
-        .await
-        .expect(
-            "Failed to create Hyperliquid ExchangeClient"
+        Arc::new(
+            ExchangeClient::new(
+                None,
+                wallet,
+                Some(BaseUrl::Mainnet),
+                None,
+                None,
+            )
+            .await
+            .expect(
+                "Failed to create Hyperliquid ExchangeClient"
+            )
         );
 
-
+   
     // ============================================================
     // EXECUTION WEBSOCKETS
     // ============================================================
@@ -317,33 +321,49 @@ pub async fn run_hyperliquid_adapter(
                         // REGISTER CORRELATION
                         // --------------------------------------------
 
-                        // Register BEFORE awaiting venue submission.
+                        // Register correlation synchronously BEFORE spawning the venue request.
                         //
-                        // Hyperliquid execution events can arrive extremely
-                        // quickly. In the real diagnostic test, UserEvents
-                        // could arrive at essentially the same time as the
-                        // immediate API response.
+                        // Hyperliquid WS events may arrive immediately after submission, so the
+                        // adapter must already be able to resolve:
                         //
-                        // Registering first guarantees that any CLOID returned
-                        // by the WebSocket already has a canonical OrderId
-                        // available for mapping.
+                        //     CLOID -> ClientOrderId -> OrderId
                         correlation.insert(
                             order.client_order_id,
                             order.id,
                         );
 
 
-                        // --------------------------------------------
-                        // SUBMIT
-                        // --------------------------------------------
+                        // Clone only the shared transport handles needed by the task.
+                        //
+                        // Canonical Engine state is NOT shared with this task.
+                        let exchange_client =
+                            Arc::clone(
+                                &exchange_client
+                            );
 
-                        handle_submit_order(
-                            &exchange_client,
-                            &tx_evt,
-                            order,
-                            debug_mode,
-                        )
-                        .await;
+                        let tx_evt =
+                            tx_evt.clone();
+
+
+                        // Do not await venue submission inside the adapter event loop.
+                        //
+                        // Hyperliquid can emit OrderUpdates/UserEvents before the SDK
+                        // request returns. Running submission independently keeps the
+                        // adapter free to consume those WS messages immediately.
+                        //
+                        // This also allows multiple independent orders to be in flight
+                        // concurrently without blocking execution-event processing.
+                        tokio::spawn(
+                            async move {
+                                handle_submit_order(
+                                    &exchange_client,
+                                    &tx_evt,
+                                    order,
+                                    debug_mode,
+                                )
+                                .await;
+                            }
+                        );
                     }
 
 
@@ -370,13 +390,26 @@ pub async fn run_hyperliquid_adapter(
                         }
 
 
-                        handle_cancel_order(
-                            &exchange_client,
-                            &tx_evt,
-                            order_id,
-                            debug_mode,
-                        )
-                        .await;
+                        let exchange_client =
+                            Arc::clone(
+                                &exchange_client
+                            );
+
+                        let tx_evt =
+                            tx_evt.clone();
+
+
+                        tokio::spawn(
+                            async move {
+                                handle_cancel_order(
+                                    &exchange_client,
+                                    &tx_evt,
+                                    order_id,
+                                    debug_mode,
+                                )
+                                .await;
+                            }
+                        );
                     }
 
 
@@ -404,14 +437,27 @@ pub async fn run_hyperliquid_adapter(
                         }
 
 
-                        handle_replace_order(
-                            &exchange_client,
-                            &tx_evt,
-                            order_id,
-                            changes,
-                            debug_mode,
-                        )
-                        .await;
+                        let exchange_client =
+                            Arc::clone(
+                                &exchange_client
+                            );
+
+                        let tx_evt =
+                            tx_evt.clone();
+
+
+                        tokio::spawn(
+                            async move {
+                                handle_replace_order(
+                                    &exchange_client,
+                                    &tx_evt,
+                                    order_id,
+                                    changes,
+                                    debug_mode,
+                                )
+                                .await;
+                            }
+                        );
                     }
                 }
             }

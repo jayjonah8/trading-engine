@@ -180,12 +180,19 @@ pub async fn handle_market_order(
                     };
 
 
-                match exchange_client
-                    .market_open(
-                        params
-                    )
-                    .await
-                {
+                let market_open_result =
+                    exchange_client
+                        .market_open(
+                            params
+                        )
+                        .await;
+
+
+                // ============================================================
+                // HANDLE SDK RESULT
+                // ============================================================
+
+                match market_open_result {
                     Ok(response) => {
                         response
                     }
@@ -229,7 +236,6 @@ pub async fn handle_market_order(
                 }
             }
 
-
             // ========================================================
             // EXIT
             // ========================================================
@@ -247,26 +253,8 @@ pub async fn handle_market_order(
                 //
                 // This becomes especially important if multiple logical Trades
                 // or strategies ever share the same venue position.
-                // let params =
-                //     MarketCloseParams {
-                //         asset: &order.symbol,
-
-                //         sz: Some(
-                //             quantity
-                //         ),
-
-                //         px: None,
-
-                //         // TODO:
-                //         // Move market slippage into Hyperliquid execution
-                //         // configuration.
-                //         slippage: Some(0.01),
-
-                //         cloid: Some(cloid),
-
-                //         wallet: None,
-                //     };
-
+                //
+                
                 // sz: None
                 //      = close the entire current Hyperliquid position for that asset
 
