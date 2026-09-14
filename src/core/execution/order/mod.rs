@@ -7,6 +7,7 @@ pub mod pending_replace;
 pub mod purpose;
 pub mod state;
 pub mod time_in_force;
+pub mod client_order_id;
 
 pub use changes::OrderChanges;
 pub use id::OrderId;
@@ -17,3 +18,4 @@ pub use pending_replace::PendingOrderReplace;
 pub use purpose::OrderPurpose;
 pub use state::OrderState;
 pub use time_in_force::TimeInForce;
+pub use client_order_id::ClientOrderId;

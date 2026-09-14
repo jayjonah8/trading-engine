@@ -1,6 +1,7 @@
 use crate::core::{
     engine::engine::Engine,
     execution::{
+        ClientOrderId,
         ExecCommand,
         Order,
         OrderPurpose,
@@ -192,11 +193,7 @@ impl Engine {
             self.state.allocate_order_id();
 
         let client_order_id =
-            format!(
-                "{}-{}",
-                intent.strategy_id,
-                order_id,
-            );
+            ClientOrderId::new();
 
 
         // ============================================================

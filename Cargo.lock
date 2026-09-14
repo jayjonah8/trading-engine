@@ -4748,6 +4748,7 @@ dependencies = [
  "slack-morphism",
  "tokio",
  "tokio-tungstenite 0.30.0",
+ "uuid 1.26.1",
 ]
 
 [[package]]

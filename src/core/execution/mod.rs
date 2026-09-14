@@ -20,6 +20,7 @@ pub use order::{
     Orders,
     PendingOrderReplace,
     TimeInForce,
+    ClientOrderId,
 };
 pub use side::Side;
 pub use venue::Venue;

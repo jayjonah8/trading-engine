@@ -6,16 +6,20 @@ use tokio::{
 };
 
 use crate::{
-    core::execution::{
-        ExecCommand,
-        ExecEvent,
-        Order,
-        OrderPurpose,
-        OrderState,
-        OrderType,
-        Side,
-        TimeInForce,
-        Venue,
+    core::{
+        config::Config,
+        execution::{
+            ClientOrderId,
+            ExecCommand,
+            ExecEvent,
+            Order,
+            OrderPurpose,
+            OrderState,
+            OrderType,
+            Side,
+            TimeInForce,
+            Venue,
+        },
     },
 
     exchange::{
@@ -25,10 +29,7 @@ use crate::{
             ExecutionRoutes,
         },
     },
-
-    core::config::Config,
 };
-
 
 
 // Run test:
@@ -134,7 +135,7 @@ async fn test_hyperliquid_router_to_adapter() {
         id: crate::core::execution::OrderId::new(1),
         venue: Venue::Hyperliquid,
         venue_order_id: None,
-        client_order_id: "test-order-1".to_string(),
+        client_order_id: ClientOrderId::new(),
         strategy_id: "TestStrategy".to_string(),
         trade_id: None,
         symbol: "BTC".to_string(),

@@ -3,6 +3,7 @@
 use crate::core::{
     execution::{
         order::{
+            client_order_id::ClientOrderId,
             id::OrderId,
             order_type::OrderType,
             pending_replace::PendingOrderReplace,
@@ -55,10 +56,24 @@ pub struct Order {
     /// This may not exist until the venue acknowledges the order.
     pub venue_order_id: Option<String>,
 
-    /// Client order identifier sent to venues that support one.
+    /// Globally unique client-generated identity for this Order.
     ///
-    /// This is separate from the internal `OrderId`.
-    pub client_order_id: String,
+    /// This is distinct from:
+    ///
+    /// - `id`               -> internal engine OrderId
+    /// - `venue_order_id`   -> venue-assigned order identity
+    ///
+    /// Execution adapters may translate this value into their venue-specific
+    /// client-order identifier format.
+    ///
+    /// Examples:
+    ///
+    /// - Hyperliquid -> CLOID
+    /// - Alpaca      -> client_order_id
+    ///
+    /// The value remains stable for the lifetime of the canonical Order,
+    /// including venue-side replacement/modification.
+    pub client_order_id: ClientOrderId,
 
     /// Strategy that created the order.
     ///

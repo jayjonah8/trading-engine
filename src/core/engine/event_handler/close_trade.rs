@@ -5,6 +5,7 @@ use crate::{
         engine::engine::Engine,
 
         execution::{
+            ClientOrderId,
             ExecCommand,
             Order,
             OrderPurpose,
@@ -340,17 +341,26 @@ impl Engine {
         // CLIENT ORDER ID
         // ============================================================
 
-        // TODO:
-        // Replace this temporary format with the final canonical client-order
-        // identity scheme when client_order_id / CLOID handling is finalized.
+        // Generate a globally unique client-order identity.
         //
-        // OrderId remains the authoritative internal engine identity.
+        // This is separate from:
+        //
+        // - OrderId           -> internal engine identity
+        // - venue_order_id    -> venue-assigned order identity
+        // - venue_execution_id -> individual fill/execution identity
+        //
+        // Execution adapters may translate this value into their venue-specific
+        // client-order identifier format.
+        //
+        // Examples:
+        //
+        // Hyperliquid -> CLOID
+        // Alpaca      -> client_order_id
+        //
+        // The same ClientOrderId remains attached to this canonical Order for its
+        // entire lifecycle.
         let client_order_id =
-            format!(
-                "{}-exit-{}",
-                strategy_id,
-                order_id,
-            );
+            ClientOrderId::new();
 
 
         // ============================================================
