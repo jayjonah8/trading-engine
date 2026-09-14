@@ -4,4 +4,5 @@ pub mod pollers;
 pub mod execution_ws;
 pub mod mapper;
 pub mod correlation;
+pub mod meta;
 pub mod tests;

@@ -1,8 +1,11 @@
 #![allow(dead_code)]
 
-use crate::core::venue_state::{
-    AccountState,
-    InstrumentState,
+use crate::core::{
+    execution::Venue,
+    venue_state::{
+        AccountState,
+        InstrumentState,
+    },
 };
 
 
@@ -36,7 +39,9 @@ pub enum VenueStateEvent {
         account: AccountState,
     },
 
-    InstrumentUpdated {
-        instrument: InstrumentState,
+    /// Replaces/refreshes the canonical instrument snapshot for a venue.
+    InstrumentsUpdated {
+        venue: Venue,
+        instruments: Vec<InstrumentState>,
     },
 }

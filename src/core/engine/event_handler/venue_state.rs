@@ -58,27 +58,26 @@ impl Engine {
             // INSTRUMENT
             // ========================================================
 
-            VenueStateEvent::InstrumentUpdated {
-                instrument,
+            VenueStateEvent::InstrumentsUpdated {
+                venue,
+                instruments,
             } => {
-                let venue =
-                    instrument.venue;
-
-                let symbol =
-                    instrument.symbol.clone();
+                let instrument_count =
+                    instruments.len();
 
                 self.venue_state
-                    .insert_instrument(
-                        instrument
+                    .replace_instruments_for_venue(
+                        venue,
+                        instruments,
                     );
 
                 print_log(
                     self.debug_mode,
                     true,
                     format!(
-                        "[ENGINE] VENUE INSTRUMENT UPDATED | venue={:?} | symbol={}",
+                        "[ENGINE] VENUE INSTRUMENTS UPDATED | venue={:?} | instruments={}",
                         venue,
-                        symbol,
+                        instrument_count,
                     ),
                 );
             }

@@ -159,4 +159,28 @@ impl VenueState {
             &key
         )
     }
+
+    pub fn replace_instruments_for_venue(
+        &mut self,
+        venue: Venue,
+        instruments: Vec<InstrumentState>,
+    ) {
+        // Remove the previous snapshot for this venue.
+        //
+        // This ensures assets removed from the venue metadata do not remain
+        // incorrectly tradable forever.
+        self.instruments
+            .retain(
+                |key, _| {
+                    key.venue != venue
+                }
+            );
+
+        // Insert the fresh snapshot.
+        for instrument in instruments {
+            self.insert_instrument(
+                instrument
+            );
+        }
+    }
 }

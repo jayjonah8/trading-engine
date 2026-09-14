@@ -11,10 +11,13 @@ use std::sync::Arc;
 
 use anyhow::Result;
 
+use hyperliquid_rust_sdk::Meta;
+
 use tokio::sync::{
     broadcast,
     mpsc,
     watch,
+    RwLock,
 };
 
 use crate::core::{
@@ -34,6 +37,31 @@ use crate::core::{
         ExecEvent,
         Venue,
     },
+
+    venue_state::VenueStateEvent,
+};
+
+use crate::data::{
+    historical::strategy_event::BacktestStrategyEvent,
+    live::event_mapper::map_app_to_live_engine_event,
+};
+
+use crate::exchange::{
+    hyperliquid::{
+        adapter::run_hyperliquid_adapter,
+
+        meta::{
+            fetch_meta,
+            map_meta_to_instruments,
+        },
+
+        pollers::run_hyperliquid_meta_poller,
+    },
+
+    router::{
+        run_execution_router,
+        ExecutionRoutes,
+    },
 };
 
 use crate::strategies::{
@@ -43,28 +71,18 @@ use crate::strategies::{
     StrategyKind,
 };
 
-use crate::data::{
-    historical::strategy_event::BacktestStrategyEvent,
-    live::event_mapper::map_app_to_live_engine_event,
-};
 
-use crate::exchange::router::{
-    run_execution_router,
-    ExecutionRoutes,
-};
-
-use crate::exchange::hyperliquid::adapter::{
-    run_hyperliquid_adapter,
-};
-
-use crate::core::venue_state::VenueStateEvent;
-
+// ============================================================
+// MAIN
+// ============================================================
 
 #[tokio::main]
 async fn main() -> Result<()> {
     dotenvy::dotenv().ok();
 
-    println!("Starting trading engine...");
+    println!(
+        "Starting trading engine..."
+    );
 
 
     // ============================================================
@@ -141,7 +159,10 @@ async fn main() -> Result<()> {
 
     // All live market-data providers normalize their venue-specific data
     // into canonical AppEventEnvelopes before sending them here.
-    let (tx_master, mut rx_master) =
+    let (
+        tx_master,
+        mut rx_master,
+    ) =
         mpsc::unbounded_channel::<AppEventEnvelope>();
 
 
@@ -149,14 +170,19 @@ async fn main() -> Result<()> {
     // MASTER -> BROADCAST BUS
     // ============================================================
 
-    let (tx_bus, _drop) =
+    let (
+        tx_bus,
+        _drop,
+    ) =
         broadcast::channel::<AppEventEnvelope>(
             4096
         );
 
+
     {
         let tx_bus =
             tx_bus.clone();
+
 
         tokio::spawn(
             async move {
@@ -178,7 +204,10 @@ async fn main() -> Result<()> {
     // ============================================================
 
     // Strategies and market-data mapping send canonical EngineEvents here.
-    let (tx_engine, mut rx_engine) =
+    let (
+        tx_engine,
+        mut rx_engine,
+    ) =
         mpsc::unbounded_channel::<EngineEvent>();
 
 
@@ -186,11 +215,14 @@ async fn main() -> Result<()> {
     // ENGINE -> EXECUTION ROUTER
     // ============================================================
 
-    // The Engine sends every canonical ExecCommand through this channel.
+    // The Engine sends canonical ExecCommands through this channel.
     //
-    // The receiver belongs to the execution router rather than directly
-    // to Alpaca, Hyperliquid, IBKR, or any other venue adapter.
-    let (tx_exec, rx_exec_router) =
+    // The execution router owns the receiver and forwards each command to
+    // the adapter responsible for the command's Venue.
+    let (
+        tx_exec,
+        rx_exec_router,
+    ) =
         mpsc::unbounded_channel::<ExecCommand>();
 
 
@@ -198,9 +230,12 @@ async fn main() -> Result<()> {
     // EXECUTION ADAPTERS -> ENGINE
     // ============================================================
 
-    // All live venue adapters eventually clone this sender and report
-    // canonical execution facts back to the authoritative Engine.
-    let (tx_exec_evt, mut rx_exec_evt) =
+    // All execution adapters report canonical execution facts through this
+    // channel.
+    let (
+        tx_exec_evt,
+        mut rx_exec_evt,
+    ) =
         mpsc::unbounded_channel::<ExecEvent>();
 
 
@@ -209,10 +244,10 @@ async fn main() -> Result<()> {
     // ============================================================
 
     // Venue-specific pollers/runtime services publish normalized account and
-    // instrument state through this channel.
+    // instrument snapshots through this separate canonical state channel.
     //
-    // This channel is used only by live and simulation infrastructure.
-    // Historical backtesting must not start venue pollers.
+    // Pollers are live/simulation infrastructure and must never run during
+    // historical backtesting.
     let (
         tx_venue_state,
         mut rx_venue_state,
@@ -221,127 +256,93 @@ async fn main() -> Result<()> {
 
 
     // ============================================================
-    // EXECUTION ROUTER
+    // INITIAL HYPERLIQUID META
     // ============================================================
 
-    // Each registered venue receives its own command channel.
+    // Hyperliquid Meta has two consumers:
     //
-    // Only register a venue when its adapter is actually running and
-    // consuming the corresponding receiver.
-    let mut execution_routes =
-        ExecutionRoutes::new();
-
-
-    // ============================================================
-    // HYPERLIQUID EXECUTION CHANNEL
-    // ============================================================
-
-    let (
-        tx_hyperliquid_exec,
-        rx_hyperliquid_exec,
-    ) =
-        mpsc::unbounded_channel::<ExecCommand>();
-
-
-
-    execution_routes.register(
-        Venue::Hyperliquid,
-        tx_hyperliquid_exec,
-    );
-
-
-    // ============================================================
-    // FUTURE ALPACA EXECUTION ROUTE
-    // ============================================================
-
-    // TODO:
-    // Add once the Alpaca execution adapter has been migrated to the new
-    // canonical Order / ExecCommand / ExecEvent architecture.
+    // 1. Canonical Engine instrument state.
+    // 2. Hyperliquid-specific runtime/execution code.
     //
-    // let (tx_alpaca_exec, rx_alpaca_exec) =
-    //     mpsc::unbounded_channel::<ExecCommand>();
+    // Fetch once here during startup so required metadata exists before any
+    // strategy is allowed to trade.
     //
-    // execution_routes.register(
-    //     Venue::Alpaca,
-    //     tx_alpaca_exec,
-    // );
+    // Historical backtesting must remain isolated from live venue APIs.
+    let mut initial_hyperliquid_instruments =
+        None;
+
+    let hyperliquid_meta_cache:
+        Option<Arc<RwLock<Meta>>> =
+        if !cfg.enable_backtest_mode
+            && cfg.execution_venue == Venue::Hyperliquid
+        {
+            // ========================================================
+            // FETCH REQUIRED STARTUP META
+            // ========================================================
+
+            let meta =
+                fetch_meta()
+                    .await
+                    .expect(
+                        "Failed to fetch initial Hyperliquid Meta"
+                    );
 
 
-    // ============================================================
-    // FUTURE IBKR EXECUTION ROUTE
-    // ============================================================
+            // ========================================================
+            // MAP TO CANONICAL INSTRUMENT STATE
+            // ========================================================
 
-    // TODO:
-    // Add once the IBKR execution adapter is implemented against the
-    // canonical execution architecture.
-    //
-    // let (tx_ibkr_exec, rx_ibkr_exec) =
-    //     mpsc::unbounded_channel::<ExecCommand>();
-    //
-    // execution_routes.register(
-    //     Venue::InteractiveBrokers,
-    //     tx_ibkr_exec,
-    // );
+            let instruments =
+                map_meta_to_instruments(
+                    &meta
+                );
 
 
-    // ============================================================
-    // START EXECUTION ROUTER
-    // ============================================================
-
-    // The router is completely venue-independent. It receives canonical
-    // ExecCommands from the Engine and forwards them according to Venue.
-    tokio::spawn(
-        run_execution_router(
-            rx_exec_router,
-            execution_routes,
-            true,
-        )
-    );
+            let instrument_count =
+                instruments.len();
 
 
-    // ============================================================
-    // START HYPERLIQUID EXECUTION ADAPTER
-    // ============================================================
+            println!(
+                "[HYPERLIQUID META] initial snapshot loaded | instruments={}",
+                instrument_count,
+            );
 
-    // Engine
-    //     -> tx_exec
-    //     -> ExecutionRouter
-    //     -> tx_hyperliquid_exec
-    //     -> HyperliquidAdapter
-    //     -> Hyperliquid
-    //
-    // Hyperliquid
-    //     -> HyperliquidAdapter
-    //     -> tx_exec_evt
-    //     -> Engine
-    if !cfg.enable_backtest_mode
-        && !cfg.enable_simulation_mode
-    {
-        let adapter_cfg =
-            cfg.clone();
 
-        let tx_exec_evt =
-            tx_exec_evt.clone();
+            // Keep the canonical snapshot until Engine has been constructed.
+            //
+            // It will be applied directly to Engine before the Engine task or
+            // any strategies are started.
+            initial_hyperliquid_instruments =
+                Some(
+                    instruments
+                );
 
-        tokio::spawn(
-            async move {
-                run_hyperliquid_adapter(
-                    adapter_cfg,
-                    rx_hyperliquid_exec,
-                    tx_exec_evt,
+
+            // Keep the raw SDK Meta separately for Hyperliquid-specific runtime
+            // consumers.
+            //
+            // The refresh poller will update this same cache later.
+            Some(
+                Arc::new(
+                    RwLock::new(
+                        meta
+                    )
                 )
-                .await;
-            }
-        );
-    }
-
+            )
+        }
+        else {
+            None
+        };
 
 
     // ============================================================
     // ENGINE VIEW
     // ============================================================
 
-    let (tx_view, rx_view) =
+    let (
+        tx_view,
+        rx_view,
+    ) =
         watch::channel::<Arc<EngineView>>(
             EngineView::empty(
                 cfg.clone()
@@ -350,68 +351,11 @@ async fn main() -> Result<()> {
 
 
     // ============================================================
-    // LIVE MARKET DATA -> ENGINE PRICE TICKS
-    // ============================================================
-
-    // In live/simulation mode, subscribe the Engine to the market-data
-    // broadcast bus and convert incoming canonical market-data events
-    // into EngineEvents.
-    //
-    // Backtest mode uses its historical deterministic event path instead.
-    if !cfg.enable_backtest_mode {
-        let mut rx_for_engine =
-            tx_bus.subscribe();
-
-        let tx_engine_for_market =
-            tx_engine.clone();
-
-        tokio::spawn(
-            async move {
-                loop {
-                    match rx_for_engine
-                        .recv()
-                        .await
-                    {
-                        Ok(env) => {
-                            if let Some(event) =
-                                map_app_to_live_engine_event(
-                                    &env
-                                )
-                            {
-                                let _ =
-                                    tx_engine_for_market
-                                        .send(
-                                            event
-                                        );
-                            }
-                        }
-
-                        Err(
-                            broadcast::error::RecvError::Lagged(n)
-                        ) => {
-                            eprintln!(
-                                "[ENGINE MARKET] lagged {n} events"
-                            );
-                        }
-
-                        Err(
-                            broadcast::error::RecvError::Closed
-                        ) => {
-                            break;
-                        }
-                    }
-                }
-            }
-        );
-    }
-
-
-    // ============================================================
     // ENGINE
     // ============================================================
 
-    // `tx_exec` now points to the execution router rather than directly
-    // to a specific exchange adapter.
+    // `tx_exec` points to the execution router rather than directly to a
+    // venue adapter.
     let mut engine =
         Engine::new(
             cfg.clone(),
@@ -422,19 +366,46 @@ async fn main() -> Result<()> {
 
 
     // ============================================================
+    // APPLY INITIAL VENUE STATE
+    // ============================================================
+
+    // Apply required startup metadata directly before the Engine is moved into
+    // its runtime task.
+    //
+    // This guarantees strategies can never race the initial metadata snapshot.
+    if let Some(instruments) =
+        initial_hyperliquid_instruments
+    {
+        engine.on_venue_state_event(
+            VenueStateEvent::InstrumentsUpdated {
+                venue: Venue::Hyperliquid,
+                instruments,
+            }
+        );
+    }
+
+
+    // ============================================================
     // ENGINE MAIN LOOP
     // ============================================================
 
     // The Engine is the single authoritative owner of trading state.
     //
-    // It processes:
+    // It processes three independent canonical input streams:
     //
-    // 1. EngineEvents from strategies and market data.
-    // 2. Canonical ExecEvents returned by execution adapters.
+    // EngineEvent
+    //     -> strategy / market decisions
+    //
+    // ExecEvent
+    //     -> execution lifecycle facts
+    //
+    // VenueStateEvent
+    //     -> external account / instrument snapshots
     tokio::spawn(
         async move {
             loop {
                 tokio::select! {
+
                     // ================================================
                     // ENGINE EVENT
                     // ================================================
@@ -484,6 +455,7 @@ async fn main() -> Result<()> {
                 }
             }
 
+
             println!(
                 "[ENGINE] main loop exited"
             );
@@ -492,13 +464,237 @@ async fn main() -> Result<()> {
 
 
     // ============================================================
+    // START HYPERLIQUID META POLLER
+    // ============================================================
+
+    // Startup already fetched the first required Meta snapshot.
+    //
+    // The poller only performs later refreshes and updates:
+    //
+    // - the shared raw Hyperliquid Meta cache
+    // - canonical Engine VenueState
+    //
+    // Pollers run in live and simulation modes, never historical backtests.
+    if !cfg.enable_backtest_mode {
+        if let Some(meta_cache) =
+            hyperliquid_meta_cache
+                .as_ref()
+        {
+            let meta_cache_for_poller =
+                Arc::clone(
+                    meta_cache
+                );
+
+            let tx_venue_state_for_meta =
+                tx_venue_state.clone();
+
+
+            tokio::spawn(
+                async move {
+                    run_hyperliquid_meta_poller(
+                        meta_cache_for_poller,
+                        tx_venue_state_for_meta,
+                    )
+                    .await;
+                }
+            );
+        }
+    }
+
+
+    // ============================================================
+    // EXECUTION ROUTES
+    // ============================================================
+
+    // Each registered venue receives its own execution command channel.
+    let mut execution_routes =
+        ExecutionRoutes::new();
+
+
+    // ============================================================
+    // HYPERLIQUID EXECUTION CHANNEL
+    // ============================================================
+
+    let (
+        tx_hyperliquid_exec,
+        rx_hyperliquid_exec,
+    ) =
+        mpsc::unbounded_channel::<ExecCommand>();
+
+
+    execution_routes.register(
+        Venue::Hyperliquid,
+        tx_hyperliquid_exec,
+    );
+
+
+    // ============================================================
+    // FUTURE ALPACA EXECUTION ROUTE
+    // ============================================================
+
+    // TODO:
+    // Add once the Alpaca execution adapter has been migrated to the new
+    // canonical Order / ExecCommand / ExecEvent architecture.
+    //
+    // let (tx_alpaca_exec, rx_alpaca_exec) =
+    //     mpsc::unbounded_channel::<ExecCommand>();
+    //
+    // execution_routes.register(
+    //     Venue::Alpaca,
+    //     tx_alpaca_exec,
+    // );
+
+
+    // ============================================================
+    // FUTURE IBKR EXECUTION ROUTE
+    // ============================================================
+
+    // TODO:
+    // Add once the IBKR execution adapter is implemented against the
+    // canonical execution architecture.
+    //
+    // let (tx_ibkr_exec, rx_ibkr_exec) =
+    //     mpsc::unbounded_channel::<ExecCommand>();
+    //
+    // execution_routes.register(
+    //     Venue::InteractiveBrokers,
+    //     tx_ibkr_exec,
+    // );
+
+
+    // ============================================================
+    // START EXECUTION ROUTER
+    // ============================================================
+
+    // The router is completely venue-independent.
+    tokio::spawn(
+        run_execution_router(
+            rx_exec_router,
+            execution_routes,
+            true,
+        )
+    );
+
+
+    // ============================================================
+    // START HYPERLIQUID EXECUTION ADAPTER
+    // ============================================================
+
+    // Engine
+    //     -> tx_exec
+    //     -> ExecutionRouter
+    //     -> tx_hyperliquid_exec
+    //     -> HyperliquidAdapter
+    //     -> Hyperliquid
+    //
+    // Hyperliquid
+    //     -> HyperliquidAdapter
+    //     -> tx_exec_evt
+    //     -> Engine
+    //
+    // Live execution adapters do not run during simulation or historical
+    // backtesting.
+    if !cfg.enable_backtest_mode
+        && !cfg.enable_simulation_mode
+    {
+        let adapter_cfg =
+            cfg.clone();
+
+        let tx_exec_evt =
+            tx_exec_evt.clone();
+
+
+        // The shared Hyperliquid Meta cache is intentionally kept alive here.
+        //
+        // Next, run_hyperliquid_adapter() can accept Arc<RwLock<Meta>> and use
+        // the already-fetched startup Meta when constructing ExchangeClient,
+        // eliminating another metadata API request.
+        let _hyperliquid_meta_cache_for_adapter =
+            hyperliquid_meta_cache
+                .as_ref()
+                .map(
+                    Arc::clone
+                );
+
+
+        tokio::spawn(
+            async move {
+                run_hyperliquid_adapter(
+                    adapter_cfg,
+                    rx_hyperliquid_exec,
+                    tx_exec_evt,
+                )
+                .await;
+            }
+        );
+    }
+
+
+    // ============================================================
+    // LIVE MARKET DATA -> ENGINE PRICE TICKS
+    // ============================================================
+
+    // In live/simulation mode, subscribe the Engine to the market-data
+    // broadcast bus and convert incoming canonical market-data events into
+    // EngineEvents.
+    //
+    // Backtest mode uses its historical deterministic event path instead.
+    if !cfg.enable_backtest_mode {
+        let mut rx_for_engine =
+            tx_bus.subscribe();
+
+        let tx_engine_for_market =
+            tx_engine.clone();
+
+
+        tokio::spawn(
+            async move {
+                loop {
+                    match rx_for_engine
+                        .recv()
+                        .await
+                    {
+                        Ok(env) => {
+                            if let Some(event) =
+                                map_app_to_live_engine_event(
+                                    &env
+                                )
+                            {
+                                let _ =
+                                    tx_engine_for_market.send(
+                                        event
+                                    );
+                            }
+                        }
+
+
+                        Err(
+                            broadcast::error::RecvError::Lagged(n)
+                        ) => {
+                            eprintln!(
+                                "[ENGINE MARKET] lagged {n} events"
+                            );
+                        }
+
+
+                        Err(
+                            broadcast::error::RecvError::Closed
+                        ) => {
+                            break;
+                        }
+                    }
+                }
+            }
+        );
+    }
+
+
+    // ============================================================
     // ENABLED STRATEGIES
     // ============================================================
 
-    // This list selects which strategy families are enabled.
-    //
-    // The same StrategyKind identifies the strategy family in live and
-    // backtest modes, while the actual implementation depends on mode.
+    // The same StrategyKind identifies a strategy family while the factory
+    // chooses the live or historical implementation.
     let enabled =
         vec![
             // StrategyKind::Base,
@@ -511,14 +707,8 @@ async fn main() -> Result<()> {
     // BACKTEST STRATEGY STATE
     // ============================================================
 
-    // Each backtest strategy receives its own bounded channel.
-    //
-    // This preserves:
-    //
-    // - event ordering
-    // - delivery to every strategy
-    // - deterministic backpressure
-    // - protection against silently dropped historical events
+    // Each backtest strategy receives its own bounded channel to preserve
+    // deterministic ordering/backpressure.
     let mut backtest_senders:
         Vec<mpsc::Sender<BacktestStrategyEvent>> =
         Vec::new();
@@ -547,7 +737,6 @@ async fn main() -> Result<()> {
                 );
 
 
-            // Every strategy receives its own bounded channel.
             let (
                 tx_strategy,
                 mut rx_strategy,
@@ -566,9 +755,7 @@ async fn main() -> Result<()> {
                 tokio::spawn(
                     async move {
                         while let Some(msg) =
-                            rx_strategy
-                                .recv()
-                                .await
+                            rx_strategy.recv().await
                         {
                             strategy
                                 .on_event(
@@ -576,13 +763,15 @@ async fn main() -> Result<()> {
                                 )
                                 .await;
 
+
                             // Signal that this strategy has fully processed
-                            // the current historical market event.
+                            // the current historical event.
                             let _ =
                                 msg.done.send(
                                     ()
                                 );
                         }
+
 
                         println!(
                             "[{:?}] backtest event loop exited",
@@ -600,7 +789,7 @@ async fn main() -> Result<()> {
     } else {
 
         // ========================================================
-        // LIVE STRATEGIES
+        // LIVE / SIMULATION STRATEGIES
         // ========================================================
 
         for kind in enabled {
@@ -611,6 +800,7 @@ async fn main() -> Result<()> {
                     tx_engine.clone(),
                     rx_view.clone(),
                 );
+
 
             let mut rx =
                 tx_bus.subscribe();
@@ -631,6 +821,7 @@ async fn main() -> Result<()> {
                                     .await;
                             }
 
+
                             Err(
                                 broadcast::error::RecvError::Lagged(n)
                             ) => {
@@ -639,6 +830,7 @@ async fn main() -> Result<()> {
                                     kind
                                 );
                             }
+
 
                             Err(
                                 broadcast::error::RecvError::Closed
@@ -663,8 +855,6 @@ async fn main() -> Result<()> {
         // RUN BACKTEST
         // ========================================================
 
-        // Replay every historical event to every enabled backtest strategy
-        // while preserving the existing deterministic synchronization path.
         data::historical::alpaca::runner::run_alpaca_backtest_feed(
             &backtest_senders,
             &tx_engine,
@@ -683,8 +873,6 @@ async fn main() -> Result<()> {
         // CLOSE BACKTEST STRATEGY CHANNELS
         // ========================================================
 
-        // Dropping all senders closes the strategy channels after any
-        // already-buffered historical events have been processed.
         drop(
             backtest_senders
         );
@@ -713,6 +901,7 @@ async fn main() -> Result<()> {
 
         let market_data_cfg =
             cfg.clone();
+
 
         data::live::hyperliquid::market_data::run_hyperliquid_feed(
             market_data_cfg.clone(),
