@@ -95,25 +95,25 @@ async fn main() -> Result<()> {
         // ============================================================
 
         // Maximum active directional Trades across the entire Engine.
-        max_active_trades: Some(1),
+        max_active_trades: Some(2),
 
         // Maximum number of distinct assets with active Trades.
-        max_active_assets: Some(1),
+        max_active_assets: Some(2),
 
         // Maximum active Trades allowed for a single symbol.
         max_active_trades_per_symbol: Some(1),
 
         // Maximum active Trades allowed for a single strategy.
-        max_active_trades_per_strategy: Some(1),
+        max_active_trades_per_strategy: Some(2),
 
         // Maximum notional value of one Order.
-        max_order_notional: Some(20.0),
+        max_order_notional: Some(60.0),
 
         // Maximum gross notional exposure across the entire Engine.
         max_gross_notional: Some(60.0),
 
         // Maximum gross notional exposure for one symbol.
-        max_symbol_notional: Some(20.0),
+        max_symbol_notional: Some(60.0),
 
         // ============================================================
         // ENGINE SETTINGS
@@ -471,8 +471,9 @@ async fn main() -> Result<()> {
     // backtest modes, while the actual implementation depends on mode.
     let enabled =
         vec![
-            StrategyKind::Base,
-            StrategyKind::MeanReversion,
+            // StrategyKind::Base,
+            // StrategyKind::MeanReversion,
+            StrategyKind::MarketOrder,
         ];
 
 

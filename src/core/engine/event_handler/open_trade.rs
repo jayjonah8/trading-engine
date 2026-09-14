@@ -389,13 +389,21 @@ impl Engine {
         // REQUESTED QUANTITY
         // ============================================================
 
-        // The Engine determines desired canonical quantity.
-        //
-        // Venue-specific precision, lot size, fractional support, szDecimals,
-        // etc. remain execution-adapter responsibilities.
-        let quantity =
+        let raw_quantity =
             intent.target_notional
                 / intent.signal_px;
+
+        // TODO:
+        // Replace this temporary normalization with canonical venue/instrument
+        // quantity rules once instrument metadata is added to the engine.
+        //
+        // For the current Hyperliquid BTC test, normalize to 5 decimal places so
+        // Order.quantity and RiskReservation.quantity match the quantity actually
+        // submitted to the venue.
+        let quantity =
+            (raw_quantity * 100_000.0)
+                .floor()
+                / 100_000.0;
 
 
         // ============================================================
