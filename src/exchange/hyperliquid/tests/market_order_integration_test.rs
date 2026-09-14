@@ -215,34 +215,30 @@ async fn test_hyperliquid_market_order_production_pipeline() {
 
     let cfg =
         Config {
-            execution_venue:
-                Venue::Hyperliquid,
+            execution_venue: Venue::Hyperliquid,
 
-            symbols:
-                vec![
-                    SYMBOL.to_string(),
-                ],
+            symbols: vec![
+                SYMBOL.to_string(),
+            ],
 
-            max_gross_positions:
-                4,
+            max_active_trades: Some(1),
+            max_active_assets: Some(1),
+            max_active_trades_per_symbol: Some(1),
+            max_active_trades_per_strategy: Some(1),
 
-            min_trade_age_before_exit_secs:
-                1,
+            max_order_notional: Some(20.0),
+            max_gross_notional: Some(20.0),
+            max_symbol_notional: Some(20.0),
 
-            enable_simulation_mode:
-                false,
+            min_trade_age_before_exit_secs: 1,
 
-            enable_backtest_mode:
-                false,
+            enable_simulation_mode: false,
+            enable_backtest_mode: false,
 
-            backtest_starting_balance:
-                100_000.0,
+            backtest_starting_balance: 100_000.0,
 
-            enable_discord_notifications:
-                false,
-
-            enable_slack_notifications:
-                false,
+            enable_discord_notifications: false,
+            enable_slack_notifications: false,
         };
 
 

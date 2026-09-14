@@ -159,4 +159,26 @@ impl Trades {
     pub fn iter(&self) -> impl Iterator<Item = (&TradeId, &Trade)> {
         self.trades.iter()
     }
+
+    /// Iterates over all active trades.
+    ///
+    /// Active trades are:
+    ///
+    /// - Opening
+    /// - Open
+    /// - Closing
+    ///
+    /// Closed trades are excluded.
+    ///
+    /// This helper keeps active-trade filtering centralized so risk checks do not
+    /// duplicate lifecycle-state logic.
+    pub fn iter_active(
+        &self,
+    ) -> impl Iterator<Item = &Trade> {
+        self.trades
+            .values()
+            .filter(
+                |trade| trade.state.is_active()
+            )
+    }
 }

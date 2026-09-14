@@ -71,7 +71,15 @@ async fn test_open_trade_routes_to_hyperliquid_adapter() {
             "BTC".to_string(),
         ],
 
-        max_gross_positions: 4,
+        max_active_trades: Some(1),
+        max_active_assets: Some(1),
+        max_active_trades_per_symbol: Some(1),
+        max_active_trades_per_strategy: Some(1),
+
+        max_order_notional: Some(20.0),
+        max_gross_notional: Some(20.0),
+        max_symbol_notional: Some(20.0),
+
         min_trade_age_before_exit_secs: 1,
 
         enable_simulation_mode: false,

@@ -14,27 +14,86 @@
 /// typed `Money` / `Quantity` types where appropriate.
 #[derive(Debug, Clone)]
 pub struct RiskLimits {
-    /// Maximum number of simultaneously active directional trades.
+    /// Maximum number of active logical Trades across the entire Engine.
     ///
-    /// `Opening`, `Open`, and `Closing` trades may all count toward this
-    /// limit depending on the risk check being performed.
+    /// Example:
+    ///
+    /// BTC Trade 1
+    /// BTC Trade 2
+    /// ETH Trade 3
+    /// SOL Trade 4
+    ///
+    /// Active Trades = 4
     pub max_active_trades: Option<usize>,
 
-    /// Maximum notional value allowed for a single submitted order.
+    /// Maximum number of distinct symbols/assets that may have active Trades.
     ///
-    /// TODO: Replace with `Money`.
+    /// Example:
+    ///
+    /// BTC Trade 1
+    /// BTC Trade 2
+    /// ETH Trade 3
+    ///
+    /// Active Assets = 2 (BTC + ETH)
+    pub max_active_assets: Option<usize>,
+
+    /// Maximum number of active Trades allowed for one symbol.
+    ///
+    /// Example:
+    ///
+    /// BTC Trade 1
+    /// BTC Trade 2
+    ///
+    /// If the limit is 2, a third BTC Trade would be rejected.
+    pub max_active_trades_per_symbol: Option<usize>,
+
+    /// Maximum number of active Trades belonging to one strategy
+    /// across all symbols.
+    ///
+    /// Example:
+    ///
+    /// BaseStrategy -> BTC
+    /// BaseStrategy -> ETH
+    /// BaseStrategy -> SOL
+    ///
+    /// If the limit is 3, a fourth BaseStrategy Trade would be rejected.
+    pub max_active_trades_per_strategy: Option<usize>,
+
+    /// Maximum notional value allowed for one individual Order.
+    ///
+    /// Example with a $10,000 limit:
+    ///
+    /// $8,000 Order  -> allowed
+    /// $10,000 Order -> allowed
+    /// $15,000 Order -> rejected
     pub max_order_notional: Option<f64>,
 
-    /// Maximum gross notional exposure allowed across the engine.
+    /// Maximum total gross notional exposure across the entire Engine.
     ///
-    /// Gross exposure considers absolute exposure regardless of direction.
+    /// Long and short exposure are both counted by absolute value.
     ///
-    /// TODO: Replace with `Money`.
+    /// Example:
+    ///
+    /// BTC long  = $20,000
+    /// ETH long  = $15,000
+    /// SOL short = $10,000
+    ///
+    /// Gross Notional = $45,000
     pub max_gross_notional: Option<f64>,
 
-    /// Maximum gross notional exposure allowed for a single symbol.
+    /// Maximum gross notional exposure allowed for one symbol.
     ///
-    /// TODO: Replace with `Money`.
+    /// Exposure from multiple Trades on the same symbol is combined.
+    ///
+    /// Example:
+    ///
+    /// BTC Trade 1 = $10,000
+    /// BTC Trade 2 = $8,000
+    ///
+    /// BTC Symbol Notional = $18,000
+    ///
+    /// With a $20,000 limit, another $5,000 of BTC exposure
+    /// would be rejected.
     pub max_symbol_notional: Option<f64>,
 }
 
@@ -42,6 +101,9 @@ impl RiskLimits {
     pub fn new() -> Self {
         Self {
             max_active_trades: None,
+            max_active_assets: None,
+            max_active_trades_per_symbol: None,
+            max_active_trades_per_strategy: None,
             max_order_notional: None,
             max_gross_notional: None,
             max_symbol_notional: None,

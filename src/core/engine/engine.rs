@@ -157,18 +157,35 @@ impl Engine {
 
         let execution_mode = get_execution_mode(&cfg);
 
+
         // ============================================================
         // RISK LIMITS
         // ============================================================
 
-        // TODO:
-        // Move this construction into the Config
-        let risk_limits = RiskLimits {
-            max_active_trades: Some(cfg.max_gross_positions),
-            max_order_notional: None,
-            max_gross_notional: None,
-            max_symbol_notional: None,
-        };
+        let risk_limits =
+            RiskLimits {
+                max_active_trades:
+                    cfg.max_active_trades,
+
+                max_active_assets:
+                    cfg.max_active_assets,
+
+                max_active_trades_per_symbol:
+                    cfg.max_active_trades_per_symbol,
+
+                max_active_trades_per_strategy:
+                    cfg.max_active_trades_per_strategy,
+
+                max_order_notional:
+                    cfg.max_order_notional,
+
+                max_gross_notional:
+                    cfg.max_gross_notional,
+
+                max_symbol_notional:
+                    cfg.max_symbol_notional,
+            };
+
 
         // ============================================================
         // INITIALIZE GENERAL STATE
@@ -179,6 +196,7 @@ impl Engine {
                 sim_realized_pnl: 0.0,
                 account_balance: 0.0, // @todo must get acount balance based on the venue / exchange
             };
+
 
         // ============================================================
         // ENGINE
@@ -203,6 +221,7 @@ impl Engine {
         engine
     }
 
+
     // ============================================================
     // ENGINE VIEW
     // ============================================================
@@ -218,6 +237,7 @@ impl Engine {
         let _ = self.tx_view.send_replace(view);
     }
 
+    
     // ============================================================
     // ENGINE EVENTS
     // ============================================================

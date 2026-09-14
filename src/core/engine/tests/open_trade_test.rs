@@ -56,7 +56,15 @@ async fn test_handle_open_trade_creates_state_and_command() {
             "BTC".to_string(),
         ],
 
-        max_gross_positions: 4,
+        max_active_trades: Some(4),
+        max_active_assets: Some(4),
+        max_active_trades_per_symbol: Some(2),
+        max_active_trades_per_strategy: Some(4),
+
+        max_order_notional: Some(10_000.0),
+        max_gross_notional: Some(50_000.0),
+        max_symbol_notional: Some(20_000.0),
+
         min_trade_age_before_exit_secs: 1,
 
         enable_simulation_mode: false,

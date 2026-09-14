@@ -1,5 +1,8 @@
+#![allow(dead_code)]
+
 use crate::core::{
     engine::engine::Engine,
+
     execution::{
         ClientOrderId,
         ExecCommand,
@@ -7,15 +10,23 @@ use crate::core::{
         OrderPurpose,
         OrderState,
     },
+
     risk::{
         checks::{
+            check_active_asset_limit,
             check_active_trade_limit,
+            check_active_trades_per_strategy,
+            check_active_trades_per_symbol,
+            check_gross_notional,
             check_order_notional,
+            check_symbol_notional,
         },
         ReservationPurpose,
         RiskReservation,
     },
+
     trade_intent::TradeIntent,
+
     trades::{
         Trade,
         TradeState,
@@ -24,53 +35,57 @@ use crate::core::{
 
 use crate::shared::print_log;
 
+
 // TODO:
-// Add detail Intent printout thats formatted and detailed 
-// for the new archictecture. 
+// Add detailed TradeIntent printout for the new execution architecture.
 
 // TODO:
 // Add any remaining strategy ownership / cooldown admission rules here
 // if those policies remain part of the final engine behavior.
 
 // TODO:
-// Add max_gross_notional and max_symbol_notional checks once
-// canonical position valuation is available from Positions.
+// Replace raw `target_notional / signal_px` sizing with the final canonical
+// sizing / normalization path once Quantity, Price, and venue instrument
+// constraints are implemented.
 
 // TODO:
-// Replace raw `target_notional / signal_px` sizing with the final
-// canonical sizing/normalization path once Quantity/Price and venue
-// instrument constraints are implemented.
+// Add structured rejection/output events later so failed intents can be
+// surfaced to metrics, persistence, notifications, or strategies without
+// relying only on logs.
 
-// TODO:
-// Complete canonical gross/symbol risk checks and final quantity sizing
-// once position valuation and instrument-specific execution rules are wired.
 
-// TODO:
-// Add structured rejection/output events later so failed intents can
-// be surfaced to metrics, persistence, notifications, or strategies
-// without relying only on debug logs. Just print for now and add 
-// remote notifications when the lifecyle is complete for atleast 2 venues
+// ============================================================
+// HANDLE OPEN TRADE
+// ============================================================
 
 impl Engine {
-    /// Handles a strategy request to create a new directional trade.
+    /// Handles a strategy request to create a new directional Trade.
     ///
     /// TradeIntent
-    ///     -> validation
-    ///     -> engine/risk checks
-    ///     -> quantity calculation
-    ///     -> Trade + Order ID allocation
-    ///     -> Trade creation (Opening)
-    ///     -> RiskReservation creation
-    ///     -> Order creation (PendingSubmit)
-    ///     -> authoritative state insertion
-    ///     -> ExecCommand::SubmitOrder
-    ///     -> execution router
-    ///     -> venue adapter
+    ///     ↓
+    /// validate
+    ///     ↓
+    /// strategy/symbol ownership gate
+    ///     ↓
+    /// count-based risk checks
+    ///     ↓
+    /// notional/exposure risk checks
+    ///     ↓
+    /// calculate quantity
+    ///     ↓
+    /// create Trade + Order + RiskReservation
+    ///     ↓
+    /// commit authoritative Engine state
+    ///     ↓
+    /// ExecCommand::SubmitOrder
+    ///     ↓
+    /// execution router
+    ///     ↓
+    /// venue adapter
     pub fn handle_open_trade(
         &mut self,
         intent: TradeIntent,
     ) {
-
         // ============================================================
         // VALIDATE INTENT
         // ============================================================
@@ -89,19 +104,16 @@ impl Engine {
 
             return;
         }
- 
+
 
         // ============================================================
-        // ACTIVE STRATEGY TRADE GATE
+        // ACTIVE STRATEGY + SYMBOL GATE
         // ============================================================
 
-        // Prevent the same strategy from accidentally creating another
-        // independent logical Trade for this symbol while one is already
-        // Opening, Open, or Closing.
+        // Prevent one strategy from accidentally creating multiple independent
+        // Trade lifecycles for the same symbol.
         //
-        // This does NOT restrict the number of market, limit, stop, or exit
-        // Orders that may belong to the existing Trade. One Trade may own
-        // many simultaneous Orders throughout its execution lifecycle.
+        // This does NOT limit how many Orders may belong to an existing Trade.
         if self.state.trades.has_active_trade_for_strategy_symbol(
             &intent.strategy_id,
             &intent.symbol,
@@ -121,7 +133,7 @@ impl Engine {
 
 
         // ============================================================
-        // RISK CHECKS
+        // TOTAL ACTIVE TRADE LIMIT
         // ============================================================
 
         if let Err(err) =
@@ -143,6 +155,89 @@ impl Engine {
 
             return;
         }
+
+
+        // ============================================================
+        // ACTIVE ASSET LIMIT
+        // ============================================================
+
+        if let Err(err) =
+            check_active_asset_limit(
+                &self.state.risk.limits,
+                &self.state.trades,
+                &intent.symbol,
+            )
+        {
+            print_log(
+                self.debug_mode,
+                true,
+                format!(
+                    "[ENGINE] OPEN TRADE REJECTED | strategy={} | symbol={} | error={:?}",
+                    intent.strategy_id,
+                    intent.symbol,
+                    err,
+                ),
+            );
+
+            return;
+        }
+
+
+        // ============================================================
+        // ACTIVE TRADES PER SYMBOL LIMIT
+        // ============================================================
+
+        if let Err(err) =
+            check_active_trades_per_symbol(
+                &self.state.risk.limits,
+                &self.state.trades,
+                &intent.symbol,
+            )
+        {
+            print_log(
+                self.debug_mode,
+                true,
+                format!(
+                    "[ENGINE] OPEN TRADE REJECTED | strategy={} | symbol={} | error={:?}",
+                    intent.strategy_id,
+                    intent.symbol,
+                    err,
+                ),
+            );
+
+            return;
+        }
+
+
+        // ============================================================
+        // ACTIVE TRADES PER STRATEGY LIMIT
+        // ============================================================
+
+        if let Err(err) =
+            check_active_trades_per_strategy(
+                &self.state.risk.limits,
+                &self.state.trades,
+                &intent.strategy_id,
+            )
+        {
+            print_log(
+                self.debug_mode,
+                true,
+                format!(
+                    "[ENGINE] OPEN TRADE REJECTED | strategy={} | symbol={} | error={:?}",
+                    intent.strategy_id,
+                    intent.symbol,
+                    err,
+                ),
+            );
+
+            return;
+        }
+
+
+        // ============================================================
+        // SINGLE ORDER NOTIONAL LIMIT
+        // ============================================================
 
         if let Err(err) =
             check_order_notional(
@@ -166,13 +261,138 @@ impl Engine {
 
 
         // ============================================================
+        // CURRENT GROSS POSITION NOTIONAL
+        // ============================================================
+
+        // Established exposure is valued using the latest known market price.
+        //
+        // If a current market price is unavailable, average entry price is
+        // used as a fallback so existing exposure is still represented in
+        // admission checks.
+        let current_gross_notional =
+            self.state
+                .positions
+                .iter()
+                .map(|(_, position)| {
+                    let px =
+                        self.last_px
+                            .get(&position.key.symbol)
+                            .map(|last| last.px)
+                            .or(position.avg_entry_px)
+                            .unwrap_or(0.0);
+
+                    position.absolute_quantity() * px
+                })
+                .sum::<f64>();
+
+
+        // ============================================================
+        // GROSS NOTIONAL LIMIT
+        // ============================================================
+
+        // check_gross_notional() includes:
+        //
+        // established Position exposure
+        //     +
+        // all active Entry RiskReservations
+        //     +
+        // this proposed Trade
+        if let Err(err) =
+            check_gross_notional(
+                &self.state.risk.limits,
+                &self.state.risk.reservations,
+                current_gross_notional,
+                intent.target_notional,
+            )
+        {
+            print_log(
+                self.debug_mode,
+                true,
+                format!(
+                    "[ENGINE] OPEN TRADE REJECTED | strategy={} | symbol={} | error={:?}",
+                    intent.strategy_id,
+                    intent.symbol,
+                    err,
+                ),
+            );
+
+            return;
+        }
+
+
+        // ============================================================
+        // CURRENT SYMBOL POSITION NOTIONAL
+        // ============================================================
+
+        let current_symbol_notional =
+            self.state
+                .positions
+                .iter()
+                .filter(|(_, position)| {
+                    position.key.symbol == intent.symbol
+                })
+                .map(|(_, position)| {
+                    let px =
+                        self.last_px
+                            .get(&position.key.symbol)
+                            .map(|last| last.px)
+                            .or(position.avg_entry_px)
+                            .unwrap_or(intent.signal_px);
+
+                    position.absolute_quantity() * px
+                })
+                .sum::<f64>();
+
+
+        // ============================================================
+        // RESERVED SYMBOL NOTIONAL
+        // ============================================================
+
+        let reserved_symbol_notional =
+            self.state
+                .risk
+                .reservations
+                .entry_notional_for_symbol(
+                    &intent.symbol
+                );
+
+
+        // ============================================================
+        // SYMBOL NOTIONAL LIMIT
+        // ============================================================
+
+        if let Err(err) =
+            check_symbol_notional(
+                &self.state.risk.limits,
+                &intent.symbol,
+                current_symbol_notional,
+                reserved_symbol_notional,
+                intent.target_notional,
+            )
+        {
+            print_log(
+                self.debug_mode,
+                true,
+                format!(
+                    "[ENGINE] OPEN TRADE REJECTED | strategy={} | symbol={} | error={:?}",
+                    intent.strategy_id,
+                    intent.symbol,
+                    err,
+                ),
+            );
+
+            return;
+        }
+
+
+        // ============================================================
         // REQUESTED QUANTITY
         // ============================================================
 
-        // Calculate the engine's desired quantity from the strategy notional.
+        // The Engine determines desired canonical quantity.
         //
-        // Venue-specific quantity rules such as precision, lot size, and
-        // fractional-share support belong at the execution boundary.
+        // Venue-specific precision, lot size, fractional support, szDecimals,
+        // etc. remain execution-adapter responsibilities.
         let quantity =
             intent.target_notional
                 / intent.signal_px;
@@ -196,8 +416,6 @@ impl Engine {
         // TRADE
         // ============================================================
 
-        // The logical trade exists immediately, but it has no established
-        // quantity until confirmed entry fills arrive.
         let trade = Trade {
             id: trade_id,
             strategy_id: intent.strategy_id.clone(),
@@ -220,6 +438,7 @@ impl Engine {
             opened_ts_ms: None,
             closed_ts_ms: None,
         };
+
 
         // ============================================================
         // ORDER
@@ -255,8 +474,9 @@ impl Engine {
         // RISK RESERVATION
         // ============================================================
 
-        // Reserve the requested exposure before sending the order so another
-        // strategy decision cannot consume the same risk capacity.
+        // Reserve proposed exposure before venue submission so another
+        // TradeIntent cannot consume the same risk capacity while this Order
+        // is still pending or working.
         let reservation = RiskReservation {
             order_id,
             trade_id: Some(trade_id),
@@ -274,21 +494,17 @@ impl Engine {
         // COMMIT ENGINE STATE
         // ============================================================
 
+        // Commit canonical state before sending execution so immediately
+        // arriving venue events can always resolve OrderId and TradeId.
         self.state.trades.insert(trade);
         self.state.orders.insert(order.clone());
         self.state.risk.reservations.insert(reservation);
+
 
         // ============================================================
         // SUBMIT ORDER
         // ============================================================
 
-
-        // A successful channel send only means the execution router received
-        // the command. The router forwards it to the adapter selected by
-        // `order.venue`.
-        //
-        // The order remains PendingSubmit until canonical ExecEvents report
-        // what actually happened at the execution venue.
         if let Err(err) =
             self.tx_exec.send(
                 ExecCommand::SubmitOrder {
@@ -296,28 +512,20 @@ impl Engine {
                 }
             )
         {
-            // The command never reached the execution adapter, so roll back
-            // all authoritative state created for this submission.
-            self.state
-                .risk
-                .reservations
-                .release(order_id);
-
-            self.state
-                .orders
-                .remove(order_id);
-
-            self.state
-                .trades
-                .remove(trade_id);
+            // The command never reached the execution router, so roll back all
+            // state created for this submission.
+            self.state.risk.reservations.release(order_id);
+            self.state.orders.remove(order_id);
+            self.state.trades.remove(trade_id);
 
             print_log(
                 self.debug_mode,
                 true,
                 format!(
-                    "[ENGINE] OPEN TRADE SUBMIT FAILED | trade_id={} | order_id={} | symbol={} | error={}",
+                    "[ENGINE] OPEN TRADE SUBMIT FAILED | trade_id={} | order_id={} | strategy={} | symbol={} | error={}",
                     trade_id,
                     order_id,
+                    intent.strategy_id,
                     intent.symbol,
                     err,
                 ),

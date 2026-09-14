@@ -77,11 +77,9 @@ impl RiskReservations {
 
     /// Reduces a reservation after part of an order fills.
     ///
-    /// The reservation is automatically removed when its remaining quantity
-    /// reaches zero.
-    ///
-    /// TODO: Update reserved notional proportionally or recompute it using
-    /// canonical `Price`, `Quantity`, and `Money` types once those are added.
+    /// Quantity and notional are reduced proportionally so filled exposure moves
+    /// from reserved exposure into actual Position exposure without being counted
+    /// twice by future risk checks.
     pub fn reduce_quantity(
         &mut self,
         order_id: OrderId,
@@ -92,12 +90,25 @@ impl RiskReservations {
             return false;
         };
 
+        let old_quantity = reservation.quantity;
+
+        if old_quantity <= f64::EPSILON {
+            self.reservations.remove(&order_id);
+            return true;
+        }
+
+        let consumed_fraction =
+            (filled_quantity / old_quantity).clamp(0.0, 1.0);
+
         reservation.quantity =
             (reservation.quantity - filled_quantity).max(0.0);
 
+        reservation.notional =
+            (reservation.notional * (1.0 - consumed_fraction)).max(0.0);
+
         reservation.updated_ts_ms = ts_ms;
 
-        if reservation.quantity == 0.0 {
+        if reservation.quantity <= f64::EPSILON {
             self.reservations.remove(&order_id);
         }
 
@@ -166,6 +177,21 @@ impl RiskReservations {
             .values()
             .filter(|reservation| {
                 reservation.purpose == ReservationPurpose::Entry
+            })
+            .map(|reservation| reservation.notional)
+            .sum()
+    }
+
+    /// Returns total notional reserved by active entry orders for one symbol.
+    pub fn entry_notional_for_symbol(
+        &self,
+        symbol: &str,
+    ) -> f64 {
+        self.reservations
+            .values()
+            .filter(|reservation| {
+                reservation.purpose == ReservationPurpose::Entry
+                    && reservation.symbol == symbol
             })
             .map(|reservation| reservation.notional)
             .sum()
