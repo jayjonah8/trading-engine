@@ -8,37 +8,65 @@ use crate::core::{
         TradeId,
         Trades,
     },
+    venue_state::VenueState,
 };
+
+
+/// ============================================================
+/// ENGINE VIEW
+/// ============================================================
 
 /// Read-only snapshot published by Engine.
 ///
-/// Strategies and pollers can clone the watch receiver and inspect
-/// the latest Engine state without being able to mutate the Engine.
+/// Strategies and other read-only consumers can clone the watch receiver
+/// and inspect the latest Engine state without being able to mutate Engine.
 #[derive(Debug, Clone)]
 pub struct EngineView {
     pub cfg: Config,
+
     pub general: General,
+
+    /// Canonical active Trade state exposed to strategies.
     pub trades: Trades,
+
+    /// Latest canonical external venue/account/instrument state.
+    ///
+    /// The Engine owns and mutates VenueState. Readers only receive cloned
+    /// snapshots through EngineView.
+    pub venue_state: VenueState,
 
     /// Convenience field so readers don't have to count every time.
     pub open_trades: usize,
 }
 
+
 impl EngineView {
     /// Builds a read-only snapshot from Engine configuration,
-    /// general account state, and canonical EngineState.
+    /// general state, canonical EngineState, and external VenueState.
     pub fn from_parts(
         cfg: &Config,
         general: &General,
         state: &EngineState,
+        venue_state: &VenueState,
     ) -> Arc<Self> {
-        Arc::new(Self {
-            cfg: cfg.clone(),
-            general: general.clone(),
-            trades: state.trades.clone(),
-            open_trades: state.trades.count_open(),
-        })
+        Arc::new(
+            Self {
+                cfg: cfg.clone(),
+
+                general: general.clone(),
+
+                trades:
+                    state.trades.clone(),
+
+                venue_state:
+                    venue_state.clone(),
+
+                open_trades:
+                    state.trades.count_open(),
+            }
+        )
     }
+
 
     /// Returns the active TradeId owned by a specific strategy for a symbol.
     ///
@@ -61,6 +89,7 @@ impl EngineView {
             )
     }
 
+
     /// Placeholder snapshot used only when creating the watch channel.
     ///
     /// The caller must provide an explicit Config because execution venue
@@ -68,11 +97,21 @@ impl EngineView {
     pub fn empty(
         cfg: Config,
     ) -> Arc<Self> {
-        Arc::new(Self {
-            cfg,
-            general: General::default(),
-            trades: Trades::default(),
-            open_trades: 0,
-        })
+        Arc::new(
+            Self {
+                cfg,
+
+                general:
+                    General::default(),
+
+                trades:
+                    Trades::default(),
+
+                venue_state:
+                    VenueState::default(),
+
+                open_trades: 0,
+            }
+        )
     }
 }

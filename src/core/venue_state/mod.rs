@@ -1,5 +1,8 @@
+#![allow(dead_code)]
+
 pub mod account;
 pub mod account_details;
+pub mod event;
 pub mod instrument;
 pub mod state;
 
@@ -24,6 +27,13 @@ pub use account_details::{
     HyperliquidAccountState,
     IbkrAccountState,
 };
+
+
+// ============================================================
+// EVENT
+// ============================================================
+
+pub use event::VenueStateEvent;
 
 
 // ============================================================

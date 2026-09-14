@@ -236,11 +236,12 @@ impl Engine {
     // ============================================================
 
     /// Publishes the latest read-only engine state to strategies.
-    fn publish_view(&self) {
+    pub(crate) fn publish_view(&self) {
         let view = EngineView::from_parts(
             &self.cfg,
             &self.general,
             &self.state,
+            &self.venue_state,
         );
 
         let _ = self.tx_view.send_replace(view);

@@ -57,6 +57,8 @@ use crate::exchange::hyperliquid::adapter::{
     run_hyperliquid_adapter,
 };
 
+use crate::core::venue_state::VenueStateEvent;
+
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -200,6 +202,22 @@ async fn main() -> Result<()> {
     // canonical execution facts back to the authoritative Engine.
     let (tx_exec_evt, mut rx_exec_evt) =
         mpsc::unbounded_channel::<ExecEvent>();
+
+
+    // ============================================================
+    // VENUE STATE -> ENGINE
+    // ============================================================
+
+    // Venue-specific pollers/runtime services publish normalized account and
+    // instrument state through this channel.
+    //
+    // This channel is used only by live and simulation infrastructure.
+    // Historical backtesting must not start venue pollers.
+    let (
+        tx_venue_state,
+        mut rx_venue_state,
+    ) =
+        mpsc::unbounded_channel::<VenueStateEvent>();
 
 
     // ============================================================
@@ -417,7 +435,6 @@ async fn main() -> Result<()> {
         async move {
             loop {
                 tokio::select! {
-
                     // ================================================
                     // ENGINE EVENT
                     // ================================================
@@ -440,6 +457,19 @@ async fn main() -> Result<()> {
                     {
                         engine.on_exec_event(
                             exec_evt
+                        );
+                    }
+
+
+                    // ================================================
+                    // VENUE STATE EVENT
+                    // ================================================
+
+                    Some(venue_state_evt) =
+                        rx_venue_state.recv() =>
+                    {
+                        engine.on_venue_state_event(
+                            venue_state_evt
                         );
                     }
 
