@@ -315,7 +315,7 @@ fn resolve_order_id(
     // ============================================================
 
     let Some(order_id) =
-        correlation.get(
+        correlation.get_by_client_order_id(
             client_order_id
         )
     else {

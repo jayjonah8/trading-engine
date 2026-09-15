@@ -105,7 +105,7 @@ pub fn map_trade_info_to_fill(
     // ============================================================
 
     let Some(order_id): Option<OrderId> =
-        correlation.get(
+        correlation.get_by_client_order_id(
             client_order_id
         )
     else {

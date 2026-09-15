@@ -57,8 +57,6 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 
 
-
-
 // ============================================================
 // RUN HYPERLIQUID EXECUTION ADAPTER
 // ============================================================
@@ -74,7 +72,7 @@ use tokio::sync::RwLock;
 ///
 /// The adapter never mutates authoritative Engine state.
 ///
-/// Venue-specific REST/SDK responses and asynchronous WebSocket events are
+/// Venue-specific SDK responses and asynchronous WebSocket events are
 /// translated into canonical `ExecEvent`s and sent back to the Engine.
 ///
 /// Runtime flow:
@@ -139,6 +137,7 @@ pub async fn run_hyperliquid_adapter(
     let user =
         wallet.address();
 
+
     let meta =
         meta_cache
             .read()
@@ -165,7 +164,7 @@ pub async fn run_hyperliquid_adapter(
             )
         );
 
-   
+
     // ============================================================
     // EXECUTION WEBSOCKETS
     // ============================================================
@@ -228,7 +227,9 @@ pub async fn run_hyperliquid_adapter(
     // Hyperliquid receives the Engine's ClientOrderId as CLOID and returns
     // that CLOID through OrderUpdates and UserEvents.
     //
-    // This lightweight adapter-local map resolves:
+    // Correlation supports both directions:
+    //
+    // WebSocket path:
     //
     //     CLOID
     //       ↓
@@ -236,7 +237,15 @@ pub async fn run_hyperliquid_adapter(
     //       ↓
     //     OrderId
     //
-    // It is transport correlation only.
+    // Engine command path:
+    //
+    //     OrderId
+    //       ↓
+    //     HyperliquidOrderRef
+    //       ├── ClientOrderId -> CLOID
+    //       └── symbol        -> asset
+    //
+    // This is adapter-local transport correlation only.
     //
     // Authoritative canonical Order state remains entirely inside EngineState.
     let mut correlation =
@@ -270,8 +279,11 @@ pub async fn run_hyperliquid_adapter(
     //         ↓
     //     ExecEvent
     //
-    // Keeping both inside the same adapter task means correlation state does
-    // not require Arc<Mutex<...>> or other shared mutable synchronization.
+    // Keeping correlation inside this task means the adapter remains the
+    // single owner of its mutable transport state.
+    //
+    // Slow venue requests are spawned independently after extracting only
+    // the transport information they require.
     loop {
         tokio::select! {
 
@@ -324,19 +336,41 @@ pub async fn run_hyperliquid_adapter(
                         // REGISTER CORRELATION
                         // --------------------------------------------
 
-                        // Register correlation synchronously BEFORE spawning the venue request.
+                        // Register correlation synchronously BEFORE spawning
+                        // the venue request.
                         //
-                        // Hyperliquid WS events may arrive immediately after submission, so the
-                        // adapter must already be able to resolve:
+                        // Hyperliquid WS events may arrive immediately after
+                        // submission, so the adapter must already be able to
+                        // resolve:
                         //
-                        //     CLOID -> ClientOrderId -> OrderId
+                        //     CLOID
+                        //       ↓
+                        //     ClientOrderId
+                        //       ↓
+                        //     OrderId
+                        //
+                        // The reverse lookup is also registered so later
+                        // Engine commands can resolve:
+                        //
+                        //     OrderId
+                        //       ↓
+                        //     ClientOrderId/CLOID + symbol
+                        //
+                        // This is adapter-local transport correlation only.
+                        // Canonical Order state remains owned by the Engine.
                         correlation.insert(
-                            order.client_order_id,
                             order.id,
+                            order.client_order_id,
+                            order.symbol.clone(),
                         );
 
 
-                        // Clone only the shared transport handles needed by the task.
+                        // --------------------------------------------
+                        // SPAWN SUBMISSION
+                        // --------------------------------------------
+
+                        // Clone only the shared transport handles needed by
+                        // the task.
                         //
                         // Canonical Engine state is NOT shared with this task.
                         let exchange_client =
@@ -348,14 +382,16 @@ pub async fn run_hyperliquid_adapter(
                             tx_evt.clone();
 
 
-                        // Do not await venue submission inside the adapter event loop.
+                        // Do not await venue submission inside the adapter
+                        // event loop.
                         //
-                        // Hyperliquid can emit OrderUpdates/UserEvents before the SDK
-                        // request returns. Running submission independently keeps the
-                        // adapter free to consume those WS messages immediately.
+                        // Hyperliquid can emit OrderUpdates/UserEvents before
+                        // the SDK request returns. Running submission
+                        // independently keeps the adapter free to consume
+                        // those WS messages immediately.
                         //
-                        // This also allows multiple independent orders to be in flight
-                        // concurrently without blocking execution-event processing.
+                        // This also allows multiple independent orders to be
+                        // in flight concurrently.
                         tokio::spawn(
                             async move {
                                 handle_submit_order(
@@ -378,6 +414,10 @@ pub async fn run_hyperliquid_adapter(
                         venue,
                         order_id,
                     } => {
+                        // --------------------------------------------
+                        // ROUTE VALIDATION
+                        // --------------------------------------------
+
                         if venue != Venue::Hyperliquid {
                             print_log(
                                 debug_mode,
@@ -393,6 +433,83 @@ pub async fn run_hyperliquid_adapter(
                         }
 
 
+                        // --------------------------------------------
+                        // RESOLVE CORRELATION
+                        // --------------------------------------------
+
+                        // Resolve the adapter-local Hyperliquid order
+                        // reference synchronously BEFORE spawning the
+                        // asynchronous cancellation request.
+                        //
+                        // Cancellation begins with only the canonical:
+                        //
+                        //     OrderId
+                        //
+                        // Hyperliquid requires:
+                        //
+                        //     asset + CLOID
+                        //
+                        // Therefore:
+                        //
+                        //     OrderId
+                        //         ↓
+                        //     HyperliquidOrderRef
+                        //         ├── ClientOrderId -> CLOID
+                        //         └── symbol        -> asset
+                        //
+                        // Clone only this small transport reference into the
+                        // spawned task.
+                        //
+                        // Correlation itself remains exclusively owned by this
+                        // adapter event loop and does not require
+                        // Arc<Mutex<_>> / Arc<RwLock<_>>.
+                        let Some(order_ref) =
+                            correlation
+                                .get_by_order_id(
+                                    order_id
+                                )
+                                .cloned()
+                        else {
+                            let ts_ms =
+                                chrono::Utc::now()
+                                    .timestamp_millis();
+
+
+                            print_log(
+                                debug_mode,
+                                true,
+                                format!(
+                                    "[HYPERLIQUID ADAPTER] CANCEL CORRELATION NOT FOUND | order_id={}",
+                                    order_id,
+                                ),
+                            );
+
+
+                            let _ =
+                                tx_evt.send(
+                                    ExecEvent::Error {
+                                        order_id:
+                                            Some(order_id),
+
+                                        message:
+                                            format!(
+                                                "Hyperliquid cancellation correlation not found for order_id={}",
+                                                order_id,
+                                            ),
+
+                                        ts_ms,
+                                    }
+                                );
+
+
+                            continue;
+                        };
+
+
+                        // --------------------------------------------
+                        // SPAWN CANCELLATION
+                        // --------------------------------------------
+
                         let exchange_client =
                             Arc::clone(
                                 &exchange_client
@@ -402,12 +519,22 @@ pub async fn run_hyperliquid_adapter(
                             tx_evt.clone();
 
 
+                        // Do not block the adapter event loop while the
+                        // cancellation request is in flight.
+                        //
+                        // This is particularly important for cancellation
+                        // because an order may receive additional fills while
+                        // cancellation is being processed.
+                        //
+                        // Those UserEvents / OrderUpdates must continue being
+                        // consumed immediately.
                         tokio::spawn(
                             async move {
                                 handle_cancel_order(
                                     &exchange_client,
                                     &tx_evt,
                                     order_id,
+                                    order_ref,
                                     debug_mode,
                                 )
                                 .await;
@@ -425,6 +552,10 @@ pub async fn run_hyperliquid_adapter(
                         order_id,
                         changes,
                     } => {
+                        // --------------------------------------------
+                        // ROUTE VALIDATION
+                        // --------------------------------------------
+
                         if venue != Venue::Hyperliquid {
                             print_log(
                                 debug_mode,
@@ -440,6 +571,10 @@ pub async fn run_hyperliquid_adapter(
                         }
 
 
+                        // --------------------------------------------
+                        // SPAWN REPLACEMENT
+                        // --------------------------------------------
+
                         let exchange_client =
                             Arc::clone(
                                 &exchange_client
@@ -449,6 +584,10 @@ pub async fn run_hyperliquid_adapter(
                             tx_evt.clone();
 
 
+                        // Replacement is still routed through its existing
+                        // handler. Once Hyperliquid replacement is implemented,
+                        // it can resolve the same adapter-local order reference
+                        // pattern used by cancellation.
                         tokio::spawn(
                             async move {
                                 handle_replace_order(
@@ -482,6 +621,7 @@ pub async fn run_hyperliquid_adapter(
                         "[HYPERLIQUID ADAPTER] execution WebSocket message channel closed",
                     );
 
+
                     // The raw channel should normally remain alive while the
                     // execution WS runtime is running.
                     //
@@ -501,10 +641,16 @@ pub async fn run_hyperliquid_adapter(
                         order_updates
                     ) => {
                         // OrderUpdates is responsible for lifecycle facts such
-                        // as working and cancellation.
+                        // as:
+                        //
+                        // - working
+                        // - canceled
+                        // - other venue order statuses
                         //
                         // A "filled" order update does NOT create a canonical
-                        // Fill here. Actual executions come from UserEvents.
+                        // Fill here.
+                        //
+                        // Actual individual executions come from UserEvents.
                         handle_order_updates(
                             order_updates,
                             &correlation,
@@ -526,6 +672,23 @@ pub async fn run_hyperliquid_adapter(
                         //
                         // mapper/user_event.rs dispatches each TradeInfo to
                         // mapper/fill.rs, which creates canonical Fill events.
+                        //
+                        // Multiple fills for the same OrderId naturally feed
+                        // the Engine's generic fill accumulator, allowing:
+                        //
+                        //     Working
+                        //        ↓
+                        //     Fill
+                        //        ↓
+                        //     partial quantity
+                        //        ↓
+                        //     Fill
+                        //        ↓
+                        //     ...
+                        //        ↓
+                        //     total filled quantity == order quantity
+                        //        ↓
+                        //     Filled
                         handle_user_event(
                             user_event,
                             &correlation,
@@ -541,8 +704,9 @@ pub async fn run_hyperliquid_adapter(
 
                     other => {
                         // The execution WS workers are intended to forward only
-                        // the two subscription types above, but ignore any
-                        // unrelated SDK message defensively rather than
+                        // the two subscription types above.
+                        //
+                        // Ignore unrelated SDK messages defensively rather than
                         // changing execution state based on an unknown message.
                         print_log(
                             debug_mode,
