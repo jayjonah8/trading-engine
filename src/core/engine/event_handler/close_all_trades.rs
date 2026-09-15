@@ -3,7 +3,10 @@
 use crate::{
     core::{
         engine::engine::Engine,
-        execution::OrderPurpose,
+        execution::{
+            ExitOrderRequest,
+            OrderPurpose,
+        },
         trades::{
             TradeId,
             TradeState,
@@ -182,9 +185,13 @@ impl Engine {
         // handle_close_trade() mutates authoritative engine state.
         //
         // Each Trade receives its own Exit Order and RiskReservation.
+        //
+        // CloseAllTrades intentionally uses a market exit because it represents
+        // an engine-wide request to liquidate eligible exposure immediately.
         for trade_id in trade_ids {
             self.handle_close_trade(
                 trade_id,
+                ExitOrderRequest::market(),
                 reason.clone(),
                 ts_ms,
             );

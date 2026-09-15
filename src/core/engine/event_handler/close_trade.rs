@@ -7,12 +7,11 @@ use crate::{
         execution::{
             ClientOrderId,
             ExecCommand,
+            ExitOrderRequest,
             Order,
             OrderPurpose,
             OrderState,
-            OrderType,
             Side,
-            TimeInForce,
         },
 
         risk::{
@@ -40,6 +39,10 @@ use crate::{
 //
 // CloseTrade
 //     ↓
+// ExitOrderRequest
+//     ↓
+// validate exit execution instructions
+//     ↓
 // find Trade by TradeId
 //     ↓
 // require TradeState::Open
@@ -57,9 +60,12 @@ use crate::{
 // create canonical Exit Order
 //
 // purpose       = Exit
-// order_type    = Market
-// time_in_force = IOC
-// reduce_only   = true
+// order_type    = requested execution type
+// time_in_force = requested TIF
+// limit_px      = requested limit price when applicable
+// stop_px       = requested stop price when applicable
+// post_only     = requested post-only policy
+// reduce_only   = ALWAYS true
 //
 //     ↓
 // create Exit RiskReservation
@@ -74,43 +80,58 @@ use crate::{
 //     ↓
 // venue adapter
 //     ↓
-// ExecEvent::Fill
+// OrderAccepted / OrderWorking / Fill / OrderCanceled / ...
 //     ↓
-// fill.rs reduces Trade / Position
-//     ↓
-// remaining Trade.quantity reaches zero
-//     ↓
-// TradeState::Closed
+// execution handlers update authoritative state
 //
 // IMPORTANT:
 //
-// `close_trade.rs` does NOT directly close the Trade.
+// `close_trade.rs` does NOT directly reduce actual exposure.
 //
-// It only creates the execution request and transitions the logical Trade to
-// `Closing`. Confirmed fills remain the only authority for reducing actual
-// exposure and eventually transitioning the Trade to `Closed`.
+// It creates the canonical exit Order and transitions the logical Trade to
+// `Closing`. Confirmed Fill events remain the only authority for reducing
+// Position/Trade quantity and eventually transitioning the Trade to `Closed`.
 
 
 // ============================================================
-// MARKET EXIT POLICY
+// EXIT EXECUTION POLICY
 // ============================================================
 
-// The first close implementation uses a market-style exit because CloseTrade
-// means "reduce this exposure now".
+// `ExitOrderRequest` describes HOW an existing Trade should be exited.
 //
-// IOC means:
+// Examples:
 //
-// - execute as much quantity as possible immediately
-// - cancel any remainder that cannot execute immediately
+// Immediate market exit:
 //
-// FOK is intentionally not used because an inability to fill the entire
-// quantity immediately should not prevent a useful partial reduction.
+//     ExitOrderRequest::market()
 //
-// GTC / Day are more appropriate for working/resting orders rather than this
-// immediate market-exit intent.
+//         -> Market
+//         -> IOC
+//         -> reduce_only = true
 //
-// Venue adapters remain responsible for translating this canonical Market +
-// IOC intent into the closest supported behavior at their venue.
+// Resting limit exit:
+//
+//     ExitOrderRequest::limit(
+//         limit_px,
+//         TimeInForce::Gtc,
+//         post_only,
+//     )
+//
+//         -> Limit
+//         -> selected TIF
+//         -> selected limit price
+//         -> optional post-only
+//         -> reduce_only = true
+//
+// The Engine, not the strategy/caller, owns `reduce_only`.
+//
+// A canonical directional Trade exit must never intentionally increase or
+// reverse exposure. Therefore every Order created by this handler has:
+//
+//     reduce_only = true
+//
+// Venue adapters translate the resulting canonical Order into the closest
+// supported venue-specific execution behavior.
 
 
 // ============================================================
@@ -124,10 +145,12 @@ impl Engine {
     ///
     /// The handler:
     ///
+    /// - validates the requested exit execution instructions
     /// - finds the Trade by canonical TradeId
     /// - verifies that it is currently Open
     /// - prevents duplicate simultaneous exit attempts
-    /// - creates a reduce-only market Exit Order
+    /// - derives the exit side and quantity from authoritative Trade state
+    /// - creates a canonical reduce-only Exit Order
     /// - creates an Exit RiskReservation
     /// - transitions the Trade to `Closing`
     /// - submits the Order through the execution router
@@ -138,9 +161,41 @@ impl Engine {
     pub fn handle_close_trade(
         &mut self,
         trade_id: TradeId,
+        execution: ExitOrderRequest,
         reason: String,
         ts_ms: i64,
     ) {
+        // ============================================================
+        // VALIDATE EXIT EXECUTION REQUEST
+        // ============================================================
+
+        // Reject malformed execution instructions before creating or mutating
+        // any authoritative Trade, Order, Position, or Risk state.
+        //
+        // Examples of invalid requests:
+        //
+        // - Limit without limit_px
+        // - Market with limit_px
+        // - StopMarket without stop_px
+        // - post_only on a non-limit order
+        if let Err(error) =
+            execution.validate()
+        {
+            print_log(
+                self.debug_mode,
+                true,
+                format!(
+                    "[ENGINE] CLOSE TRADE REJECTED | trade_id={} | error={:?} | request_reason={}",
+                    trade_id,
+                    error,
+                    reason,
+                ),
+            );
+
+            return;
+        }
+
+
         // ============================================================
         // FIND TRADE
         // ============================================================
@@ -170,10 +225,14 @@ impl Engine {
         // TRADE STATE
         // ============================================================
 
-        // The first implementation only closes fully established Open trades.
+        // Only fully established Open trades are eligible for a new exit
+        // lifecycle.
         //
         // Opening trades should instead have their working entry Order
-        // canceled. Closing trades already have an exit lifecycle underway.
+        // canceled.
+        //
+        // Closing trades already have an exit lifecycle underway.
+        //
         // Closed trades have no remaining logical exposure.
         if trade.state != TradeState::Open {
             print_log(
@@ -224,7 +283,10 @@ impl Engine {
             self.state
                 .risk
                 .reservations
-                .exit_quantity_for_trade(trade_id);
+                .exit_quantity_for_trade(
+                    trade_id
+                );
+
 
         if reserved_exit_quantity > f64::EPSILON {
             print_log(
@@ -251,16 +313,21 @@ impl Engine {
         let has_active_exit_order =
             self.state
                 .orders
-                .active_for_trade(trade_id)
-                .any(|order| {
-                    matches!(
-                        order.purpose,
-                        OrderPurpose::Exit
-                            | OrderPurpose::StopLoss
-                            | OrderPurpose::TakeProfit
-                            | OrderPurpose::EmergencyExit
-                    )
-                });
+                .active_for_trade(
+                    trade_id
+                )
+                .any(
+                    |order| {
+                        matches!(
+                            order.purpose,
+                            OrderPurpose::Exit
+                                | OrderPurpose::StopLoss
+                                | OrderPurpose::TakeProfit
+                                | OrderPurpose::EmergencyExit
+                        )
+                    }
+                );
+
 
         if has_active_exit_order {
             print_log(
@@ -311,8 +378,13 @@ impl Engine {
         // Short exposure is closed by buying.
         let side =
             match direction {
-                Direction::Long => Side::Sell,
-                Direction::Short => Side::Buy,
+                Direction::Long => {
+                    Side::Sell
+                }
+
+                Direction::Short => {
+                    Side::Buy
+                }
             };
 
 
@@ -327,6 +399,29 @@ impl Engine {
         // that field to select the correct venue adapter.
         let venue =
             self.cfg.execution_venue;
+
+
+        // ============================================================
+        // CAPTURE EXECUTION INSTRUCTIONS
+        // ============================================================
+
+        // Capture these before moving their values into the canonical Order.
+        //
+        // They are also useful for the submission log below.
+        let order_type =
+            execution.order_type;
+
+        let time_in_force =
+            execution.time_in_force;
+
+        let limit_px =
+            execution.limit_px;
+
+        let stop_px =
+            execution.stop_px;
+
+        let post_only =
+            execution.post_only;
 
 
         // ============================================================
@@ -345,8 +440,8 @@ impl Engine {
         //
         // This is separate from:
         //
-        // - OrderId           -> internal engine identity
-        // - venue_order_id    -> venue-assigned order identity
+        // - OrderId            -> internal engine identity
+        // - venue_order_id     -> venue-assigned order identity
         // - venue_execution_id -> individual fill/execution identity
         //
         // Execution adapters may translate this value into their venue-specific
@@ -357,8 +452,8 @@ impl Engine {
         // Hyperliquid -> CLOID
         // Alpaca      -> client_order_id
         //
-        // The same ClientOrderId remains attached to this canonical Order for its
-        // entire lifecycle.
+        // The same ClientOrderId remains attached to this canonical Order for
+        // its entire lifecycle.
         let client_order_id =
             ClientOrderId::new();
 
@@ -369,42 +464,73 @@ impl Engine {
 
         let order =
             Order {
-                id: order_id,
-                venue,
-                venue_order_id: None,
-                client_order_id,
-                strategy_id: strategy_id.clone(),
-                trade_id: Some(trade_id),
-                symbol: symbol.clone(),
-                side,
-                purpose: OrderPurpose::Exit,
+                id:
+                    order_id,
 
-                // Immediate close request.
-                order_type: OrderType::Market,
-                time_in_force: TimeInForce::Ioc,
+                venue,
+
+                venue_order_id:
+                    None,
+
+                client_order_id,
+
+                strategy_id:
+                    strategy_id.clone(),
+
+                trade_id:
+                    Some(trade_id),
+
+                symbol:
+                    symbol.clone(),
+
+                side,
+
+                purpose:
+                    OrderPurpose::Exit,
+
+                // Exit execution behavior comes from the validated canonical
+                // ExitOrderRequest.
+                order_type,
+
+                time_in_force,
 
                 quantity,
 
-                // Market exit has no canonical limit/stop price.
-                limit_px: None,
-                stop_px: None,
+                limit_px,
 
-                // The exit must reduce existing exposure rather than
-                // intentionally establish exposure in the opposite direction.
-                reduce_only: true,
+                stop_px,
 
-                // A close-market request should take available liquidity.
-                post_only: false,
+                // ====================================================
+                // REDUCE-ONLY INVARIANT
+                // ====================================================
 
-                filled_quantity: 0.0,
-                avg_fill_px: None,
+                // Every directional Trade exit created through this handler
+                // MUST reduce existing exposure.
+                //
+                // This is intentionally Engine-controlled rather than supplied
+                // through ExitOrderRequest.
+                reduce_only:
+                    true,
 
-                pending_replace: None,
+                post_only,
 
-                state: OrderState::PendingSubmit,
+                filled_quantity:
+                    0.0,
 
-                created_ts_ms: ts_ms,
-                updated_ts_ms: ts_ms,
+                avg_fill_px:
+                    None,
+
+                pending_replace:
+                    None,
+
+                state:
+                    OrderState::PendingSubmit,
+
+                created_ts_ms:
+                    ts_ms,
+
+                updated_ts_ms:
+                    ts_ms,
             };
 
 
@@ -416,27 +542,53 @@ impl Engine {
         // multiple simultaneous exit orders.
         //
         // Keep an approximate notional as useful canonical risk metadata.
-        // Prefer current market price, then average entry price, then the
-        // original entry signal price as a fallback.
+        //
+        // Prefer:
+        //
+        // 1. current market price
+        // 2. average entry price
+        // 3. original entry signal price
+        //
+        // The reservation is quantity-oriented for exit protection, so the
+        // limit price itself does not need to redefine established exposure.
         let reference_px =
             self.last_px
-                .get(&symbol)
-                .map(|last| last.px)
-                .or_else(|| {
-                    self.state.trades
-                        .get(trade_id)
-                        .and_then(|trade| {
-                            trade.avg_entry_px
-                        })
-                })
-                .or_else(|| {
-                    self.state.trades
-                        .get(trade_id)
-                        .map(|trade| {
-                            trade.entry_signal_px
-                        })
-                })
-                .unwrap_or(0.0);
+                .get(
+                    &symbol
+                )
+                .map(
+                    |last| {
+                        last.px
+                    }
+                )
+                .or_else(
+                    || {
+                        self.state
+                            .trades
+                            .get(trade_id)
+                            .and_then(
+                                |trade| {
+                                    trade.avg_entry_px
+                                }
+                            )
+                    }
+                )
+                .or_else(
+                    || {
+                        self.state
+                            .trades
+                            .get(trade_id)
+                            .map(
+                                |trade| {
+                                    trade.entry_signal_px
+                                }
+                            )
+                    }
+                )
+                .unwrap_or(
+                    0.0
+                );
+
 
         let reserved_notional =
             quantity
@@ -450,14 +602,29 @@ impl Engine {
         let reservation =
             RiskReservation {
                 order_id,
-                trade_id: Some(trade_id),
-                strategy_id: strategy_id.clone(),
-                symbol: symbol.clone(),
-                purpose: ReservationPurpose::Exit,
+
+                trade_id:
+                    Some(trade_id),
+
+                strategy_id:
+                    strategy_id.clone(),
+
+                symbol:
+                    symbol.clone(),
+
+                purpose:
+                    ReservationPurpose::Exit,
+
                 quantity,
-                notional: reserved_notional,
-                created_ts_ms: ts_ms,
-                updated_ts_ms: ts_ms,
+
+                notional:
+                    reserved_notional,
+
+                created_ts_ms:
+                    ts_ms,
+
+                updated_ts_ms:
+                    ts_ms,
             };
 
 
@@ -468,11 +635,21 @@ impl Engine {
         // Closing means an exit is being worked while confirmed exposure may
         // still remain.
         //
+        // This state applies equally to:
+        //
+        // - immediately executing market exits
+        // - resting limit exits
+        // - partially filled exits
+        //
         // Do NOT set Closed here. Only confirmed Fill events can reduce the
         // remaining Trade quantity to zero.
         {
             let Some(trade) =
-                self.state.trades.get_mut(trade_id)
+                self.state
+                    .trades
+                    .get_mut(
+                        trade_id
+                    )
             else {
                 print_log(
                     self.debug_mode,
@@ -492,6 +669,7 @@ impl Engine {
                 return;
             };
 
+
             trade.state =
                 TradeState::Closing;
         }
@@ -501,9 +679,12 @@ impl Engine {
         // COMMIT ORDER + RESERVATION
         // ============================================================
 
-        self.state.orders.insert(
-            order.clone()
-        );
+        self.state
+            .orders
+            .insert(
+                order.clone()
+            );
+
 
         self.state
             .risk
@@ -518,8 +699,22 @@ impl Engine {
         // ============================================================
 
         // A successful channel send only means the execution router received
-        // the command. The Order remains PendingSubmit until execution events
+        // the command.
+        //
+        // The Order remains PendingSubmit until canonical execution events
         // report what actually happened at the venue.
+        //
+        // For a resting limit order the typical lifecycle becomes:
+        //
+        // PendingSubmit
+        //     ↓
+        // OrderAccepted
+        //     ↓
+        // OrderWorking
+        //     ↓
+        // Working
+        //     ↓
+        // Fill(s) / Cancel / Expire / Replace
         if let Err(err) =
             self.tx_exec.send(
                 ExecCommand::SubmitOrder {
@@ -536,17 +731,28 @@ impl Engine {
             self.state
                 .risk
                 .reservations
-                .release(order_id);
+                .release(
+                    order_id
+                );
+
 
             self.state
                 .orders
-                .remove(order_id);
+                .remove(
+                    order_id
+                );
 
 
             if let Some(trade) =
-                self.state.trades.get_mut(trade_id)
+                self.state
+                    .trades
+                    .get_mut(
+                        trade_id
+                    )
             {
-                if trade.state == TradeState::Closing {
+                if trade.state
+                    == TradeState::Closing
+                {
                     trade.state =
                         TradeState::Open;
                 }
@@ -557,11 +763,16 @@ impl Engine {
                 self.debug_mode,
                 true,
                 format!(
-                    "[ENGINE] CLOSE TRADE SUBMIT FAILED | trade_id={} | order_id={} | strategy={} | symbol={} | venue={:?} | reason={} | error={}",
+                    "[ENGINE] CLOSE TRADE SUBMIT FAILED | trade_id={} | order_id={} | strategy={} | symbol={} | type={:?} | tif={:?} | limit_px={:?} | stop_px={:?} | post_only={} | venue={:?} | reason={} | error={}",
                     trade_id,
                     order_id,
                     strategy_id,
                     symbol,
+                    order_type,
+                    time_in_force,
+                    limit_px,
+                    stop_px,
+                    post_only,
                     venue,
                     reason,
                     err,
@@ -584,13 +795,18 @@ impl Engine {
             self.debug_mode,
             true,
             format!(
-                "[ENGINE] CLOSE TRADE SUBMITTED | trade_id={} | order_id={} | strategy={} | symbol={} | side={:?} | type=Market | tif=Ioc | qty={} | reduce_only=true | venue={:?} | reason={}",
+                "[ENGINE] CLOSE TRADE SUBMITTED | trade_id={} | order_id={} | strategy={} | symbol={} | side={:?} | type={:?} | tif={:?} | qty={} | limit_px={:?} | stop_px={:?} | post_only={} | reduce_only=true | venue={:?} | reason={}",
                 trade_id,
                 order_id,
                 strategy_id,
                 symbol,
                 side,
+                order_type,
+                time_in_force,
                 quantity,
+                limit_px,
+                stop_px,
+                post_only,
                 venue,
                 reason,
             ),

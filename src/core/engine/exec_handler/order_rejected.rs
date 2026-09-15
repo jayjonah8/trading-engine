@@ -284,3 +284,45 @@ impl Engine {
         );
     }
 }
+
+
+// TODO/WARNING:
+// Handle the rare case where an Entry order receives one or more confirmed
+// partial fills and is then explicitly rejected by the venue.
+//
+// `handle_exec_fill()` will already have applied those confirmed fills to:
+//
+// - Order.filled_quantity
+// - Trade.quantity
+// - Trade.avg_entry_px
+// - Trade.opened_ts_ms
+// - Position
+// - RiskReservation
+//
+// The current rejection handler correctly releases the remaining reservation,
+// but only removes an Opening Trade when its established quantity is zero.
+//
+// If an Entry order is ever rejected AFTER a partial fill, the Trade may
+// therefore remain:
+//
+//     TradeState::Opening
+//         +
+//     trade.quantity > 0
+//
+// even though real exposure has already been established and the rejected
+// Order can no longer receive additional fills.
+//
+// This should eventually mirror the partial-fill handling used by
+// `order_canceled.rs` / `order_expired.rs`:
+//
+//     Entry rejected with ZERO fills
+//         -> remove the unfilled Opening Trade
+//
+//     Entry rejected AFTER PARTIAL fills
+//         -> keep the established Trade
+//         -> Opening -> Open
+//         -> preserve the quantity and execution state already created
+//            by the confirmed Fill(s)
+//
+// This is an execution-lifecycle edge case and does not need to block the
+// initial Hyperliquid limit-order implementation.

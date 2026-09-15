@@ -22,6 +22,7 @@ use crate::{
             AppEvent,
             AppEventEnvelope,
         },
+        execution::ExitOrderRequest,
         execution::order::{
             OrderType,
             TimeInForce,
@@ -493,7 +494,11 @@ impl Strategy for MarketOrderStrategy {
                     .send(
                         EngineEvent::CloseTrade {
                             trade_id,
-                            reason: "MarketOrderStrategy live market-order test".to_string(),
+                            execution:
+                                ExitOrderRequest::market(),
+                            reason:
+                                "MarketOrderStrategy live market-order test"
+                                    .to_string(),
                             ts_ms,
                         }
                     )

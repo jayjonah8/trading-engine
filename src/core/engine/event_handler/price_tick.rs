@@ -9,6 +9,9 @@ use crate::{
             },
             state::LastPrice,
         },
+
+        execution::ExitOrderRequest,
+
         trades::{
             Direction,
             TradeId,
@@ -435,13 +438,20 @@ impl Engine {
             // `CloseTrade` event back through the engine channel so the request is processed
             // in order by the authoritative engine event loop.
             //
+            // Engine-managed risk exits intentionally use a market execution request.
+            // Once TP / SL / emergency-stop / duration logic decides that exposure must
+            // be closed, the goal is immediate risk reduction rather than resting a limit
+            // order and remaining exposed.
+            //
             // This keeps the lifecycle:
             //
             // PriceTick
             //     -> risk decision
-            //     -> CloseTrade event
+            //     -> CloseTrade {
+            //            execution: ExitOrderRequest::market()
+            //        }
             //     -> handle_close_trade()
-            //     -> Exit Order
+            //     -> reduce-only Market Exit Order
             //     -> execution
             //
             // and preserves the same event-driven architecture across live trading,
@@ -450,6 +460,8 @@ impl Engine {
                 self.tx_engine.send(
                     EngineEvent::CloseTrade {
                         trade_id,
+                        execution:
+                            ExitOrderRequest::market(),
                         reason,
                         ts_ms,
                     }

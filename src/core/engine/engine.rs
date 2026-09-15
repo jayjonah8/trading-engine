@@ -30,6 +30,7 @@ use crate::core::{
     execution::{
         ExecCommand,
         ExecEvent,
+        ExitOrderRequest,
         OrderChanges,
         OrderId,
     },
@@ -62,14 +63,40 @@ pub enum EngineEvent {
     /// Requests replacement/modification of an active engine order.
     ReplaceOrder { order_id: OrderId, quantity: Option<f64>, limit_px: Option<f64>, stop_px: Option<f64>, reason: String, ts_ms: i64 },
 
-    /// Requests closure of one specific logical strategy trade.
+    /// Requests closure of one specific logical strategy Trade.
     ///
-    /// `TradeId` is used instead of symbol so multiple strategies or multiple
-    /// trades can safely exist on the same symbol without ambiguity.
+    /// `TradeId` identifies the authoritative Trade being closed.
     ///
-    /// `ts_ms` is event time and is used consistently across live trading,
-    /// simulation, and historical backtesting.
-    CloseTrade { trade_id: TradeId, reason: String, ts_ms: i64 },
+    /// `execution` describes HOW the exit should be executed.
+    ///
+    /// Examples:
+    ///
+    /// Immediate market exit:
+    ///
+    ///     ExitOrderRequest::market()
+    ///
+    /// Resting limit exit:
+    ///
+    ///     ExitOrderRequest::limit(
+    ///         limit_px,
+    ///         TimeInForce::Gtc,
+    ///         false,
+    ///     )
+    ///
+    /// The Engine still determines:
+    ///
+    /// - exit side
+    /// - remaining exit quantity
+    /// - execution venue
+    /// - OrderPurpose::Exit
+    /// - reduce_only = true
+    ///
+    /// This prevents callers from using a CloseTrade request to intentionally
+    /// increase or reverse exposure.
+    ///
+    /// `ts_ms` is canonical event time and is used consistently across live
+    /// trading, simulation, and historical backtesting.
+    CloseTrade { trade_id: TradeId, execution: ExitOrderRequest, reason: String, ts_ms: i64 },
 
     /// Requests closure of every eligible open Trade owned by this Engine instance.
     ///
@@ -270,8 +297,8 @@ impl Engine {
                 self.handle_replace_order(order_id, changes, reason, ts_ms);
             }
 
-            EngineEvent::CloseTrade { trade_id, reason, ts_ms } => {
-                self.handle_close_trade(trade_id, reason, ts_ms);
+            EngineEvent::CloseTrade { trade_id, execution, reason, ts_ms} => {
+                self.handle_close_trade(trade_id, execution, reason, ts_ms);
             }
 
             EngineEvent::CloseAllTrades { reason, ts_ms } => {
