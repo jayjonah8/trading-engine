@@ -121,7 +121,7 @@ async fn main() -> Result<()> {
         max_active_assets: Some(10),
 
         // Maximum active Trades allowed for a single symbol.
-        max_active_trades_per_symbol: Some(1),
+        max_active_trades_per_symbol: Some(10),
 
         // Maximum active Trades allowed for a single strategy.
         max_active_trades_per_strategy: Some(10),
@@ -711,7 +711,8 @@ async fn main() -> Result<()> {
         vec![
             // StrategyKind::Base,
             // StrategyKind::MeanReversion,
-            StrategyKind::MarketOrder,
+            // StrategyKind::MarketOrder,
+            StrategyKind::LimitOrder,
         ];
 
 

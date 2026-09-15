@@ -1,10 +1,12 @@
 #![allow(dead_code)]
 
 mod base;
+mod limit_order;
 mod market_order;
 mod mean_reversion;
 
 pub use base::BaseStrategy;
+pub use limit_order::LimitOrderStrategy;
 pub use market_order::MarketOrderStrategy;
 
 use std::sync::Arc;
@@ -19,12 +21,16 @@ use crate::core::{
     engine_view::EngineView,
     events::AppEventEnvelope,
 };
+
+
 #[derive(Clone, Debug)]
 pub enum StrategyKind {
     Base,
     MeanReversion,
-    MarketOrder
+    MarketOrder,
+    LimitOrder,
 }
+
 
 #[async_trait::async_trait]
 pub trait Strategy: Send {
@@ -35,6 +41,11 @@ pub trait Strategy: Send {
         ev: AppEventEnvelope,
     );
 }
+
+
+// ============================================================
+// LIVE / SIMULATION STRATEGY FACTORY
+// ============================================================
 
 pub fn make_strategy(
     kind: &StrategyKind,
@@ -66,8 +77,22 @@ pub fn make_strategy(
                 )
             )
         }
+
+        StrategyKind::LimitOrder => {
+            Box::new(
+                LimitOrderStrategy::new(
+                    tx_engine,
+                    rx_view,
+                )
+            )
+        }
     }
 }
+
+
+// ============================================================
+// BACKTEST STRATEGY FACTORY
+// ============================================================
 
 pub fn make_backtest_strategy(
     kind: &StrategyKind,
@@ -92,6 +117,12 @@ pub fn make_backtest_strategy(
         StrategyKind::MarketOrder => {
             panic!(
                 "MarketOrderStrategy is a live execution test strategy and cannot run in backtest mode"
+            );
+        }
+
+        StrategyKind::LimitOrder => {
+            panic!(
+                "LimitOrderStrategy is a live execution test strategy and cannot run in backtest mode"
             );
         }
     }

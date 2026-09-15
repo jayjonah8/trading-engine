@@ -405,14 +405,6 @@ impl Strategy for MarketOrderStrategy {
                     return;
                 };
 
-
-                let Some(trade) =
-                    view.trades.get(trade_id)
-                else {
-                    return;
-                };
-
-
                 let Some(trade) =
                     view.trades.get(trade_id)
                 else {

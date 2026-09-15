@@ -3,6 +3,7 @@ use std::sync::Arc;
 use crate::core::{
     config::Config,
     engine::state::EngineState,
+    execution::Orders,
     general::General,
     trades::{
         TradeId,
@@ -20,14 +21,38 @@ use crate::core::{
 ///
 /// Strategies and other read-only consumers can clone the watch receiver
 /// and inspect the latest Engine state without being able to mutate Engine.
+///
+/// The snapshot exposes both logical Trade state and canonical Order state.
+///
+/// Trade state answers questions such as:
+///
+/// - does this strategy currently own an active Trade?
+/// - is the Trade Opening, Open, Closing, or Closed?
+/// - what quantity and average entry price does the Trade have?
+///
+/// Order state answers questions such as:
+///
+/// - has an entry/exit Order been created?
+/// - is the Order PendingSubmit, Working, PendingCancel, etc.?
+/// - what canonical OrderId should be used for CancelOrder / ReplaceOrder?
+///
+/// The Engine remains the only authority allowed to mutate either collection.
 #[derive(Debug, Clone)]
 pub struct EngineView {
     pub cfg: Config,
-
     pub general: General,
 
-    /// Canonical active Trade state exposed to strategies.
+    /// Canonical Trade state exposed read-only to strategies.
     pub trades: Trades,
+
+    /// Canonical Order state exposed read-only to strategies.
+    ///
+    /// Strategies may observe execution lifecycle state and obtain canonical
+    /// OrderIds for later requests such as CancelOrder or ReplaceOrder.
+    ///
+    /// This becomes especially important for working limit orders because the
+    /// Trade and Order lifecycles are intentionally separate.
+    pub orders: Orders,
 
     /// Latest canonical external venue/account/instrument state.
     ///
@@ -52,17 +77,11 @@ impl EngineView {
         Arc::new(
             Self {
                 cfg: cfg.clone(),
-
                 general: general.clone(),
-
-                trades:
-                    state.trades.clone(),
-
-                venue_state:
-                    venue_state.clone(),
-
-                open_trades:
-                    state.trades.count_open(),
+                trades: state.trades.clone(),
+                orders: state.orders.clone(),
+                venue_state: venue_state.clone(),
+                open_trades: state.trades.count_open(),
             }
         )
     }
@@ -100,16 +119,10 @@ impl EngineView {
         Arc::new(
             Self {
                 cfg,
-
-                general:
-                    General::default(),
-
-                trades:
-                    Trades::default(),
-
-                venue_state:
-                    VenueState::default(),
-
+                general: General::default(),
+                trades: Trades::default(),
+                orders: Orders::default(),
+                venue_state: VenueState::default(),
                 open_trades: 0,
             }
         )

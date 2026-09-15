@@ -27,7 +27,7 @@ use crate::core::{
 /// This store represents the engine's canonical view of order lifecycle state.
 /// Exchange adapters must not mutate it directly. They report `ExecEvent`s,
 /// and engine handlers apply those events to this store.
-#[derive(Debug, Default)]
+#[derive(Debug, Clone, Default)]
 pub struct Orders {
     /// Primary authoritative Order storage.
     ///
