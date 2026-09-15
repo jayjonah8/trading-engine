@@ -138,6 +138,9 @@ impl MarketOrderStrategy {
         let allowed_assets = vec![
             "BTC".to_string(),
             "ETH".to_string(),
+            "SOL".to_string(),
+            "HYPE".to_string(),
+            "ZEC".to_string(),
         ];
 
         let asset_state = allowed_assets
@@ -164,7 +167,7 @@ impl MarketOrderStrategy {
             first_trade_delay: Duration::from_secs(10),
             close_delay: Duration::from_secs(15),
             repeat_delay: Duration::from_secs(15),
-            max_cycles_per_asset: 1,
+            max_cycles_per_asset: 3,
             started_at: Instant::now(),
             asset_state,
         }
