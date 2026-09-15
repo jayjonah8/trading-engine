@@ -385,46 +385,98 @@ impl Engine {
         }
 
 
-        // ============================================================
-        // REQUESTED QUANTITY
-        // ============================================================
+    // ============================================================
+    // REQUESTED QUANTITY
+    // ============================================================
+    //
+    // Convert the strategy's requested notional exposure into an initial
+    // raw asset quantity:
+    //
+    //     quantity = target_notional / signal_price
+    //
+    // This raw quantity is only the Engine's mathematical request. It must
+    // NOT be assumed to be a valid executable quantity at the destination
+    // venue.
+    //
+    // Different venues and instruments impose different quantity rules.
+    // Examples:
+    //
+    //     Hyperliquid:
+    //         Each asset defines `szDecimals` in Hyperliquid Meta.
+    //         BTC, ETH, SOL, etc. may therefore allow different quantity
+    //         precision. The Hyperliquid Meta mapper converts `szDecimals`
+    //         into canonical InstrumentState.quantity_decimals.
+    //
+    //     Alpaca:
+    //         Equity quantity rules can differ based on whether fractional
+    //         shares are supported and any venue/instrument restrictions.
+    //         These rules should eventually be represented through the same
+    //         canonical InstrumentState interface rather than handled here.
+    //
+    //     Interactive Brokers:
+    //         Quantity increments and fractional-share support may depend on
+    //         the instrument/security being traded. IBKR-specific metadata
+    //         should likewise be translated into InstrumentState.
+    //
+    // VenueState::normalize_quantity() is therefore the single canonical
+    // boundary between the Engine's desired quantity and an executable
+    // venue-compliant quantity.
+    //
+    // Depending on InstrumentState, normalization can:
+    //
+    //     - apply an explicit quantity step;
+    //     - apply decimal precision;
+    //     - preserve an unrestricted fractional quantity;
+    //     - require whole units;
+    //     - enforce minimum quantity;
+    //     - reject inactive instruments;
+    //     - reject missing instrument metadata;
+    //     - reject invalid or zero quantities.
+    //
+    // Normalization floors quantities rather than rounding upward whenever
+    // precision/step adjustment is required. This is important because
+    // normalization should never silently increase the strategy's requested
+    // exposure.
+    //
+    // Missing metadata is intentionally treated as an order rejection.
+    // The Engine must not guess execution precision or submit an order whose
+    // quantity rules are unknown. This is especially important for venues
+    // such as Hyperliquid where quantity precision is asset-specific.
+    //
+    // Keeping all of this logic inside VenueState also keeps OpenTrade
+    // venue-independent. This handler asks for a valid executable quantity;
+    // venue adapters remain responsible for translating the resulting
+    // canonical order into the venue's API representation.
 
-        let raw_quantity =
-            intent.target_notional
-                / intent.signal_px;
+    let raw_quantity =
+        intent.target_notional
+            / intent.signal_px;
 
+    let quantity =
+        match self.venue_state
+            .normalize_quantity(
+                self.cfg.execution_venue,
+                &intent.symbol,
+                raw_quantity,
+            )
+        {
+            Ok(quantity) => quantity,
 
-        // TODO:
-        // Replace this temporary symbol-specific normalization with canonical
-        // venue/instrument quantity rules loaded from Hyperliquid Meta.
-        //
-        // Hyperliquid quantity precision is asset-specific:
-        //
-        // BTC -> 5 decimals
-        // ETH -> 4 decimals
-        //
-        // The canonical Order quantity must match the quantity that will actually
-        // be submitted to the venue so fills cannot appear as overfills.
-        let quantity_decimals =
-            match intent.symbol.as_str() {
-                "BTC" => 5,
-                "ETH" => 4,
+            Err(error) => {
+                print_log(
+                    self.debug_mode,
+                    true,
+                    format!(
+                        "[ENGINE] OPEN TRADE REJECTED | strategy={} | symbol={} | error={:?}",
+                        intent.strategy_id,
+                        intent.symbol,
+                        error,
+                    ),
+                );
 
-                // Temporary fallback only.
-                _ => 5,
-            };
-
-
-        let scale =
-            10_f64.powi(
-                quantity_decimals
-            );
-
-
-        let quantity =
-            (raw_quantity * scale)
-                .round()
-                / scale;
+                return;
+            }
+        };
 
 
         // ============================================================

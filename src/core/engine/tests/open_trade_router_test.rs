@@ -42,6 +42,17 @@ use crate::{
     },
 };
 
+use hyperliquid_rust_sdk::Meta;
+
+use tokio::{
+    sync::RwLock,
+    task::JoinHandle,
+};
+
+use crate::exchange::hyperliquid::{
+    meta::fetch_meta,
+};
+
 
 // Run test:
 // cargo test test_open_trade_routes_to_hyperliquid_adapter -- --nocapture
@@ -153,10 +164,26 @@ async fn test_open_trade_routes_to_hyperliquid_adapter() {
     // HYPERLIQUID ADAPTER
     // ============================================================
 
-    let adapter_handle =
+    let meta =
+        fetch_meta()
+            .await
+            .expect(
+                "failed to fetch Hyperliquid Meta for test"
+            );
+
+    let meta_cache =
+        Arc::new(
+            RwLock::new(
+                meta
+            )
+        );
+
+
+    let adapter_handle: JoinHandle<()> =
         tokio::spawn(
             run_hyperliquid_adapter(
                 cfg.clone(),
+                meta_cache,
                 rx_hyperliquid_exec,
                 tx_exec_evt,
             )

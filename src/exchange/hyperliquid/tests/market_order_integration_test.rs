@@ -38,6 +38,21 @@ use crate::{
     },
 };
 
+use super::shared::fetch_test_meta_cache;
+
+use std::sync::Arc;
+
+use hyperliquid_rust_sdk::Meta;
+
+use tokio::{
+    sync::RwLock,
+    task::JoinHandle,
+};
+
+use crate::exchange::hyperliquid::{
+    meta::fetch_meta,
+};
+
 
 // ============================================================
 // HYPERLIQUID MARKET ORDER PRODUCTION-PIPELINE INTEGRATION TEST
@@ -302,15 +317,31 @@ async fn test_hyperliquid_market_order_production_pipeline() {
     // HYPERLIQUID ADAPTER
     // ============================================================
 
-    let adapter_task =
+    let meta =
+    fetch_meta()
+        .await
+        .expect(
+            "failed to fetch Hyperliquid Meta for test"
+        );
+
+
+    let meta_cache: Arc<RwLock<Meta>> =
+        Arc::new(
+            RwLock::new(
+                meta
+            )
+        );
+
+
+    let adapter_task: JoinHandle<()> =
         tokio::spawn(
             run_hyperliquid_adapter(
                 cfg,
+                meta_cache,
                 rx_hyperliquid,
                 tx_evt,
             )
         );
-
 
     // ============================================================
     // ENTRY ORDER

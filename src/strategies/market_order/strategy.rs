@@ -154,7 +154,7 @@ impl MarketOrderStrategy {
             .collect();
 
         Self {
-            enable_strategy: false,
+            enable_strategy: true,
             debug_mode: true,
             tx_engine,
             rx_view,

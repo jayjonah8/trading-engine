@@ -11,6 +11,7 @@ use hyperliquid_rust_sdk::{
     BaseUrl,
     ExchangeClient,
     Message,
+    Meta,
 };
 
 use tokio::sync::mpsc::{
@@ -53,6 +54,9 @@ use crate::{
 };
 
 use std::sync::Arc;
+use tokio::sync::RwLock;
+
+
 
 
 // ============================================================
@@ -99,6 +103,7 @@ use std::sync::Arc;
 /// Trades, Positions, risk state, and accounting remain owned by the Engine.
 pub async fn run_hyperliquid_adapter(
     _cfg: Config,
+    meta_cache: Arc<RwLock<Meta>>,
     mut rx_cmd: UnboundedReceiver<ExecCommand>,
     tx_evt: UnboundedSender<ExecEvent>,
 ) {
@@ -134,26 +139,24 @@ pub async fn run_hyperliquid_adapter(
     let user =
         wallet.address();
 
+    let meta =
+        meta_cache
+            .read()
+            .await
+            .clone();
+
 
     // ============================================================
     // EXCHANGE CLIENT
     // ============================================================
 
-    // NOTE:
-    // The Hyperliquid SDK currently handles the venue-specific metadata
-    // required for the supported order submission paths.
-    //
-    // TODO:
-    // Cache Hyperliquid Meta during adapter startup and pass `Some(meta)`
-    // here as a performance optimization to avoid redundant metadata
-    // requests.
     let exchange_client =
         Arc::new(
             ExchangeClient::new(
                 None,
                 wallet,
                 Some(BaseUrl::Mainnet),
-                None,
+                Some(meta),
                 None,
             )
             .await

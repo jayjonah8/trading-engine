@@ -115,10 +115,10 @@ async fn main() -> Result<()> {
         // ============================================================
 
         // Maximum active directional Trades across the entire Engine.
-        max_active_trades: Some(0),
+        max_active_trades: Some(3),
 
         // Maximum number of distinct assets with active Trades.
-        max_active_assets: Some(2),
+        max_active_assets: Some(3),
 
         // Maximum active Trades allowed for a single symbol.
         max_active_trades_per_symbol: Some(1),
@@ -127,13 +127,13 @@ async fn main() -> Result<()> {
         max_active_trades_per_strategy: Some(2),
 
         // Maximum notional value of one Order.
-        max_order_notional: Some(60.0),
+        max_order_notional: Some(80.0),
 
         // Maximum gross notional exposure across the entire Engine.
-        max_gross_notional: Some(60.0),
+        max_gross_notional: Some(80.0),
 
         // Maximum gross notional exposure for one symbol.
-        max_symbol_notional: Some(60.0),
+        max_symbol_notional: Some(80.0),
 
         // ============================================================
         // ENGINE SETTINGS
@@ -596,6 +596,7 @@ async fn main() -> Result<()> {
     // backtesting.
     if !cfg.enable_backtest_mode
         && !cfg.enable_simulation_mode
+        && cfg.execution_venue == Venue::Hyperliquid
     {
         let adapter_cfg =
             cfg.clone();
@@ -604,23 +605,34 @@ async fn main() -> Result<()> {
             tx_exec_evt.clone();
 
 
-        // The shared Hyperliquid Meta cache is intentionally kept alive here.
-        //
-        // Next, run_hyperliquid_adapter() can accept Arc<RwLock<Meta>> and use
-        // the already-fetched startup Meta when constructing ExchangeClient,
-        // eliminating another metadata API request.
-        let _hyperliquid_meta_cache_for_adapter =
-            hyperliquid_meta_cache
-                .as_ref()
-                .map(
-                    Arc::clone
-                );
+        // ========================================================
+        // HYPERLIQUID META CACHE
+        // ========================================================
 
+        // Live Hyperliquid execution requires the startup Meta snapshot.
+        //
+        // The adapter receives the same shared cache used by the Meta poller,
+        // avoiding another metadata API request and keeping refreshed Meta
+        // available to Hyperliquid runtime infrastructure.
+        let meta_cache_for_adapter =
+            Arc::clone(
+                hyperliquid_meta_cache
+                    .as_ref()
+                    .expect(
+                        "Hyperliquid Meta cache missing before adapter startup"
+                    )
+            );
+
+
+        // ========================================================
+        // START ADAPTER
+        // ========================================================
 
         tokio::spawn(
             async move {
                 run_hyperliquid_adapter(
                     adapter_cfg,
+                    meta_cache_for_adapter,
                     rx_hyperliquid_exec,
                     tx_exec_evt,
                 )

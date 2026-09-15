@@ -31,6 +31,16 @@ use crate::{
     },
 };
 
+use std::sync::Arc;
+
+use hyperliquid_rust_sdk::Meta;
+
+use tokio::sync::RwLock;
+
+use crate::exchange::hyperliquid::{
+    meta::fetch_meta,
+};
+
 
 // Run test:
 // cargo test test_hyperliquid_router_to_adapter -- --nocapture
@@ -127,9 +137,26 @@ async fn test_hyperliquid_router_to_adapter() {
     // ADAPTER
     // ============================================================
 
+   let meta =
+        fetch_meta()
+            .await
+            .expect(
+                "failed to fetch Hyperliquid Meta for test"
+            );
+
+
+    let meta_cache: Arc<RwLock<Meta>> =
+        Arc::new(
+            RwLock::new(
+                meta
+            )
+        );
+
+
     tokio::spawn(
         run_hyperliquid_adapter(
             cfg,
+            meta_cache,
             rx_hyperliquid,
             tx_evt,
         )
