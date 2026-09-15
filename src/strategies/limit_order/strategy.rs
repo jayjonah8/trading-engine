@@ -152,10 +152,10 @@ impl LimitOrderStrategy {
     ) -> Self {
         let allowed_assets = vec![
             "BTC".to_string(),
-            "ETH".to_string(),
-            "SOL".to_string(),
-            "HYPE".to_string(),
-            "ZEC".to_string(),
+            // "ETH".to_string(),
+            // "SOL".to_string(),
+            // "HYPE".to_string(),
+            // "ZEC".to_string(),
         ];
 
         let asset_state = allowed_assets
