@@ -370,4 +370,205 @@ impl VenueState {
             quantity
         )
     }
+
+    
+    // ============================================================
+    // PRICE NORMALIZATION
+    // ============================================================
+
+    /// Normalizes a requested order price using canonical instrument metadata.
+    ///
+    /// Venue-specific price rules must be translated into InstrumentState before
+    /// reaching the Engine.
+    ///
+    /// Supported canonical constraints:
+    ///
+    /// - explicit price tick
+    /// - maximum decimal places
+    /// - maximum significant digits
+    ///
+    /// Multiple constraints may apply to the same instrument. Each applicable
+    /// rule is enforced before the normalized price is returned.
+    ///
+    /// This keeps Engine order handling venue-independent.
+    pub fn normalize_price(
+        &self,
+        venue: Venue,
+        symbol: &str,
+        raw_price: f64,
+    ) -> Result<f64, String> {
+        // ========================================================
+        // VALIDATE RAW PRICE
+        // ========================================================
+
+        if !raw_price.is_finite()
+            || raw_price <= 0.0
+        {
+            return Err(
+                format!(
+                    "invalid raw price | venue={:?} | symbol={} | raw_price={}",
+                    venue,
+                    symbol,
+                    raw_price,
+                )
+            );
+        }
+
+
+        // ========================================================
+        // INSTRUMENT METADATA
+        // ========================================================
+
+        let instrument =
+            self.instrument(
+                venue,
+                symbol,
+            )
+            .ok_or_else(
+                || {
+                    format!(
+                        "instrument metadata unavailable | venue={:?} | symbol={}",
+                        venue,
+                        symbol,
+                    )
+                }
+            )?;
+
+
+        // ========================================================
+        // TRADING STATUS
+        // ========================================================
+
+        if !instrument.active {
+            return Err(
+                format!(
+                    "instrument is not active | venue={:?} | symbol={}",
+                    venue,
+                    symbol,
+                )
+            );
+        }
+
+
+        // ========================================================
+        // NORMALIZE PRICE
+        // ========================================================
+
+        let mut price =
+            raw_price;
+
+
+        // ========================================================
+        // SIGNIFICANT DIGITS
+        // ========================================================
+
+        if let Some(significant_digits) =
+            instrument.price_significant_digits
+        {
+            if significant_digits == 0 {
+                return Err(
+                    format!(
+                        "invalid price significant digits | venue={:?} | symbol={} | significant_digits={}",
+                        venue,
+                        symbol,
+                        significant_digits,
+                    )
+                );
+            }
+
+
+            let magnitude =
+                price
+                    .abs()
+                    .log10()
+                    .floor();
+
+            let scale_exponent =
+                significant_digits as i32
+                    - 1
+                    - magnitude as i32;
+
+            let factor =
+                10_f64.powi(
+                    scale_exponent
+                );
+
+
+            price =
+                (price * factor)
+                    .round()
+                    / factor;
+        }
+
+
+        // ========================================================
+        // DECIMAL PRECISION
+        // ========================================================
+
+        if let Some(decimals) =
+            instrument.price_decimals
+        {
+            let factor =
+                10_f64.powi(
+                    decimals as i32
+                );
+
+            price =
+                (price * factor)
+                    .round()
+                    / factor;
+        }
+
+
+        // ========================================================
+        // EXPLICIT PRICE TICK
+        // ========================================================
+
+        if let Some(tick) =
+            instrument.price_tick
+        {
+            if !tick.is_finite()
+                || tick <= 0.0
+            {
+                return Err(
+                    format!(
+                        "invalid price tick | venue={:?} | symbol={} | tick={}",
+                        venue,
+                        symbol,
+                        tick,
+                    )
+                );
+            }
+
+
+            price =
+                (price / tick)
+                    .round()
+                    * tick;
+        }
+
+
+        // ========================================================
+        // VALIDATE NORMALIZED PRICE
+        // ========================================================
+
+        if !price.is_finite()
+            || price <= 0.0
+        {
+            return Err(
+                format!(
+                    "normalized price is zero or invalid | venue={:?} | symbol={} | raw_price={} | normalized_price={}",
+                    venue,
+                    symbol,
+                    raw_price,
+                    price,
+                )
+            );
+        }
+
+
+        Ok(
+            price
+        )
+    }
 }

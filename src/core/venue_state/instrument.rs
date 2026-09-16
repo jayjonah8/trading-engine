@@ -69,6 +69,8 @@ pub struct InstrumentState {
     // PRICE RULES
     // ========================================================
 
+    /// Maximum decimal places allowed for price when the venue expresses
+    /// price precision as decimal places.
     pub price_decimals: Option<u32>,
 
     /// Explicit minimum price increment when available.
@@ -76,6 +78,13 @@ pub struct InstrumentState {
     /// Example:
     /// $0.01
     pub price_tick: Option<f64>,
+
+    /// Maximum number of significant digits allowed in an order price.
+    ///
+    /// This is separate from decimal-place precision because some venues,
+    /// including Hyperliquid, constrain prices using significant figures in
+    /// addition to decimal-place rules.
+    pub price_significant_digits: Option<u32>,
 
     // ========================================================
     // MINIMUMS

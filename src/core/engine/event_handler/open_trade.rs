@@ -43,10 +43,6 @@ use crate::shared::print_log;
 // Add any remaining strategy ownership / cooldown admission rules here
 // if those policies remain part of the final engine behavior.
 
-// TODO:
-// Replace raw `target_notional / signal_px` sizing with the final canonical
-// sizing / normalization path once Quantity, Price, and venue instrument
-// constraints are implemented.
 
 // TODO:
 // Add structured rejection/output events later so failed intents can be
@@ -385,98 +381,168 @@ impl Engine {
         }
 
 
-    // ============================================================
-    // REQUESTED QUANTITY
-    // ============================================================
-    //
-    // Convert the strategy's requested notional exposure into an initial
-    // raw asset quantity:
-    //
-    //     quantity = target_notional / signal_price
-    //
-    // This raw quantity is only the Engine's mathematical request. It must
-    // NOT be assumed to be a valid executable quantity at the destination
-    // venue.
-    //
-    // Different venues and instruments impose different quantity rules.
-    // Examples:
-    //
-    //     Hyperliquid:
-    //         Each asset defines `szDecimals` in Hyperliquid Meta.
-    //         BTC, ETH, SOL, etc. may therefore allow different quantity
-    //         precision. The Hyperliquid Meta mapper converts `szDecimals`
-    //         into canonical InstrumentState.quantity_decimals.
-    //
-    //     Alpaca:
-    //         Equity quantity rules can differ based on whether fractional
-    //         shares are supported and any venue/instrument restrictions.
-    //         These rules should eventually be represented through the same
-    //         canonical InstrumentState interface rather than handled here.
-    //
-    //     Interactive Brokers:
-    //         Quantity increments and fractional-share support may depend on
-    //         the instrument/security being traded. IBKR-specific metadata
-    //         should likewise be translated into InstrumentState.
-    //
-    // VenueState::normalize_quantity() is therefore the single canonical
-    // boundary between the Engine's desired quantity and an executable
-    // venue-compliant quantity.
-    //
-    // Depending on InstrumentState, normalization can:
-    //
-    //     - apply an explicit quantity step;
-    //     - apply decimal precision;
-    //     - preserve an unrestricted fractional quantity;
-    //     - require whole units;
-    //     - enforce minimum quantity;
-    //     - reject inactive instruments;
-    //     - reject missing instrument metadata;
-    //     - reject invalid or zero quantities.
-    //
-    // Normalization floors quantities rather than rounding upward whenever
-    // precision/step adjustment is required. This is important because
-    // normalization should never silently increase the strategy's requested
-    // exposure.
-    //
-    // Missing metadata is intentionally treated as an order rejection.
-    // The Engine must not guess execution precision or submit an order whose
-    // quantity rules are unknown. This is especially important for venues
-    // such as Hyperliquid where quantity precision is asset-specific.
-    //
-    // Keeping all of this logic inside VenueState also keeps OpenTrade
-    // venue-independent. This handler asks for a valid executable quantity;
-    // venue adapters remain responsible for translating the resulting
-    // canonical order into the venue's API representation.
+        // ============================================================
+        // REQUESTED QUANTITY
+        // ============================================================
 
-    let raw_quantity =
-        intent.target_notional
-            / intent.signal_px;
+        // Convert the strategy's requested notional exposure into an initial
+        // raw asset quantity:
+        //
+        //     quantity = target_notional / signal_price
+        //
+        // This raw quantity is only the Engine's mathematical request. It must
+        // NOT be assumed to be executable at the destination venue.
+        //
+        // VenueState::normalize_quantity() applies canonical InstrumentState
+        // rules such as:
+        //
+        // - quantity step
+        // - quantity decimal precision
+        // - fractional quantity support
+        // - minimum quantity
+        // - instrument trading status
+        //
+        // Venue-specific metadata is translated into InstrumentState before
+        // reaching this handler, keeping OpenTrade venue-independent.
+        let raw_quantity =
+            intent.target_notional
+                / intent.signal_px;
 
-    let quantity =
-        match self.venue_state
-            .normalize_quantity(
-                self.cfg.execution_venue,
-                &intent.symbol,
-                raw_quantity,
-            )
-        {
-            Ok(quantity) => quantity,
+        let quantity =
+            match self.venue_state
+                .normalize_quantity(
+                    self.cfg.execution_venue,
+                    &intent.symbol,
+                    raw_quantity,
+                )
+            {
+                Ok(quantity) => quantity,
 
-            Err(error) => {
-                print_log(
-                    self.debug_mode,
-                    true,
-                    format!(
-                        "[ENGINE] OPEN TRADE REJECTED | strategy={} | symbol={} | error={:?}",
-                        intent.strategy_id,
-                        intent.symbol,
-                        error,
-                    ),
-                );
+                Err(error) => {
+                    print_log(
+                        self.debug_mode,
+                        true,
+                        format!(
+                            "[ENGINE] OPEN TRADE REJECTED | strategy={} | symbol={} | error={:?}",
+                            intent.strategy_id,
+                            intent.symbol,
+                            error,
+                        ),
+                    );
 
-                return;
-            }
-        };
+                    return;
+                }
+            };
+
+
+        // ============================================================
+        // LIMIT PRICE
+        // ============================================================
+
+        // Strategy-provided prices represent desired prices, not necessarily
+        // directly executable venue prices.
+        //
+        // Normalize any limit price through canonical InstrumentState before
+        // constructing the Order.
+        //
+        // Depending on the venue/instrument, normalization may apply:
+        //
+        // - explicit price tick
+        // - decimal-place precision
+        // - significant-digit precision
+        //
+        // Example:
+        //
+        // Hyperliquid:
+        //
+        //     strategy price:
+        //         71834.72499999999
+        //
+        //     normalized executable price:
+        //         71835
+        //
+        // The Engine does not contain Hyperliquid-specific logic here.
+        // Hyperliquid Meta is mapped into InstrumentState and the generic
+        // VenueState normalization path applies those rules.
+        let limit_px =
+            match intent.limit_px {
+                Some(raw_limit_px) => {
+                    match self.venue_state
+                        .normalize_price(
+                            self.cfg.execution_venue,
+                            &intent.symbol,
+                            raw_limit_px,
+                        )
+                    {
+                        Ok(limit_px) => {
+                            Some(limit_px)
+                        }
+
+                        Err(error) => {
+                            print_log(
+                                self.debug_mode,
+                                true,
+                                format!(
+                                    "[ENGINE] OPEN TRADE REJECTED | strategy={} | symbol={} | raw_limit_px={} | error={:?}",
+                                    intent.strategy_id,
+                                    intent.symbol,
+                                    raw_limit_px,
+                                    error,
+                                ),
+                            );
+
+                            return;
+                        }
+                    }
+                }
+
+                None => None,
+            };
+
+
+        // ============================================================
+        // STOP PRICE
+        // ============================================================
+
+        // Stop prices pass through the same canonical price normalization
+        // boundary as limit prices.
+        //
+        // This supports StopMarket and StopLimit orders without introducing
+        // venue-specific price handling into the Engine.
+        let stop_px =
+            match intent.stop_px {
+                Some(raw_stop_px) => {
+                    match self.venue_state
+                        .normalize_price(
+                            self.cfg.execution_venue,
+                            &intent.symbol,
+                            raw_stop_px,
+                        )
+                    {
+                        Ok(stop_px) => {
+                            Some(stop_px)
+                        }
+
+                        Err(error) => {
+                            print_log(
+                                self.debug_mode,
+                                true,
+                                format!(
+                                    "[ENGINE] OPEN TRADE REJECTED | strategy={} | symbol={} | raw_stop_px={} | error={:?}",
+                                    intent.strategy_id,
+                                    intent.symbol,
+                                    raw_stop_px,
+                                    error,
+                                ),
+                            );
+
+                            return;
+                        }
+                    }
+                }
+
+                None => None,
+            };
 
 
         // ============================================================
@@ -491,7 +557,6 @@ impl Engine {
 
         let client_order_id =
             ClientOrderId::new();
-
 
         // ============================================================
         // TRADE
@@ -538,8 +603,8 @@ impl Engine {
             order_type: intent.order_type,
             time_in_force: intent.time_in_force,
             quantity,
-            limit_px: intent.limit_px,
-            stop_px: intent.stop_px,
+            limit_px,
+            stop_px,
             reduce_only: false,
             post_only: intent.post_only,
             filled_quantity: 0.0,
@@ -624,7 +689,7 @@ impl Engine {
             self.debug_mode,
             true,
             format!(
-                "[ENGINE] OPEN TRADE SUBMITTED | trade_id={} | order_id={} | strategy={} | symbol={} | side={:?} | type={:?} | qty={} | notional=${:.2} | venue={:?}",
+                "[ENGINE] OPEN TRADE SUBMITTED | trade_id={} | order_id={} | strategy={} | symbol={} | side={:?} | type={:?} | qty={} | limit_px={:?} | stop_px={:?} | notional=${:.2} | venue={:?}",
                 trade_id,
                 order_id,
                 intent.strategy_id,
@@ -632,6 +697,8 @@ impl Engine {
                 intent.entry_side(),
                 intent.order_type,
                 quantity,
+                limit_px,
+                stop_px,
                 intent.target_notional,
                 self.cfg.execution_venue,
             ),
