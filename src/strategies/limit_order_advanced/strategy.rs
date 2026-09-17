@@ -25,8 +25,13 @@
 //                     MARKETABLE BUY -> expected immediate execution
 //
 // Resting orders are canceled after the configured resting duration.
+//
 // Successfully executed trades remain open for the configured close delay,
-// measured from when each individual trade is first observed Open.
+// measured independently from when each trade is first observed Open.
+//
+// The resting-order cancellation timer and filled-trade close timer are
+// independent. Resting orders may therefore be canceled before an executed
+// trade reaches its configured close delay.
 //
 // Each asset runs independently, allowing many simultaneous limit orders
 // across multiple symbols.
@@ -96,6 +101,9 @@ struct LimitOrderAdvancedAssetState {
 
     /// Trades already sent a close request.
     close_requested: HashSet<TradeId>,
+
+    /// True once resting-order cancellation has been started for this cycle.
+    resting_cleanup_started: bool,
 }
 
 
@@ -175,7 +183,7 @@ impl LimitOrderAdvancedStrategy {
         let allowed_assets = vec![
             "BTC".to_string(),
             "ETH".to_string(),
-            // "SOL".to_string(),
+            "SOL".to_string(),
         ];
 
         let asset_state = allowed_assets
@@ -191,6 +199,7 @@ impl LimitOrderAdvancedStrategy {
                         opened_at: HashMap::new(),
                         cancel_requested: HashSet::new(),
                         close_requested: HashSet::new(),
+                        resting_cleanup_started: false,
                     },
                 )
             })
@@ -207,7 +216,7 @@ impl LimitOrderAdvancedStrategy {
 
             // Number of resting buys AND resting sells per asset.
             //
-            // 2 = 2 buys + 2 sells + 1 marketable buy = 5 total entry orders.
+            // 1 = 1 buy + 1 sell + 1 marketable buy = 3 total entry orders.
             resting_orders_per_side: 1,
 
             // 3% spacing:
@@ -232,7 +241,7 @@ impl LimitOrderAdvancedStrategy {
 
             repeat_delay: Duration::from_secs(10),
 
-            max_cycles_per_asset: 1,
+            max_cycles_per_asset: 3,
 
             started_at: Instant::now(),
             asset_state,
@@ -317,7 +326,6 @@ impl LimitOrderAdvancedStrategy {
     fn submit_order_set(&self, symbol: &str, market_px: f64, ts_ms: i64) {
         for level in 1..=self.resting_orders_per_side {
             let offset = self.resting_order_spacing * level as f64;
-
             let buy_px = market_px * (1.0 - offset);
             let sell_px = market_px * (1.0 + offset);
 
@@ -435,6 +443,7 @@ impl Strategy for LimitOrderAdvancedStrategy {
                     state.opened_at.clear();
                     state.cancel_requested.clear();
                     state.close_requested.clear();
+                    state.resting_cleanup_started = false;
                     state.phase = LimitOrderAdvancedAssetPhase::DiscoveringOrders { submitted_at: Instant::now() };
                 }
             }
@@ -522,7 +531,6 @@ impl Strategy for LimitOrderAdvancedStrategy {
                                 trades_to_close.push(*trade_id);
                             }
                         }
-
                         None => {
                             newly_opened.push(*trade_id);
                         }
@@ -589,7 +597,7 @@ impl Strategy for LimitOrderAdvancedStrategy {
                 // CANCEL REMAINING RESTING ENTRY ORDERS
                 // ----------------------------------------------------------------
 
-                if started_at.elapsed() >= self.resting_duration {
+                if started_at.elapsed() >= self.resting_duration && !current_state.resting_cleanup_started {
                     let mut orders_to_cancel = Vec::new();
 
                     for order_id in &current_state.order_ids {
@@ -605,11 +613,7 @@ impl Strategy for LimitOrderAdvancedStrategy {
                             continue;
                         }
 
-                        if matches!(
-                            order.state,
-                            OrderState::Working |
-                            OrderState::PendingSubmit
-                        ) {
+                        if matches!(order.state, OrderState::Working | OrderState::PendingSubmit) {
                             orders_to_cancel.push(*order_id);
                         }
                     }
@@ -639,7 +643,34 @@ impl Strategy for LimitOrderAdvancedStrategy {
                     }
 
                     if let Some(state) = self.asset_state.get_mut(&ev.symbol) {
-                        state.phase = LimitOrderAdvancedAssetPhase::WaitingForCleanup;
+                        state.resting_cleanup_started = true;
+                    }
+                }
+
+
+                // ----------------------------------------------------------------
+                // MOVE TO CLEANUP ONLY AFTER ALL OPEN TRADES HAVE RECEIVED
+                // THEIR CLOSE REQUEST
+                // ----------------------------------------------------------------
+
+                let Some(latest_state) = self.asset_state.get(&ev.symbol).cloned() else {
+                    return;
+                };
+
+                if latest_state.resting_cleanup_started {
+                    let all_open_trades_close_requested = latest_state.trade_ids.iter().all(|trade_id| {
+                        match view.trades.get(*trade_id) {
+                            Some(trade) if trade.state == TradeState::Open => latest_state.close_requested.contains(trade_id),
+                            Some(trade) if trade.state == TradeState::Closed => true,
+                            Some(_) => true,
+                            None => true,
+                        }
+                    });
+
+                    if all_open_trades_close_requested {
+                        if let Some(state) = self.asset_state.get_mut(&ev.symbol) {
+                            state.phase = LimitOrderAdvancedAssetPhase::WaitingForCleanup;
+                        }
                     }
                 }
             }
@@ -688,6 +719,7 @@ impl Strategy for LimitOrderAdvancedStrategy {
                     state.opened_at.clear();
                     state.cancel_requested.clear();
                     state.close_requested.clear();
+                    state.resting_cleanup_started = false;
 
                     if completed_cycles >= self.max_cycles_per_asset {
                         state.phase = LimitOrderAdvancedAssetPhase::Finished;
