@@ -39,6 +39,53 @@ use crate::{
 };
 
 
+// ============================================================================
+// MARKET ORDER TEST STRATEGY
+// ============================================================================
+//
+// Simple live strategy used to test market-order entries and exits.
+//
+// For each configured asset, the strategy:
+//
+//     1. Waits for live market data.
+//     2. Submits a market-order trade using the configured USD notional.
+//     3. Waits for the trade to be confirmed Open.
+//     4. Leaves the position open for a configured amount of time.
+//     5. Submits a market-order close.
+//     6. Waits for the trade to be confirmed Closed.
+//     7. Waits for a configured repeat delay.
+//     8. Repeats until the configured number of cycles is complete.
+//
+// Each asset runs independently, allowing multiple market-order trade
+// lifecycles to run concurrently across different symbols.
+//
+// Example:
+//
+//     receive BTC market data
+//         ↓
+//     submit market entry
+//         ↓
+//     wait for trade to open
+//         ↓
+//     wait 15 seconds
+//         ↓
+//     submit market close
+//         ↓
+//     wait for trade to close
+//         ↓
+//     wait 15 seconds
+//         ↓
+//     repeat
+//
+// The strategy does not use take profit, stop loss, emergency stop, or maximum
+// duration rules. It controls when trades are closed using its own close delay.
+//
+// This is a test strategy only and is not intended to represent a profitable
+// or production trading strategy.
+// ============================================================================
+
+
+
 // ============================================================
 // ASSET STATE
 // ============================================================

@@ -707,13 +707,13 @@ async fn main() -> Result<()> {
 
     // The same StrategyKind identifies a strategy family while the factory
     // chooses the live or historical implementation.
-    let enabled =
-        vec![
-            // StrategyKind::Base,
-            // StrategyKind::MeanReversion,
-            // StrategyKind::MarketOrder,
-            StrategyKind::LimitOrder,
-        ];
+    let enabled = vec![
+        // StrategyKind::Base,
+        // StrategyKind::MeanReversion,
+        // StrategyKind::MarketOrder,
+        // StrategyKind::LimitOrder,
+        StrategyKind::LimitOrderAdvanced,
+    ];
 
 
     // ============================================================

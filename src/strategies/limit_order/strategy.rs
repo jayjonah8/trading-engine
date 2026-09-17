@@ -42,6 +42,55 @@ use crate::{
 };
 
 
+// ============================================================================
+// LIMIT ORDER TEST STRATEGY
+// ============================================================================
+//
+// Simple live strategy used to test resting limit orders.
+//
+// For each configured asset, the strategy:
+//
+//     1. Waits for live market data.
+//     2. Calculates a buy limit price a configured percentage below market.
+//     3. Submits a limit-order trade.
+//     4. Waits for the limit order to become Working/resting.
+//     5. Leaves the order resting for a configured amount of time.
+//     6. Cancels the resting order.
+//     7. Waits until the cancellation is confirmed.
+//     8. Waits for a configured repeat delay.
+//     9. Repeats until the configured number of cycles is complete.
+//
+// Each asset runs independently, allowing multiple limit orders to be resting
+// at the same time across different symbols.
+//
+// The strategy is intended only for live execution testing. Its limit prices
+// are deliberately placed away from the current market so the orders normally
+// rest instead of filling immediately.
+//
+// Example:
+//
+//     BTC market price = $76,000
+//     limit offset     = 5%
+//     buy limit        = ~$72,200
+//
+//     submit limit order
+//         ↓
+//     wait for order to rest
+//         ↓
+//     wait 15 seconds
+//         ↓
+//     cancel order
+//         ↓
+//     wait for cancellation
+//         ↓
+//     repeat
+//
+// This is a test strategy only and is not intended to represent a profitable
+// or production trading strategy.
+// ============================================================================
+
+
+
 // ============================================================
 // ASSET STATE
 // ============================================================
@@ -152,8 +201,8 @@ impl LimitOrderStrategy {
     ) -> Self {
         let allowed_assets = vec![
             "BTC".to_string(),
-            // "ETH".to_string(),
-            // "SOL".to_string(),
+            "ETH".to_string(),
+            "SOL".to_string(),
             // "HYPE".to_string(),
             // "ZEC".to_string(),
         ];
@@ -183,7 +232,7 @@ impl LimitOrderStrategy {
             first_trade_delay: Duration::from_secs(10),
             resting_duration: Duration::from_secs(15),
             repeat_delay: Duration::from_secs(15),
-            max_cycles_per_asset: 1,
+            max_cycles_per_asset: 3,
             started_at: Instant::now(),
             asset_state,
         }

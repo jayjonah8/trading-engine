@@ -2,11 +2,13 @@
 
 mod base;
 mod limit_order;
+mod limit_order_advanced;
 mod market_order;
 mod mean_reversion;
 
 pub use base::BaseStrategy;
 pub use limit_order::LimitOrderStrategy;
+pub use limit_order_advanced::LimitOrderAdvancedStrategy;
 pub use market_order::MarketOrderStrategy;
 
 use std::sync::Arc;
@@ -29,6 +31,7 @@ pub enum StrategyKind {
     MeanReversion,
     MarketOrder,
     LimitOrder,
+    LimitOrderAdvanced,
 }
 
 
@@ -86,6 +89,15 @@ pub fn make_strategy(
                 )
             )
         }
+
+        StrategyKind::LimitOrderAdvanced => {
+            Box::new(
+                LimitOrderAdvancedStrategy::new(
+                    tx_engine,
+                    rx_view,
+                )
+            )
+        }
     }
 }
 
@@ -123,6 +135,12 @@ pub fn make_backtest_strategy(
         StrategyKind::LimitOrder => {
             panic!(
                 "LimitOrderStrategy is a live execution test strategy and cannot run in backtest mode"
+            );
+        }
+
+        StrategyKind::LimitOrderAdvanced => {
+            panic!(
+                "LimitOrderAdvancedStrategy is a live execution test strategy and cannot run in backtest mode"
             );
         }
     }
