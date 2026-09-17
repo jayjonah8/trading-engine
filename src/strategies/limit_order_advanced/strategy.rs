@@ -8,30 +8,25 @@
 //
 // For each configured asset, the strategy submits:
 //
-//     - Two buy limit orders below the current market price.
-//     - Two sell limit orders above the current market price.
-//     - One marketable buy limit order above the current market price.
+//     - A configurable number of buy limit orders below market.
+//     - The same number of sell limit orders above market.
+//     - One marketable buy limit order above market.
 //
-// The four orders away from market are expected to rest while the marketable
-// limit order is expected to execute immediately.
+// Example with resting_orders_per_side = 2:
 //
-// After the configured resting period:
-//
-//     - Any remaining resting orders are canceled.
-//     - Any successfully opened trade is closed normally.
-//     - The strategy waits for the cycle to finish before repeating.
-//
-// Example:
-//
-//                     SELL +5%   -> resting
-//                     SELL +3%   -> resting
+//                     SELL #2   -> resting
+//                     SELL #1   -> resting
 //
 //                 CURRENT MARKET PRICE
 //
-//                     BUY  -3%   -> resting
-//                     BUY  -5%   -> resting
+//                     BUY  #1   -> resting
+//                     BUY  #2   -> resting
 //
-//                     BUY  +1%   -> expected immediate execution
+//                     MARKETABLE BUY -> expected immediate execution
+//
+// Resting orders are canceled after the configured resting duration.
+// Successfully executed trades remain open for the configured close delay,
+// measured from when each individual trade is first observed Open.
 //
 // Each asset runs independently, allowing many simultaneous limit orders
 // across multiple symbols.
@@ -93,6 +88,9 @@ struct LimitOrderAdvancedAssetState {
     /// Trades belonging to the current test cycle.
     trade_ids: HashSet<TradeId>,
 
+    /// Time each successfully executed trade was first observed Open.
+    opened_at: HashMap<TradeId, Instant>,
+
     /// Orders already sent a cancellation request.
     cancel_requested: HashSet<OrderId>,
 
@@ -121,11 +119,25 @@ pub struct LimitOrderAdvancedStrategy {
     /// USD notional for each individual order.
     trade_amount_usd: f64,
 
-    /// Resting buy offsets below market.
-    resting_buy_offsets: Vec<f64>,
+    /// Number of resting limit orders placed on EACH side of the market.
+    ///
+    /// Example:
+    /// 2 = 2 resting buys + 2 resting sells.
+    /// 5 = 5 resting buys + 5 resting sells.
+    resting_orders_per_side: usize,
 
-    /// Resting sell offsets above market.
-    resting_sell_offsets: Vec<f64>,
+    /// Percentage spacing between each resting order level.
+    ///
+    /// Example with 0.02:
+    ///
+    /// Buy #1  = -2%
+    /// Buy #2  = -4%
+    /// Buy #3  = -6%
+    ///
+    /// Sell #1 = +2%
+    /// Sell #2 = +4%
+    /// Sell #3 = +6%
+    resting_order_spacing: f64,
 
     /// Marketable buy limit offset above market.
     marketable_buy_offset: f64,
@@ -136,7 +148,8 @@ pub struct LimitOrderAdvancedStrategy {
     /// Amount of time resting orders remain live before cancellation.
     resting_duration: Duration,
 
-    /// Minimum amount of time an executed trade remains open before closing.
+    /// Amount of time each successfully executed trade remains Open before
+    /// a close is requested.
     close_delay: Duration,
 
     /// Delay before beginning another cycle.
@@ -175,6 +188,7 @@ impl LimitOrderAdvancedStrategy {
                         completed_cycles: 0,
                         order_ids: HashSet::new(),
                         trade_ids: HashSet::new(),
+                        opened_at: HashMap::new(),
                         cancel_requested: HashSet::new(),
                         close_requested: HashSet::new(),
                     },
@@ -191,18 +205,31 @@ impl LimitOrderAdvancedStrategy {
 
             trade_amount_usd: 13.0,
 
-            // 3% and 5% below market.
-            resting_buy_offsets: vec![0.03, 0.05],
+            // Number of resting buys AND resting sells per asset.
+            //
+            // 2 = 2 buys + 2 sells + 1 marketable buy = 5 total entry orders.
+            resting_orders_per_side: 1,
 
-            // 3% and 5% above market.
-            resting_sell_offsets: vec![0.03, 0.05],
+            // 3% spacing:
+            //
+            // Buy #1  = -3%
+            // Buy #2  = -6%
+            //
+            // Sell #1 = +3%
+            // Sell #2 = +6%
+            resting_order_spacing: 0.03,
 
-            // A buy limit above market should be immediately marketable.
+            // A buy limit 1% above market should be immediately marketable.
             marketable_buy_offset: 0.01,
 
             first_trade_delay: Duration::from_secs(10),
+
+            // Cancel remaining resting orders after this duration.
             resting_duration: Duration::from_secs(10),
-            close_delay: Duration::from_secs(10),
+
+            // Close each executed trade this long after it is observed Open.
+            close_delay: Duration::from_secs(15),
+
             repeat_delay: Duration::from_secs(10),
 
             max_cycles_per_asset: 1,
@@ -219,6 +246,15 @@ impl LimitOrderAdvancedStrategy {
 
     fn is_allowed_asset(&self, symbol: &str) -> bool {
         self.allowed_assets.iter().any(|allowed| allowed == symbol)
+    }
+
+
+    // ========================================================================
+    // EXPECTED ORDER COUNT
+    // ========================================================================
+
+    fn expected_orders_per_asset(&self) -> usize {
+        (self.resting_orders_per_side * 2) + 1
     }
 
 
@@ -279,21 +315,41 @@ impl LimitOrderAdvancedStrategy {
     // ========================================================================
 
     fn submit_order_set(&self, symbol: &str, market_px: f64, ts_ms: i64) {
-        let buy_1_px = market_px * (1.0 - self.resting_buy_offsets[0]);
-        let buy_2_px = market_px * (1.0 - self.resting_buy_offsets[1]);
+        for level in 1..=self.resting_orders_per_side {
+            let offset = self.resting_order_spacing * level as f64;
 
-        let sell_1_px = market_px * (1.0 + self.resting_sell_offsets[0]);
-        let sell_2_px = market_px * (1.0 + self.resting_sell_offsets[1]);
+            let buy_px = market_px * (1.0 - offset);
+            let sell_px = market_px * (1.0 + offset);
+
+            self.send_limit(
+                symbol,
+                Direction::Long,
+                market_px,
+                buy_px,
+                ts_ms,
+                &format!("RESTING BUY #{}", level),
+            );
+
+            self.send_limit(
+                symbol,
+                Direction::Short,
+                market_px,
+                sell_px,
+                ts_ms,
+                &format!("RESTING SELL #{}", level),
+            );
+        }
 
         let marketable_buy_px = market_px * (1.0 + self.marketable_buy_offset);
 
-        self.send_limit(symbol, Direction::Long, market_px, buy_1_px, ts_ms, "RESTING BUY #1");
-        self.send_limit(symbol, Direction::Long, market_px, buy_2_px, ts_ms, "RESTING BUY #2");
-
-        self.send_limit(symbol, Direction::Short, market_px, sell_1_px, ts_ms, "RESTING SELL #1");
-        self.send_limit(symbol, Direction::Short, market_px, sell_2_px, ts_ms, "RESTING SELL #2");
-
-        self.send_limit(symbol, Direction::Long, market_px, marketable_buy_px, ts_ms, "MARKETABLE BUY");
+        self.send_limit(
+            symbol,
+            Direction::Long,
+            market_px,
+            marketable_buy_px,
+            ts_ms,
+            "MARKETABLE BUY",
+        );
     }
 }
 
@@ -364,7 +420,7 @@ impl Strategy for LimitOrderAdvancedStrategy {
                 }
 
                 // Snapshot existing order IDs so newly created orders can be
-                // discovered after the five intents are submitted.
+                // discovered after the intents are submitted.
                 let existing_order_ids: HashSet<OrderId> = view.orders
                     .iter()
                     .filter(|(_, order)| order.strategy_id == self.name() && order.symbol == ev.symbol)
@@ -376,6 +432,7 @@ impl Strategy for LimitOrderAdvancedStrategy {
                 if let Some(state) = self.asset_state.get_mut(&ev.symbol) {
                     state.order_ids = existing_order_ids;
                     state.trade_ids.clear();
+                    state.opened_at.clear();
                     state.cancel_requested.clear();
                     state.close_requested.clear();
                     state.phase = LimitOrderAdvancedAssetPhase::DiscoveringOrders { submitted_at: Instant::now() };
@@ -384,10 +441,12 @@ impl Strategy for LimitOrderAdvancedStrategy {
 
 
             // =================================================================
-            // DISCOVER THE FIVE NEW ORDERS
+            // DISCOVER NEW ORDERS
             // =================================================================
 
             LimitOrderAdvancedAssetPhase::DiscoveringOrders { submitted_at } => {
+                let expected_orders = self.expected_orders_per_asset();
+
                 let current_orders: Vec<(OrderId, Option<TradeId>)> = view.orders
                     .iter()
                     .filter(|(_, order)| order.strategy_id == self.name() && order.symbol == ev.symbol)
@@ -395,15 +454,16 @@ impl Strategy for LimitOrderAdvancedStrategy {
                     .map(|(order_id, order)| (*order_id, order.trade_id))
                     .collect();
 
-                if current_orders.len() < 5 {
+                if current_orders.len() < expected_orders {
                     if submitted_at.elapsed() > Duration::from_secs(10) {
                         print_log(
                             self.debug_mode,
                             true,
                             format!(
-                                "[LimitOrderAdvancedStrategy][{}] WAITING FOR ORDERS | discovered={}/5",
+                                "[LimitOrderAdvancedStrategy][{}] WAITING FOR ORDERS | discovered={}/{}",
                                 ev.symbol,
                                 current_orders.len(),
+                                expected_orders,
                             ),
                         );
                     }
@@ -437,48 +497,89 @@ impl Strategy for LimitOrderAdvancedStrategy {
             LimitOrderAdvancedAssetPhase::Running { started_at } => {
 
                 // ----------------------------------------------------------------
-                // CLOSE ANY TRADE THAT SUCCESSFULLY OPENED
+                // TRACK FILLED TRADES
                 // ----------------------------------------------------------------
 
-                if started_at.elapsed() >= self.close_delay {
-                    let mut trades_to_close = Vec::new();
+                let mut newly_opened = Vec::new();
+                let mut trades_to_close = Vec::new();
 
-                    for trade_id in &current_state.trade_ids {
-                        if current_state.close_requested.contains(trade_id) {
-                            continue;
-                        }
-
-                        let Some(trade) = view.trades.get(*trade_id) else {
-                            continue;
-                        };
-
-                        if trade.state == TradeState::Open {
-                            trades_to_close.push(*trade_id);
-                        }
+                for trade_id in &current_state.trade_ids {
+                    if current_state.close_requested.contains(trade_id) {
+                        continue;
                     }
 
-                    for trade_id in trades_to_close {
-                        print_log(
-                            self.debug_mode,
-                            true,
-                            format!(
-                                "[LimitOrderAdvancedStrategy][{}] CLOSE FILLED TRADE | trade_id={}",
-                                ev.symbol,
-                                trade_id,
-                            ),
-                        );
+                    let Some(trade) = view.trades.get(*trade_id) else {
+                        continue;
+                    };
 
-                        if self.tx_engine.send(
-                            EngineEvent::CloseTrade {
-                                trade_id,
-                                execution: ExitOrderRequest::market(),
-                                reason: "LimitOrderAdvancedStrategy filled limit-order test".to_string(),
-                                ts_ms,
+                    if trade.state != TradeState::Open {
+                        continue;
+                    }
+
+                    match current_state.opened_at.get(trade_id) {
+                        Some(opened_at) => {
+                            if opened_at.elapsed() >= self.close_delay {
+                                trades_to_close.push(*trade_id);
                             }
-                        ).is_ok() {
-                            if let Some(state) = self.asset_state.get_mut(&ev.symbol) {
-                                state.close_requested.insert(trade_id);
-                            }
+                        }
+
+                        None => {
+                            newly_opened.push(*trade_id);
+                        }
+                    }
+                }
+
+
+                // ----------------------------------------------------------------
+                // RECORD WHEN EACH TRADE WAS FIRST OBSERVED OPEN
+                // ----------------------------------------------------------------
+
+                if !newly_opened.is_empty() {
+                    if let Some(state) = self.asset_state.get_mut(&ev.symbol) {
+                        for trade_id in newly_opened {
+                            state.opened_at.insert(trade_id, Instant::now());
+
+                            print_log(
+                                self.debug_mode,
+                                true,
+                                format!(
+                                    "[LimitOrderAdvancedStrategy][{}] FILLED TRADE OPEN | trade_id={} | close_in={}s",
+                                    ev.symbol,
+                                    trade_id,
+                                    self.close_delay.as_secs(),
+                                ),
+                            );
+                        }
+                    }
+                }
+
+
+                // ----------------------------------------------------------------
+                // CLOSE EXECUTED TRADES AFTER THEIR INDIVIDUAL CLOSE DELAY
+                // ----------------------------------------------------------------
+
+                for trade_id in trades_to_close {
+                    print_log(
+                        self.debug_mode,
+                        true,
+                        format!(
+                            "[LimitOrderAdvancedStrategy][{}] CLOSE FILLED TRADE | trade_id={} | close_delay={}s",
+                            ev.symbol,
+                            trade_id,
+                            self.close_delay.as_secs(),
+                        ),
+                    );
+
+                    if self.tx_engine.send(
+                        EngineEvent::CloseTrade {
+                            trade_id,
+                            execution: ExitOrderRequest::market(),
+                            reason: "LimitOrderAdvancedStrategy filled limit-order test".to_string(),
+                            ts_ms,
+                        }
+                    ).is_ok() {
+                        if let Some(state) = self.asset_state.get_mut(&ev.symbol) {
+                            state.close_requested.insert(trade_id);
                         }
                     }
                 }
@@ -584,6 +685,7 @@ impl Strategy for LimitOrderAdvancedStrategy {
                     state.completed_cycles = completed_cycles;
                     state.order_ids.clear();
                     state.trade_ids.clear();
+                    state.opened_at.clear();
                     state.cancel_requested.clear();
                     state.close_requested.clear();
 

@@ -103,32 +103,6 @@ impl Engine {
 
 
         // ============================================================
-        // ACTIVE STRATEGY + SYMBOL GATE
-        // ============================================================
-
-        // Prevent one strategy from accidentally creating multiple independent
-        // Trade lifecycles for the same symbol.
-        //
-        // This does NOT limit how many Orders may belong to an existing Trade.
-        if self.state.trades.has_active_trade_for_strategy_symbol(
-            &intent.strategy_id,
-            &intent.symbol,
-        ) {
-            print_log(
-                self.debug_mode,
-                true,
-                format!(
-                    "[ENGINE] OPEN TRADE REJECTED | strategy={} | symbol={} | reason=active strategy trade already exists",
-                    intent.strategy_id,
-                    intent.symbol,
-                ),
-            );
-
-            return;
-        }
-
-
-        // ============================================================
         // TOTAL ACTIVE TRADE LIMIT
         // ============================================================
 
