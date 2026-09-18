@@ -42,8 +42,15 @@ use crate::core::{
 };
 
 use crate::data::{
-    historical::strategy_event::BacktestStrategyEvent,
-    live::event_mapper::map_app_to_live_engine_event,
+    historical::{
+        provider::HistoricalDataProvider,
+        strategy_event::BacktestStrategyEvent,
+    },
+    live::{
+        event_mapper::map_app_to_live_engine_event,
+        provider::LiveMarketDataProvider,
+        synthetic::asset::default_synthetic_assets,
+    },
 };
 
 use crate::exchange::{
@@ -90,15 +97,25 @@ async fn main() -> Result<()> {
     // ============================================================
 
     let cfg = Config {
-        execution_venue: Venue::Hyperliquid,
+        // ============================================================
+        // EXECUTION / MARKET DATA
+        // ============================================================
 
-        symbols: vec![
-            "BTC".to_string(),
-            "ETH".to_string(),
-            "SOL".to_string(),
-            "HYPE".to_string(),
-            "ZEC".to_string(),
-        ],
+        execution_venue: Venue::Alpaca,
+
+        // Live market data is intentionally independent from execution.
+        live_market_data_provider: LiveMarketDataProvider::Synthetic,
+
+        // Used only when enable_backtest_mode = true.
+        historical_data_provider: HistoricalDataProvider::Alpaca,
+
+        // symbols: vec![
+        //     "BTC".to_string(),
+        //     "ETH".to_string(),
+        //     "SOL".to_string(),
+        //     "HYPE".to_string(),
+        //     "ZEC".to_string(),
+        // ],
 
         // Example equity configuration:
         //
@@ -110,29 +127,23 @@ async fn main() -> Result<()> {
         //     "NVDA".to_string(),
         // ],
 
+        symbols: vec![
+            "FAKEA".to_string(),
+            "FAKEB".to_string(),
+            "FAKEC".to_string(),
+        ],
+
         // ============================================================
         // RISK LIMITS
         // ============================================================
 
-        // Maximum active directional Trades across the entire Engine.
         max_active_trades: Some(10),
-
-        // Maximum number of distinct assets with active Trades.
         max_active_assets: Some(10),
-
-        // Maximum active Trades allowed for a single symbol.
         max_active_trades_per_symbol: Some(10),
-
-        // Maximum active Trades allowed for a single strategy.
         max_active_trades_per_strategy: Some(10),
 
-        // Maximum notional value of one Order.
         max_order_notional: Some(150.0),
-
-        // Maximum gross notional exposure across the entire Engine.
         max_gross_notional: Some(150.0),
-
-        // Maximum gross notional exposure for one symbol.
         max_symbol_notional: Some(150.0),
 
         // ============================================================
@@ -142,13 +153,11 @@ async fn main() -> Result<()> {
         min_trade_age_before_exit_secs: 1,
 
         enable_simulation_mode: false,
-
         enable_backtest_mode: false,
 
         backtest_starting_balance: 100_000.0,
 
         enable_discord_notifications: true,
-
         enable_slack_notifications: true,
     };
 
@@ -708,11 +717,11 @@ async fn main() -> Result<()> {
     // The same StrategyKind identifies a strategy family while the factory
     // chooses the live or historical implementation.
     let enabled = vec![
-        // StrategyKind::Base,
+        StrategyKind::Base,
         // StrategyKind::MeanReversion,
         // StrategyKind::MarketOrder,
         // StrategyKind::LimitOrder,
-        StrategyKind::LimitOrderAdvanced,
+        // StrategyKind::LimitOrderAdvanced,
     ];
 
 
@@ -909,44 +918,68 @@ async fn main() -> Result<()> {
     } else {
 
         // ========================================================
-        // RUN LIVE HYPERLIQUID MARKET DATA
+        // RUN LIVE MARKET DATA
         // ========================================================
 
-        let market_data_cfg =
-            cfg.clone();
+        let market_data_cfg = cfg.clone();
 
 
-        data::live::hyperliquid::market_data::run_hyperliquid_feed(
-            market_data_cfg.clone(),
-            tx_master,
-            market_data_cfg.symbols.clone(),
-        )
-        .await
-        .map_err(
-            |error| {
-                anyhow::anyhow!(
-                    error.to_string()
+        // Select the live market-data provider independently from the
+        // configured execution venue.
+        //
+        // The execution venue determines where orders are sent.
+        // The live market-data provider determines where Quote, TapeTrade,
+        // and BarClosed events originate.
+        //
+        // Examples:
+        //
+        //     Hyperliquid execution + Hyperliquid market data
+        //     Alpaca execution + Alpaca market data
+        //     IBKR execution + Alpaca market data
+        //     Simulation execution + Synthetic market data
+        match cfg.live_market_data_provider {
+            // ====================================================
+            // HYPERLIQUID
+            // ====================================================
+
+            LiveMarketDataProvider::Hyperliquid => {
+                data::live::hyperliquid::market_data::run_hyperliquid_feed(
+                    market_data_cfg.clone(),
+                    tx_master,
+                    market_data_cfg.symbols.clone(),
                 )
+                .await
+                .map_err(|error| anyhow::anyhow!(error.to_string()))?;
             }
-        )?;
 
 
-        // ========================================================
-        // FUTURE ALPACA MARKET DATA
-        // ========================================================
+            // ====================================================
+            // ALPACA
+            // ====================================================
 
-        // data::live::alpaca::market_data::run_alpaca_feed(
-        //     market_data_cfg,
-        //     tx_master,
-        // )
-        // .await
-        // .map_err(
-        //     |error| {
-        //         anyhow::anyhow!(
-        //             error.to_string()
-        //         )
-        //     }
-        // )?;
+            LiveMarketDataProvider::Alpaca => {
+                data::live::alpaca::market_data::run_alpaca_feed(
+                    market_data_cfg,
+                    tx_master,
+                )
+                .await
+                .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+            }
+
+
+            // ====================================================
+            // SYNTHETIC
+            // ====================================================
+
+            LiveMarketDataProvider::Synthetic => {
+                data::live::synthetic::market_data::run_synthetic_feed(
+                    data::live::synthetic::asset::default_synthetic_assets(),
+                    tx_master,
+                )
+                .await
+                .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+            }
+        }
     }
 
 

@@ -70,7 +70,7 @@ impl BaseStrategy {
             window_prices: HashMap::new(),
             entry_window_secs: 1500,
             trade_amount_usd: 100.0,
-            entry_percent: 2.0,
+            entry_percent: 21111.0,
             exit_profit_percent: 2.0,
             exit_loss_percent: 2.0,
             emergency_exit_percent: 5.0,

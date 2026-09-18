@@ -13,11 +13,16 @@ use crate::{
     core::{
         config::Config,
         events::AppEvent,
+        execution::Venue,
     },
-    data::live::hyperliquid::market_data::run_hyperliquid_feed,
+    data::{
+        historical::provider::HistoricalDataProvider,
+        live::{
+            hyperliquid::market_data::run_hyperliquid_feed,
+            provider::LiveMarketDataProvider,
+        },
+    },
 };
-
-use crate::core::execution::Venue;
 
 // Run test:
 // cargo test test_hyperliquid_market_data_feed -- --nocapture
@@ -41,7 +46,13 @@ async fn test_hyperliquid_market_data_feed() -> Result<()> {
     // ============================================================
 
     let cfg = Config {
+        // ============================================================
+        // EXECUTION / MARKET DATA
+        // ============================================================
+
         execution_venue: Venue::Hyperliquid,
+        live_market_data_provider: LiveMarketDataProvider::Hyperliquid,
+        historical_data_provider: HistoricalDataProvider::Hyperliquid,
 
         symbols: vec![
             "BTC".to_string(),
@@ -51,14 +62,26 @@ async fn test_hyperliquid_market_data_feed() -> Result<()> {
             "ZEC".to_string(),
         ],
 
+        // ============================================================
+        // TRADE / ASSET LIMITS
+        // ============================================================
+
         max_active_trades: Some(1),
         max_active_assets: Some(1),
         max_active_trades_per_symbol: Some(1),
         max_active_trades_per_strategy: Some(1),
 
+        // ============================================================
+        // NOTIONAL LIMITS
+        // ============================================================
+
         max_order_notional: Some(20.0),
         max_gross_notional: Some(20.0),
         max_symbol_notional: Some(20.0),
+
+        // ============================================================
+        // OTHER ENGINE SETTINGS
+        // ============================================================
 
         min_trade_age_before_exit_secs: 1,
 

@@ -53,7 +53,8 @@ impl std::error::Error for CandleFeedError {}
 /// Feeds one canonical live tape trade into the shared `CandleManager`.
 ///
 /// This helper is provider-independent and should be used by live market-data
-/// providers such as Hyperliquid, Alpaca, IBKR, Databento, and future venues.
+/// providers such as Hyperliquid, Alpaca, IBKR, Databento, Synthetic,
+/// and future providers.
 ///
 /// The venue's actual trade timestamp is used for candle placement. Any
 /// completed candles are immediately published as canonical

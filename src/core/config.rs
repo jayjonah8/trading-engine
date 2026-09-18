@@ -1,11 +1,36 @@
 #![allow(dead_code)]
 
-use crate::core::execution::Venue;
+use crate::{
+    core::execution::Venue,
+    data::{
+        historical::provider::HistoricalDataProvider,
+        live::provider::LiveMarketDataProvider,
+    },
+};
 
 #[derive(Debug, Clone)]
 pub struct Config {
+    // ============================================================
+    // EXECUTION / MARKET DATA
+    // ============================================================
+
     /// Default execution venue used when the engine creates live orders.
+    ///
+    /// Execution is intentionally independent from the selected market-data
+    /// provider so different combinations can be used for testing.
     pub execution_venue: Venue,
+
+    /// Market-data provider used while running in live mode.
+    ///
+    /// This determines where streaming Quote, TapeTrade, and other live
+    /// market-data events originate.
+    pub live_market_data_provider: LiveMarketDataProvider,
+
+    /// Historical-data provider used while running backtests.
+    ///
+    /// This is independent from the live market-data provider so historical
+    /// data sources can be selected specifically for backtesting.
+    pub historical_data_provider: HistoricalDataProvider,
 
     /// List of market symbols/assets the bot is allowed to trade.
     pub symbols: Vec<String>,

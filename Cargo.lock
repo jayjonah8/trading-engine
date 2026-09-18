@@ -4733,6 +4733,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
+ "base64 0.22.1",
  "chrono",
  "chrono-tz",
  "dotenvy",
@@ -4741,6 +4742,7 @@ dependencies = [
  "futures-util",
  "hyperliquid_rust_sdk",
  "ibapi",
+ "prost",
  "reqwest 0.12.28",
  "serde",
  "serde_json",

@@ -8,6 +8,69 @@ use crate::core::{
 
 
 // ============================================================
+// APP EVENT -> ENGINE EVENT MAPPING
+// ============================================================
+//
+// `AppEvent` and `EngineEvent` serve different purposes.
+//
+// Market-data events published through `tx_master` are delivered directly
+// to strategies regardless of whether this mapper produces an EngineEvent.
+//
+// For example:
+//
+//     AppEvent::TapeTrade
+//         ├──> CandleManager
+//         ├──> Strategies
+//         └──> Engine mapper -> None
+//
+// Returning `None` for `TapeTrade` does NOT prevent strategies from receiving
+// or using tape trades. It only means the tape trade does not generate an
+// `EngineEvent::PriceTick` or otherwise directly update the Engine.
+//
+// The current live engine price is driven by `Quote` events using the
+// midpoint between the best bid and ask:
+//
+//     AppEvent::Quote
+//         ├──> Strategies
+//         └──> Engine mapper
+//                  └──> EngineEvent::PriceTick
+//
+// This allows strategies to independently use trades, quotes, and bars while
+// keeping the Engine's authoritative price-update behavior explicitly defined
+// by this mapper.
+//
+//
+// ENGINE MARKET DATA
+//         │
+//         ├───────────────┐
+//         │               │
+//         ▼               ▼
+//    TAPE TRADES        QUOTES
+//    actual trades      bid / ask
+//         │               │
+//         │               ├──→ BaseStrategy trading logic
+//         │               │       ↓
+//         │               │    midpoint
+//         │               │       ↓
+//         │               │    entry signals
+//         │               │
+//         │               └──→ Engine PriceTick
+//         │
+//         ├──→ CandleManager
+//         │       ↓
+//         │    OHLCV bars
+//         │       ↓
+//         │    BarClosed
+//         │
+//         └──→ BaseStrategy
+//                 ↓
+//              log only
+//
+// Tape trades = candle construction.
+// Quotes = live trading decisions + Engine current-price updates.
+
+
+// ============================================================
 // LIVE ENGINE EVENT MAPPING
 // ============================================================
 

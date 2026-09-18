@@ -14,11 +14,8 @@ use tokio::{
 use crate::{
     core::{
         config::Config,
-
         engine::engine::Engine,
-
         engine_view::EngineView,
-
         execution::{
             ExecCommand,
             ExecEvent,
@@ -26,15 +23,17 @@ use crate::{
             TimeInForce,
             Venue,
         },
-
         trade_intent::TradeIntent,
-
         trades::Direction,
+    },
+
+    data::{
+        historical::provider::HistoricalDataProvider,
+        live::provider::LiveMarketDataProvider,
     },
 
     exchange::{
         hyperliquid::adapter::run_hyperliquid_adapter,
-
         router::{
             run_execution_router,
             ExecutionRoutes,
@@ -77,6 +76,8 @@ async fn test_open_trade_routes_to_hyperliquid_adapter() {
 
     let cfg = Config {
         execution_venue: Venue::Hyperliquid,
+        live_market_data_provider: LiveMarketDataProvider::Hyperliquid,
+        historical_data_provider: HistoricalDataProvider::Hyperliquid,
 
         symbols: vec![
             "BTC".to_string(),

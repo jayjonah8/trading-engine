@@ -41,6 +41,11 @@ use crate::exchange::hyperliquid::{
     meta::fetch_meta,
 };
 
+use crate::data::{
+    historical::provider::HistoricalDataProvider,
+    live::provider::LiveMarketDataProvider,
+};
+
 
 // Run test:
 // cargo test test_hyperliquid_router_to_adapter -- --nocapture
@@ -64,6 +69,8 @@ async fn test_hyperliquid_router_to_adapter() {
 
     let cfg = Config {
         execution_venue: Venue::Hyperliquid,
+        live_market_data_provider: LiveMarketDataProvider::Hyperliquid,
+        historical_data_provider: HistoricalDataProvider::Hyperliquid,
 
         symbols: vec![
             "BTC".to_string(),

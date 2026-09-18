@@ -22,3 +22,5 @@ slack-morphism = { version = "2", features = ["hyper"] }
 ibapi = "4.0"
 futures = "0.3"
 uuid = { version = "1", features = ["v4"] }
+prost = "0.14"
+base64 = "0.22"

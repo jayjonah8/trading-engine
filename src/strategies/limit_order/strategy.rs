@@ -200,11 +200,16 @@ impl LimitOrderStrategy {
         rx_view: watch::Receiver<Arc<EngineView>>,
     ) -> Self {
         let allowed_assets = vec![
-            "BTC".to_string(),
-            "ETH".to_string(),
-            "SOL".to_string(),
+            // "BTC".to_string(),
+            // "ETH".to_string(),
+            // "SOL".to_string(),
             // "HYPE".to_string(),
             // "ZEC".to_string(),
+
+            // Stocks
+            "AAPL".to_string(),
+            "MSFT".to_string(),
+            "NVDA".to_string(),
         ];
 
         let asset_state = allowed_assets

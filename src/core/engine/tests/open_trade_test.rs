@@ -28,6 +28,11 @@ use crate::core::{
     },
 };
 
+use crate::data::{
+    historical::provider::HistoricalDataProvider,
+    live::provider::LiveMarketDataProvider,
+};
+
 
 // Run test:
 // cargo test test_handle_open_trade_creates_state_and_command -- --nocapture
@@ -51,6 +56,8 @@ async fn test_handle_open_trade_creates_state_and_command() {
 
     let cfg = Config {
         execution_venue: Venue::Hyperliquid,
+        live_market_data_provider: LiveMarketDataProvider::Hyperliquid,
+        historical_data_provider: HistoricalDataProvider::Hyperliquid,
 
         symbols: vec![
             "BTC".to_string(),
