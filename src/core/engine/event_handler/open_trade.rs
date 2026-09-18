@@ -9,6 +9,7 @@ use crate::core::{
         Order,
         OrderPurpose,
         OrderState,
+        Venue,
     },
 
     risk::{
@@ -34,6 +35,22 @@ use crate::core::{
 };
 
 use crate::shared::print_log;
+
+// TODO:
+// Alpaca and Interactive Brokers temporarily bypass VenueState instrument
+// metadata normalization so their execution adapters can be tested before
+// canonical metadata support is implemented.
+//
+// Hyperliquid must continue requiring InstrumentState because its executable
+// quantity and price precision depend on venue metadata.
+//
+// Later:
+// - add Alpaca meta/fetch.rs + mapper.rs
+// - add IBKR contract/instrument metadata support
+// - require metadata for all production execution venues
+// - remove the raw quantity/price passthrough below
+// - validate venue capabilities such as tradable, fractionable, shortable,
+//   quantity increments, price ticks, minimum sizes, and other constraints
 
 
 // TODO:
@@ -378,36 +395,53 @@ impl Engine {
         //
         // Venue-specific metadata is translated into InstrumentState before
         // reaching this handler, keeping OpenTrade venue-independent.
+        //
         let raw_quantity =
-            intent.target_notional
-                / intent.signal_px;
+        intent.target_notional
+            / intent.signal_px;
 
         let quantity =
-            match self.venue_state
-                .normalize_quantity(
-                    self.cfg.execution_venue,
-                    &intent.symbol,
-                    raw_quantity,
-                )
-            {
-                Ok(quantity) => quantity,
+            match self.cfg.execution_venue {
+                Venue::Hyperliquid => {
+                    match self.venue_state.normalize_quantity(
+                        self.cfg.execution_venue,
+                        &intent.symbol,
+                        raw_quantity,
+                    ) {
+                        Ok(quantity) => quantity,
 
-                Err(error) => {
-                    print_log(
-                        self.debug_mode,
-                        true,
-                        format!(
-                            "[ENGINE] OPEN TRADE REJECTED | strategy={} | symbol={} | error={:?}",
-                            intent.strategy_id,
-                            intent.symbol,
-                            error,
-                        ),
-                    );
+                        Err(error) => {
+                            print_log(
+                                self.debug_mode,
+                                true,
+                                format!(
+                                    "[ENGINE] OPEN TRADE REJECTED | strategy={} | symbol={} | error={:?}",
+                                    intent.strategy_id,
+                                    intent.symbol,
+                                    error,
+                                ),
+                            );
 
-                    return;
+                            return;
+                        }
+                    }
+                }
+
+                // TEST:
+                // Temporarily normalize Alpaca fractional-share quantities to
+                // 9 decimal places until canonical Alpaca instrument/order
+                // metadata normalization is implemented.
+                Venue::Alpaca => {
+                    (raw_quantity * 1_000_000_000.0).floor()
+                        / 1_000_000_000.0
+                }
+
+                // TEST:
+                // Temporarily bypass canonical quantity normalization for IBKR.
+                Venue::InteractiveBrokers => {
+                    raw_quantity
                 }
             };
-
 
         // ============================================================
         // LIMIT PRICE
@@ -441,38 +475,41 @@ impl Engine {
         let limit_px =
             match intent.limit_px {
                 Some(raw_limit_px) => {
-                    match self.venue_state
-                        .normalize_price(
-                            self.cfg.execution_venue,
-                            &intent.symbol,
-                            raw_limit_px,
-                        )
-                    {
-                        Ok(limit_px) => {
-                            Some(limit_px)
+                    match self.cfg.execution_venue {
+                        Venue::Hyperliquid => {
+                            match self.venue_state.normalize_price(
+                                self.cfg.execution_venue,
+                                &intent.symbol,
+                                raw_limit_px,
+                            ) {
+                                Ok(limit_px) => Some(limit_px),
+
+                                Err(error) => {
+                                    print_log(
+                                        self.debug_mode,
+                                        true,
+                                        format!(
+                                            "[ENGINE] OPEN TRADE REJECTED | strategy={} | symbol={} | raw_limit_px={} | error={:?}",
+                                            intent.strategy_id,
+                                            intent.symbol,
+                                            raw_limit_px,
+                                            error,
+                                        ),
+                                    );
+
+                                    return;
+                                }
+                            }
                         }
 
-                        Err(error) => {
-                            print_log(
-                                self.debug_mode,
-                                true,
-                                format!(
-                                    "[ENGINE] OPEN TRADE REJECTED | strategy={} | symbol={} | raw_limit_px={} | error={:?}",
-                                    intent.strategy_id,
-                                    intent.symbol,
-                                    raw_limit_px,
-                                    error,
-                                ),
-                            );
-
-                            return;
+                        Venue::Alpaca | Venue::InteractiveBrokers => {
+                            Some(raw_limit_px)
                         }
                     }
                 }
 
                 None => None,
             };
-
 
         // ============================================================
         // STOP PRICE
@@ -486,31 +523,35 @@ impl Engine {
         let stop_px =
             match intent.stop_px {
                 Some(raw_stop_px) => {
-                    match self.venue_state
-                        .normalize_price(
-                            self.cfg.execution_venue,
-                            &intent.symbol,
-                            raw_stop_px,
-                        )
-                    {
-                        Ok(stop_px) => {
-                            Some(stop_px)
+                    match self.cfg.execution_venue {
+                        Venue::Hyperliquid => {
+                            match self.venue_state.normalize_price(
+                                self.cfg.execution_venue,
+                                &intent.symbol,
+                                raw_stop_px,
+                            ) {
+                                Ok(stop_px) => Some(stop_px),
+
+                                Err(error) => {
+                                    print_log(
+                                        self.debug_mode,
+                                        true,
+                                        format!(
+                                            "[ENGINE] OPEN TRADE REJECTED | strategy={} | symbol={} | raw_stop_px={} | error={:?}",
+                                            intent.strategy_id,
+                                            intent.symbol,
+                                            raw_stop_px,
+                                            error,
+                                        ),
+                                    );
+
+                                    return;
+                                }
+                            }
                         }
 
-                        Err(error) => {
-                            print_log(
-                                self.debug_mode,
-                                true,
-                                format!(
-                                    "[ENGINE] OPEN TRADE REJECTED | strategy={} | symbol={} | raw_stop_px={} | error={:?}",
-                                    intent.strategy_id,
-                                    intent.symbol,
-                                    raw_stop_px,
-                                    error,
-                                ),
-                            );
-
-                            return;
+                        Venue::Alpaca | Venue::InteractiveBrokers => {
+                            Some(raw_stop_px)
                         }
                     }
                 }

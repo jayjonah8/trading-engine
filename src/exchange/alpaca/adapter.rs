@@ -98,7 +98,7 @@ use crate::{
 /// - Positions
 /// - Trades
 /// - Risk
-pub async fn run_alpaca_exchange_adapter(
+pub async fn run_alpaca_adapter(
     cfg: Config,
     mut rx_cmd: UnboundedReceiver<ExecCommand>,
     tx_evt: UnboundedSender<ExecEvent>,

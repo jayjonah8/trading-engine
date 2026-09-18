@@ -12,6 +12,8 @@ use crate::{
             OrderPurpose,
             OrderState,
             Side,
+            TimeInForce,
+            Venue,
         },
 
         risk::{
@@ -411,8 +413,24 @@ impl Engine {
         let order_type =
             execution.order_type;
 
+        // TEST:
+        // Alpaca fractional equity orders require DAY time-in-force.
+        // Remove this override once Alpaca execution capability
+        // normalization is implemented.
         let time_in_force =
-            execution.time_in_force;
+            match venue {
+                Venue::Alpaca => {
+                    TimeInForce::Day
+                }
+
+                Venue::Hyperliquid
+                | Venue::InteractiveBrokers => {
+                    execution.time_in_force
+                }
+            };
+        // older original
+        // let time_in_force =
+        //     execution.time_in_force;
 
         let limit_px =
             execution.limit_px;

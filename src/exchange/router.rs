@@ -98,6 +98,18 @@ pub async fn run_execution_router(
         let venue =
             command.venue();
 
+        // Keep disabled during normal operation.
+        // Can be enabled when debugging execution routing.
+        print_log(
+            debug_mode,
+            false,
+            format!(
+                "[EXECUTION ROUTER] command received | venue={:?} | command={:?}",
+                venue,
+                command,
+            ),
+        );
+
         let Some(tx_adapter) =
             routes.get(
                 venue
@@ -115,7 +127,7 @@ pub async fn run_execution_router(
             continue;
         };
 
-        if let Err(error) =
+        if let Err(err) =
             tx_adapter.send(
                 command
             )
@@ -126,7 +138,7 @@ pub async fn run_execution_router(
                 format!(
                     "[EXECUTION ROUTER] adapter channel closed | venue={:?} | error={}",
                     venue,
-                    error,
+                    err,
                 ),
             );
         }

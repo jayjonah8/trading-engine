@@ -59,6 +59,10 @@ use crate::data::{
 };
 
 use crate::exchange::{
+    alpaca::{
+        adapter::run_alpaca_adapter,
+    },
+
     hyperliquid::{
         adapter::run_hyperliquid_adapter,
 
@@ -109,10 +113,10 @@ async fn main() -> Result<()> {
         execution_venue: Venue::Alpaca,
 
         // Live market data is intentionally independent from execution.
-        live_market_data_provider: LiveMarketDataProvider::Synthetic,
+        live_market_data_provider: LiveMarketDataProvider::Alpaca,
 
         // Used only when enable_backtest_mode = true.
-        historical_data_provider: HistoricalDataProvider::Synthetic,
+        historical_data_provider: HistoricalDataProvider::Alpaca,
 
         // symbols: vec![
         //     "BTC".to_string(),
@@ -126,17 +130,17 @@ async fn main() -> Result<()> {
         //
         // execution_venue: Venue::Alpaca,
         //
-        // symbols: vec![
-        //     "AAPL".to_string(),
-        //     "MSFT".to_string(),
-        //     "NVDA".to_string(),
-        // ],
-
         symbols: vec![
-            "FAKEA".to_string(),
-            "FAKEB".to_string(),
-            "FAKEC".to_string(),
+            "AAPL".to_string(),
+            "MSFT".to_string(),
+            "NVDA".to_string(),
         ],
+
+        // symbols: vec![
+        //     "FAKEA".to_string(),
+        //     "FAKEB".to_string(),
+        //     "FAKEC".to_string(),
+        // ],
 
         // ============================================================
         // RISK LIMITS
@@ -147,18 +151,18 @@ async fn main() -> Result<()> {
         max_active_trades_per_symbol: Some(10),
         max_active_trades_per_strategy: Some(10),
 
-        max_order_notional: Some(150.0),
-        max_gross_notional: Some(150.0),
-        max_symbol_notional: Some(150.0),
+        max_order_notional: Some(150_000.0),
+        max_gross_notional: Some(150_000.0),
+        max_symbol_notional: Some(150_000.0),
 
         // ============================================================
         // ENGINE SETTINGS
         // ============================================================
 
-        min_trade_age_before_exit_secs: 1,
+        min_trade_age_before_exit_secs: 1, // delete later
 
         enable_simulation_mode: false,
-        enable_backtest_mode: true,
+        enable_backtest_mode: false,
 
         backtest_starting_balance: 100_000.0,
 
@@ -536,27 +540,23 @@ async fn main() -> Result<()> {
         mpsc::unbounded_channel::<ExecCommand>();
 
 
+    // ============================================================
+    // REGISTER ROUTING PER VENUE ADAPTER
+    // ============================================================
+
     execution_routes.register(
         Venue::Hyperliquid,
         tx_hyperliquid_exec,
     );
 
 
-    // ============================================================
-    // FUTURE ALPACA EXECUTION ROUTE
-    // ============================================================
-
-    // TODO:
-    // Add once the Alpaca execution adapter has been migrated to the new
-    // canonical Order / ExecCommand / ExecEvent architecture.
-    //
-    // let (tx_alpaca_exec, rx_alpaca_exec) =
-    //     mpsc::unbounded_channel::<ExecCommand>();
-    //
-    // execution_routes.register(
-    //     Venue::Alpaca,
-    //     tx_alpaca_exec,
-    // );
+    let (tx_alpaca_exec, rx_alpaca_exec) =
+        mpsc::unbounded_channel::<ExecCommand>();
+    
+    execution_routes.register(
+        Venue::Alpaca,
+        tx_alpaca_exec,
+    );
 
 
     // ============================================================
@@ -655,6 +655,29 @@ async fn main() -> Result<()> {
         );
     }
 
+    // ============================================================
+    // START ALPACA EXECUTION ADAPTER
+    // ============================================================
+
+    if !cfg.enable_backtest_mode
+        && !cfg.enable_simulation_mode
+        && cfg.execution_venue == Venue::Alpaca
+    {
+        let adapter_cfg = cfg.clone();
+        let tx_exec_evt = tx_exec_evt.clone();
+
+        tokio::spawn(
+            async move {
+                run_alpaca_adapter(
+                    adapter_cfg,
+                    rx_alpaca_exec,
+                    tx_exec_evt,
+                )
+                .await;
+            }
+        );
+    }
+
 
     // ============================================================
     // LIVE MARKET DATA -> ENGINE PRICE TICKS
@@ -722,9 +745,9 @@ async fn main() -> Result<()> {
     // The same StrategyKind identifies a strategy family while the factory
     // chooses the live or historical implementation.
     let enabled = vec![
-        StrategyKind::Base,
+        // StrategyKind::Base,
         // StrategyKind::MeanReversion,
-        // StrategyKind::MarketOrder,
+        StrategyKind::MarketOrder,
         // StrategyKind::LimitOrder,
         // StrategyKind::LimitOrderAdvanced,
     ];
