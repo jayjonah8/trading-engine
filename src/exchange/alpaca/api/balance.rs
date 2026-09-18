@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 use crate::exchange::alpaca::{
     types::AlpacaAccountBalance,
     utils::get_alpaca_config,
