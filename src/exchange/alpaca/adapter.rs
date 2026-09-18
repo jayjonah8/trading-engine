@@ -1,7 +1,5 @@
 #![allow(dead_code)]
 
-use serde_json::Value;
-
 use tokio::sync::{
     mpsc::{
         self,
@@ -18,16 +16,30 @@ use crate::{
         execution::{
             ExecCommand,
             ExecEvent,
+            Venue,
         },
     },
 
     exchange::alpaca::{
-        trade_updates_ws::run_alpaca_trade_updates_ws,
-
-        types::{
-            AlpacaConfig,
-            TradeUpdatesConnectionState,
+        commands::{
+            handle_cancel_order,
+            handle_replace_order,
+            handle_submit_order,
         },
+
+        correlation::AlpacaOrderCorrelation,
+
+        execution_ws::{
+            start_execution_ws,
+            wait_until_execution_ws_ready,
+            ExecutionWsHealth,
+        },
+
+        mapper::handle_trade_update,
+
+        submission_result::AlpacaSubmissionResult,
+
+        types::AlpacaConfig,
 
         utils::get_alpaca_config,
     },
@@ -53,143 +65,178 @@ use crate::{
 
 /// Runs the Alpaca live execution adapter.
 ///
-/// This adapter is the boundary between the venue-independent engine and
-/// Alpaca's trading APIs.
+/// The adapter is the authoritative owner of Alpaca-specific execution
+/// orchestration.
 ///
-/// The adapter owns execution orchestration while lower-level modules own
-/// specific Alpaca responsibilities:
+/// Responsibilities:
 ///
-/// - `orders.rs` performs Alpaca REST order operations.
-/// - `trade_updates_ws.rs` owns the execution WebSocket lifecycle.
-/// - `trade_update_mapper.rs` will translate Alpaca updates into `ExecEvent`s.
-/// - `command_handler.rs` will translate `ExecCommand`s into Alpaca actions.
+/// - owns Alpaca order correlation
+/// - owns execution WebSocket orchestration
+/// - routes canonical ExecCommands into Alpaca command handlers
+/// - receives private REST submission results
+/// - records Alpaca venue order IDs in adapter correlation
+/// - routes raw Alpaca trade_updates into the Alpaca mapper
+/// - emits canonical ExecEvents back to the Engine
 ///
-/// The execution `trade_updates` WebSocket is independent from Alpaca's
-/// market-data WebSocket under `data/live/alpaca`.
+/// Correlation intentionally remains adapter-local.
 ///
-/// TODO:
-/// Wire the finalized canonical `ExecCommand` and `ExecEvent` order lifecycle
-/// once the new engine order implementation is ready.
+/// Spawned REST tasks never mutate `AlpacaOrderCorrelation` directly.
+/// Instead, successful submissions return their Alpaca venue order ID through
+/// `AlpacaSubmissionResult`. The adapter receives that result inside this
+/// event loop and performs the correlation mutation itself.
 ///
-/// TODO:
-/// Wire raw Alpaca `trade_updates` through `trade_update_mapper.rs` once the
-/// canonical fill/order event model is finalized.
+/// This preserves single ownership without requiring:
+///
+/// - Arc
+/// - Mutex
+/// - shared mutable correlation state
+///
+/// The Engine remains authoritative for canonical:
+///
+/// - Orders
+/// - Fills
+/// - Positions
+/// - Trades
+/// - Risk
 pub async fn run_alpaca_exchange_adapter(
     cfg: Config,
     mut rx_cmd: UnboundedReceiver<ExecCommand>,
     tx_evt: UnboundedSender<ExecEvent>,
 ) {
+    let debug_mode = true;
+
 
     // ============================================================
     // ALPACA CONFIG
     // ============================================================
 
-    let alpaca_config =
-        match get_alpaca_config() {
-            Ok(config) => config,
+    let alpaca_config = match get_alpaca_config() {
+        Ok(config) => config,
 
-            Err(error) => {
-                eprintln!(
-                    "[ALPACA ADAPTER] failed to load config | error={}",
-                    error
-                );
+        Err(error) => {
+            eprintln!(
+                "[ALPACA ADAPTER] failed to load config | error={}",
+                error
+            );
 
-                let remote_message =
-                    format!(
-                        "🚨 ALPACA ADAPTER ERROR – `{}`\n\
-                        Failed to load Alpaca configuration\n\
-                        Adapter: `AlpacaExchangeAdapter`\n\
-                        Error: `{}`\n\
-                        Time: `{}`",
-                        get_bot_name(),
-                        error,
-                        get_local_timestamp(),
-                    );
+            let remote_message = format!(
+                "🚨 ALPACA ADAPTER ERROR – `{}`\n\
+                Failed to load Alpaca configuration\n\
+                Adapter: `AlpacaExchangeAdapter`\n\
+                Error: `{}`\n\
+                Time: `{}`",
+                get_bot_name(),
+                error,
+                get_local_timestamp(),
+            );
 
-                send_remote_message(
-                    &cfg,
-                    remote_message,
-                    Some(get_slack_error_channel_id()),
-                    Some(get_discord_error_channel_id()),
-                );
+            send_remote_message(
+                &cfg,
+                remote_message,
+                Some(get_slack_error_channel_id()),
+                Some(get_discord_error_channel_id()),
+            );
 
-                return;
-            }
-        };
+            return;
+        }
+    };
 
 
     println!(
         "[ALPACA ADAPTER] started | mode={}",
-        if alpaca_config.paper_trading {
-            "PAPER"
-        } else {
-            "LIVE"
-        }
+        if alpaca_config.paper_trading { "PAPER" } else { "LIVE" }
     );
 
 
     // ============================================================
-    // RAW TRADE UPDATES CHANNEL
+    // ORDER CORRELATION
     // ============================================================
 
-    // trade_updates_ws.rs owns WebSocket transport and publishes raw Alpaca
-    // execution messages into this channel.
+    // The adapter exclusively owns Alpaca correlation state.
     //
-    // The adapter will eventually send these messages through
-    // trade_update_mapper.rs to produce canonical ExecEvents.
-    let (
-        tx_trade_updates,
-        mut rx_trade_updates,
-    ) =
-        mpsc::unbounded_channel::<Value>();
-
-
-    // ============================================================
-    // TRADE UPDATES CONNECTION STATE
-    // ============================================================
-
-    // Explicitly tracks execution-monitoring availability.
+    // Initial correlation:
     //
-    // This restores an important safety property from the older adapter:
-    // new live orders should not be submitted while Alpaca trade_updates
-    // monitoring is unavailable.
+    //     OrderId <-> ClientOrderId
+    //
+    // is registered synchronously before the REST task is spawned.
+    //
+    // Once Alpaca accepts the REST request and assigns its own order ID,
+    // the submission-result channel extends the correlation to:
+    //
+    //     OrderId
+    //        ↕
+    //     ClientOrderId
+    //        ↕
+    //     Alpaca venue_order_id
+    //
+    // All mutations happen inside this adapter task.
+    let mut correlation = AlpacaOrderCorrelation::new();
+
+
+    // ============================================================
+    // SUBMISSION RESULT CHANNEL
+    // ============================================================
+
+    // REST submission handlers execute in spawned tasks so network latency
+    // never blocks the adapter's main event loop.
+    //
+    // Those tasks cannot mutate adapter-owned correlation directly.
+    //
+    // Successful market/limit submissions therefore send:
+    //
+    //     AlpacaSubmissionResult {
+    //         order_id,
+    //         venue_order_id,
+    //     }
+    //
+    // back to this task.
+    //
+    // This is an internal Alpaca adapter channel. It is NOT part of the
+    // canonical Engine execution interface.
     let (
-        tx_trade_updates_state,
-        rx_trade_updates_state,
-    ) =
-        watch::channel(
-            TradeUpdatesConnectionState::Disconnected
+        tx_submission_result,
+        mut rx_submission_result,
+    ) = mpsc::unbounded_channel::<AlpacaSubmissionResult>();
+
+
+    // ============================================================
+    // START EXECUTION WEBSOCKET
+    // ============================================================
+
+    let mut execution_ws = start_execution_ws(
+        cfg.clone(),
+        alpaca_config.clone(),
+    );
+
+
+    // ============================================================
+    // WAIT FOR EXECUTION MONITORING
+    // ============================================================
+
+    // Do not allow startup to proceed until Alpaca has confirmed:
+    //
+    // - WebSocket connection
+    // - authentication
+    // - trade_updates subscription
+    //
+    // This prevents the adapter from accepting new live orders before
+    // execution monitoring is available.
+    if let Err(error) = wait_until_execution_ws_ready(
+        &mut execution_ws.health_rx
+    )
+    .await
+    {
+        eprintln!(
+            "[ALPACA ADAPTER] execution websocket readiness failed | error={}",
+            error
         );
 
-
-    // ============================================================
-    // START TRADE UPDATES WEBSOCKET
-    // ============================================================
-
-    let ws_cfg =
-        cfg.clone();
-
-    let ws_alpaca_config =
-        alpaca_config.clone();
+        return;
+    }
 
 
-    tokio::spawn(
-        async move {
-            if let Err(error) =
-                run_alpaca_trade_updates_ws(
-                    ws_cfg,
-                    ws_alpaca_config,
-                    tx_trade_updates,
-                    tx_trade_updates_state,
-                )
-                .await
-            {
-                eprintln!(
-                    "[ALPACA ADAPTER] trade_updates supervisor stopped | error={}",
-                    error
-                );
-            }
-        }
+    println!(
+        "[ALPACA ADAPTER] execution websocket ready | stream=trade_updates"
     );
 
 
@@ -197,34 +244,37 @@ pub async fn run_alpaca_exchange_adapter(
     // ADAPTER EVENT LOOP
     // ============================================================
 
+    // This loop is the single owner of mutable Alpaca correlation state.
+    //
+    // Three independent event sources are multiplexed here:
+    //
+    // 1. Engine ExecCommands
+    // 2. Alpaca trade_updates
+    // 3. REST submission results
+    //
+    // Because correlation mutations occur here rather than inside spawned
+    // tasks, no synchronization primitive is required.
     loop {
         tokio::select! {
-
             // ====================================================
             // ENGINE COMMAND
             // ====================================================
 
-            command =
-                rx_cmd.recv() =>
-            {
-                let Some(command) =
-                    command
-                else {
-                    println!(
-                        "[ALPACA ADAPTER] command channel closed"
-                    );
-
+            command = rx_cmd.recv() => {
+                let Some(command) = command else {
+                    println!("[ALPACA ADAPTER] command channel closed");
                     break;
                 };
-
 
                 handle_engine_command(
                     command,
                     &alpaca_config,
-                    &rx_trade_updates_state,
+                    &execution_ws.health_rx,
+                    &mut correlation,
                     &tx_evt,
-                )
-                .await;
+                    &tx_submission_result,
+                    debug_mode,
+                );
             }
 
 
@@ -232,23 +282,35 @@ pub async fn run_alpaca_exchange_adapter(
             // ALPACA TRADE UPDATE
             // ====================================================
 
-            update =
-                rx_trade_updates.recv() =>
-            {
-                let Some(update) =
-                    update
-                else {
-                    eprintln!(
-                        "[ALPACA ADAPTER] trade_updates channel closed"
-                    );
-
+            update = execution_ws.raw_rx.recv() => {
+                let Some(update) = update else {
+                    eprintln!("[ALPACA ADAPTER] trade_updates channel closed");
                     break;
                 };
 
-
                 handle_trade_update(
                     update,
+                    &correlation,
                     &tx_evt,
+                    debug_mode,
+                );
+            }
+
+
+            // ====================================================
+            // REST SUBMISSION RESULT
+            // ====================================================
+
+            submission_result = rx_submission_result.recv() => {
+                let Some(submission_result) = submission_result else {
+                    eprintln!("[ALPACA ADAPTER] submission result channel closed");
+                    break;
+                };
+
+                handle_submission_result(
+                    submission_result,
+                    &mut correlation,
+                    debug_mode,
                 );
             }
         }
@@ -259,9 +321,7 @@ pub async fn run_alpaca_exchange_adapter(
     // ADAPTER SHUTDOWN
     // ============================================================
 
-    println!(
-        "[ALPACA ADAPTER] shutting down"
-    );
+    println!("[ALPACA ADAPTER] shutting down");
 }
 
 
@@ -269,73 +329,235 @@ pub async fn run_alpaca_exchange_adapter(
 // HANDLE ENGINE COMMAND
 // ============================================================
 
-/// Temporary command-handler boundary for the new engine.
+/// Routes canonical Engine execution commands into Alpaca-specific handlers.
 ///
-/// TODO:
-/// Replace this boilerplate with the finalized Alpaca command handler once
-/// the canonical engine Order -> ExecCommand execution path is implemented.
+/// Submission and replacement are blocked whenever Alpaca execution
+/// monitoring is unavailable.
 ///
-/// Before submitting any live order, the final implementation must verify
-/// that `trade_updates` execution monitoring is connected.
-async fn handle_engine_command(
+/// Cancellation intentionally remains available during a WebSocket outage
+/// because canceling outstanding exposure is risk-reducing.
+fn handle_engine_command(
     command: ExecCommand,
-    _alpaca_config: &AlpacaConfig,
-    trade_updates_state: &watch::Receiver<TradeUpdatesConnectionState>,
-    _tx_evt: &UnboundedSender<ExecEvent>,
+    alpaca_config: &AlpacaConfig,
+    execution_health: &watch::Receiver<ExecutionWsHealth>,
+    correlation: &mut AlpacaOrderCorrelation,
+    tx_evt: &UnboundedSender<ExecEvent>,
+    tx_submission_result: &UnboundedSender<AlpacaSubmissionResult>,
+    debug_mode: bool,
 ) {
-    // ============================================================
-    // REQUIRE EXECUTION MONITORING
-    // ============================================================
+    match command {
+        // ========================================================
+        // SUBMIT ORDER
+        // ========================================================
 
-    if *trade_updates_state.borrow()
-        != TradeUpdatesConnectionState::Connected
-    {
-        eprintln!(
-            "[ALPACA ADAPTER] execution command blocked | trade_updates unavailable"
-        );
+        ExecCommand::SubmitOrder { order } => {
+            if order.venue != Venue::Alpaca {
+                let _ = tx_evt.send(ExecEvent::Error {
+                    order_id: Some(order.id),
+                    message: format!("Alpaca adapter received SubmitOrder for venue {:?}", order.venue),
+                    ts_ms: chrono::Utc::now().timestamp_millis(),
+                });
 
-        // TODO:
-        // Emit the finalized canonical adapter-unavailable / rejected
-        // ExecEvent once that engine event shape has been completed.
-        //
-        // Never submit a new live Alpaca order while execution monitoring
-        // is unavailable because the order could fill without the engine
-        // receiving its execution update.
+                return;
+            }
+
+
+            // A new order must not be submitted while trade_updates is down.
+            //
+            // Otherwise Alpaca could execute the order while the Engine has
+            // no live execution-monitoring path.
+            if !execution_health.borrow().is_ready() {
+                let _ = tx_evt.send(ExecEvent::Error {
+                    order_id: Some(order.id),
+                    message: "Alpaca SubmitOrder blocked because trade_updates execution monitoring is unavailable".to_string(),
+                    ts_ms: chrono::Utc::now().timestamp_millis(),
+                });
+
+                return;
+            }
+
+
+            // Register the Engine-generated ClientOrderId BEFORE spawning the
+            // REST request.
+            //
+            // Alpaca may publish a trade_update extremely quickly. Registering
+            // first guarantees that an update containing client_order_id can
+            // already be resolved back to the canonical OrderId.
+            correlation.insert(
+                order.id,
+                order.client_order_id,
+            );
+
+
+            let alpaca_config = alpaca_config.clone();
+            let tx_evt = tx_evt.clone();
+            let tx_submission_result = tx_submission_result.clone();
+
+
+            // REST networking is intentionally moved outside the authoritative
+            // adapter loop.
+            //
+            // The spawned task reports:
+            //
+            // - canonical acceptance/rejection/error through tx_evt
+            // - Alpaca venue-order correlation through tx_submission_result
+            tokio::spawn(async move {
+                handle_submit_order(
+                    &alpaca_config,
+                    &tx_evt,
+                    &tx_submission_result,
+                    order,
+                    debug_mode,
+                )
+                .await;
+            });
+        }
+
+
+        // ========================================================
+        // CANCEL ORDER
+        // ========================================================
+
+        ExecCommand::CancelOrder { venue, order_id } => {
+            if venue != Venue::Alpaca {
+                let _ = tx_evt.send(ExecEvent::Error {
+                    order_id: Some(order_id),
+                    message: format!("Alpaca adapter received CancelOrder for venue {:?}", venue),
+                    ts_ms: chrono::Utc::now().timestamp_millis(),
+                });
+
+                return;
+            }
+
+
+            // Cancellation intentionally remains available while the
+            // execution WebSocket is unhealthy because cancellation reduces
+            // outstanding execution risk.
+            //
+            // Alpaca cancellation requires the venue order ID, which should
+            // have been attached to correlation after REST acceptance.
+            let Some(order_ref) = correlation.get_by_order_id(order_id).cloned() else {
+                let _ = tx_evt.send(ExecEvent::Error {
+                    order_id: Some(order_id),
+                    message: format!("Alpaca cancel correlation missing for order {}", order_id),
+                    ts_ms: chrono::Utc::now().timestamp_millis(),
+                });
+
+                return;
+            };
+
+
+            let alpaca_config = alpaca_config.clone();
+            let tx_evt = tx_evt.clone();
+
+
+            tokio::spawn(async move {
+                handle_cancel_order(
+                    &alpaca_config,
+                    &tx_evt,
+                    order_id,
+                    order_ref,
+                    debug_mode,
+                )
+                .await;
+            });
+        }
+
+
+        // ========================================================
+        // REPLACE ORDER
+        // ========================================================
+
+        ExecCommand::ReplaceOrder { venue, order_id, changes } => {
+            if venue != Venue::Alpaca {
+                let _ = tx_evt.send(ExecEvent::Error {
+                    order_id: Some(order_id),
+                    message: format!("Alpaca adapter received ReplaceOrder for venue {:?}", venue),
+                    ts_ms: chrono::Utc::now().timestamp_millis(),
+                });
+
+                return;
+            }
+
+
+            // Replacing an order can change live execution behavior, so keep
+            // it blocked while execution monitoring is unavailable.
+            if !execution_health.borrow().is_ready() {
+                let _ = tx_evt.send(ExecEvent::Error {
+                    order_id: Some(order_id),
+                    message: "Alpaca ReplaceOrder blocked because trade_updates execution monitoring is unavailable".to_string(),
+                    ts_ms: chrono::Utc::now().timestamp_millis(),
+                });
+
+                return;
+            }
+
+
+            let alpaca_config = alpaca_config.clone();
+            let tx_evt = tx_evt.clone();
+
+
+            tokio::spawn(async move {
+                handle_replace_order(
+                    &alpaca_config,
+                    &tx_evt,
+                    order_id,
+                    changes,
+                    debug_mode,
+                )
+                .await;
+            });
+        }
+    }
+}
+
+
+// ============================================================
+// HANDLE SUBMISSION RESULT
+// ============================================================
+
+/// Applies the Alpaca venue order ID learned by a spawned REST submission
+/// task to adapter-owned correlation.
+///
+/// Before REST acceptance:
+///
+///     OrderId <-> ClientOrderId
+///
+/// After REST acceptance:
+///
+///     OrderId <-> ClientOrderId
+///         │
+///         └── venue_order_id
+///
+/// This mutation deliberately happens inside the adapter task rather than
+/// inside the spawned HTTP task.
+fn handle_submission_result(
+    result: AlpacaSubmissionResult,
+    correlation: &mut AlpacaOrderCorrelation,
+    debug_mode: bool,
+) {
+    let updated = correlation.set_venue_order_id(
+        result.order_id,
+        result.venue_order_id.clone(),
+    );
+
+
+    if updated {
+        if debug_mode {
+            println!(
+                "[ALPACA ADAPTER] CORRELATION UPDATED | order_id={} | venue_order_id={}",
+                result.order_id,
+                result.venue_order_id,
+            );
+        }
 
         return;
     }
 
 
-    // ============================================================
-    // TODO: FINAL COMMAND HANDLING
-    // ============================================================
-
-    // TODO:
-    // Forward the canonical command into command_handler.rs once the new
-    // ExecCommand order model is finalized.
-
-    let _ = command;
-}
-
-
-// ============================================================
-// HANDLE TRADE UPDATE
-// ============================================================
-
-/// Temporary raw Alpaca execution-update boundary.
-///
-/// TODO:
-/// Forward this message into `trade_update_mapper.rs` once the canonical
-/// ExecEvent fill/order lifecycle has been finalized.
-fn handle_trade_update(
-    update: Value,
-    _tx_evt: &UnboundedSender<ExecEvent>,
-) {
-    // Intentionally empty for now.
-    //
-    // The old bot's proven partial-fill, final-fill, resting, canceled,
-    // rejected, expired, execution-ID, cumulative quantity, and average-price
-    // handling will be migrated into trade_update_mapper.rs.
-
-    let _ = update;
+    eprintln!(
+        "[ALPACA ADAPTER] CORRELATION UPDATE FAILED | order_id={} | venue_order_id={}",
+        result.order_id,
+        result.venue_order_id,
+    );
 }
