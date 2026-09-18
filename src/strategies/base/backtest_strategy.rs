@@ -73,7 +73,7 @@ impl BaseBacktestStrategy {
             window_prices: HashMap::new(),
             entry_window_secs: 10_800,
             trade_amount_usd: 100.0,
-            entry_percent: 0.05,
+            entry_percent: 11111_0.05,
             exit_profit_percent: 1.00,
             exit_loss_percent: 1.05,
             emergency_exit_percent: 3.0,
@@ -134,6 +134,19 @@ impl Strategy for BaseBacktestStrategy {
             AppEvent::TapeTrade(trade) => {
                 self.total_trade_events += 1;
 
+                print_log(
+                self.debug_mode,
+                true,
+                format!(
+                    "[BASE BACKTEST TRADE][{}] price=${:.4} | size={} | timestamp_ms={}",
+                    ev.symbol,
+                    trade.price,
+                    trade.size,
+                    trade.timestamp_ms,
+                ),
+            );
+
+   
                 // Backtest entry flow:
                 //
                 // Historical TapeTrade
@@ -533,7 +546,7 @@ impl Strategy for BaseBacktestStrategy {
             AppEvent::BarClosed(bar) => {
                 print_log(
                     self.debug_mode,
-                    false,
+                    true,
                     format!(
                         "[BASE BACKTEST BAR CLOSED][{}][{}s] \
                         {} -> {} | \

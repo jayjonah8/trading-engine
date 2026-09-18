@@ -6,3 +6,4 @@ pub mod strategy_event;
 pub mod types;
 pub mod event_mapper;
 pub mod provider;
+pub mod synthetic;

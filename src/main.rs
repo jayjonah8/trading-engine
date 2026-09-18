@@ -13,6 +13,11 @@ use anyhow::Result;
 
 use hyperliquid_rust_sdk::Meta;
 
+use chrono::{
+    DateTime,
+    Utc,
+};
+
 use tokio::sync::{
     broadcast,
     mpsc,
@@ -107,7 +112,7 @@ async fn main() -> Result<()> {
         live_market_data_provider: LiveMarketDataProvider::Synthetic,
 
         // Used only when enable_backtest_mode = true.
-        historical_data_provider: HistoricalDataProvider::Alpaca,
+        historical_data_provider: HistoricalDataProvider::Synthetic,
 
         // symbols: vec![
         //     "BTC".to_string(),
@@ -153,7 +158,7 @@ async fn main() -> Result<()> {
         min_trade_age_before_exit_secs: 1,
 
         enable_simulation_mode: false,
-        enable_backtest_mode: false,
+        enable_backtest_mode: true,
 
         backtest_starting_balance: 100_000.0,
 
@@ -877,18 +882,93 @@ async fn main() -> Result<()> {
         // RUN BACKTEST
         // ========================================================
 
-        data::historical::alpaca::runner::run_alpaca_backtest_feed(
-            &backtest_senders,
-            &tx_engine,
-        )
-        .await
-        .map_err(
-            |error| {
-                anyhow::anyhow!(
-                    error.to_string()
+        // Historical market-data selection is independent from both
+        // the execution venue and live market-data provider.
+        //
+        // Each historical provider produces canonical historical
+        // market data which is replayed deterministically through
+        // the backtest strategy/Engine pipeline.
+        match cfg.historical_data_provider {
+            // ====================================================
+            // ALPACA
+            // ====================================================
+
+            HistoricalDataProvider::Alpaca => {
+                data::historical::alpaca::runner::run_alpaca_backtest_feed(
+                    &backtest_senders,
+                    &tx_engine,
                 )
+                .await
+                .map_err(|error| anyhow::anyhow!(error.to_string()))?;
             }
-        )?;
+
+
+            // ====================================================
+            // SYNTHETIC
+            // ====================================================
+
+            HistoricalDataProvider::Synthetic => {
+                // TODO:
+                // Move the backtest date range into a dedicated backtest
+                // configuration so every historical provider uses the
+                // same configured start/end dates.
+                //
+                // Synthetic historical time is generated and replayed as
+                // fast as possible. It does not wait for real wall-clock
+                // time, allowing large historical ranges to be simulated
+                // efficiently.
+                let start =
+                    chrono::DateTime::parse_from_rfc3339(
+                        "2026-08-03T13:30:00Z"
+                    )?
+                    .with_timezone(&chrono::Utc);
+
+                let end =
+                    chrono::DateTime::parse_from_rfc3339(
+                        "2026-08-03T20:00:00Z"
+                    )?
+                    .with_timezone(&chrono::Utc);
+
+                let assets =
+                    data::live::synthetic::asset::default_synthetic_assets();
+
+                data::historical::synthetic::runner::run_synthetic_backtest_feed(
+                    assets,
+                    start,
+                    end,
+                    &backtest_senders,
+                    &tx_engine,
+                )
+                .await
+                .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+            }
+
+
+            // ====================================================
+            // HYPERLIQUID
+            // ====================================================
+
+            HistoricalDataProvider::Hyperliquid => {
+                return Err(
+                    anyhow::anyhow!(
+                        "Hyperliquid historical backtest provider is not connected yet"
+                    )
+                );
+            }
+
+
+            // ====================================================
+            // DATABENTO
+            // ====================================================
+
+            HistoricalDataProvider::Databento => {
+                return Err(
+                    anyhow::anyhow!(
+                        "Databento historical backtest provider is not connected yet"
+                    )
+                );
+            }
+        }
 
 
         // ========================================================
