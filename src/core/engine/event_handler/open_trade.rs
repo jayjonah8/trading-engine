@@ -9,6 +9,7 @@ use crate::core::{
         Order,
         OrderPurpose,
         OrderState,
+        TimeInForce,
         Venue,
     },
 
@@ -502,7 +503,20 @@ impl Engine {
                             }
                         }
 
-                        Venue::Alpaca | Venue::InteractiveBrokers => {
+                        // TEST:
+                        // Temporarily normalize Alpaca equity limit prices to cents.
+                        // Replace with canonical Alpaca instrument/order metadata
+                        // normalization once implemented.
+                        Venue::Alpaca => {
+                            Some(
+                                (raw_limit_px * 100.0).floor()
+                                    / 100.0
+                            )
+                        }
+
+                        // TEST:
+                        // Temporarily bypass canonical price normalization for IBKR.
+                        Venue::InteractiveBrokers => {
                             Some(raw_limit_px)
                         }
                     }
@@ -557,6 +571,26 @@ impl Engine {
                 }
 
                 None => None,
+            };
+
+
+        // TEST:
+        // Alpaca fractional equity orders require DAY time-in-force.
+        // Remove this override once Alpaca execution capability
+        // normalization is implemented.
+        let time_in_force =
+            match self.cfg.execution_venue {
+                Venue::Alpaca => {
+                    TimeInForce::Day
+                }
+
+                Venue::Hyperliquid => {
+                    intent.time_in_force
+                }
+
+                Venue::InteractiveBrokers => {
+                    intent.time_in_force
+                }
             };
 
 
@@ -616,7 +650,7 @@ impl Engine {
             side: intent.entry_side(),
             purpose: OrderPurpose::Entry,
             order_type: intent.order_type,
-            time_in_force: intent.time_in_force,
+            time_in_force,
             quantity,
             limit_px,
             stop_px,

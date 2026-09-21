@@ -413,6 +413,7 @@ impl Engine {
         let order_type =
             execution.order_type;
 
+            
         // TEST:
         // Alpaca fractional equity orders require DAY time-in-force.
         // Remove this override once Alpaca execution capability
@@ -423,14 +424,18 @@ impl Engine {
                     TimeInForce::Day
                 }
 
-                Venue::Hyperliquid
-                | Venue::InteractiveBrokers => {
+                Venue::Hyperliquid => {
+                    execution.time_in_force
+                }
+
+                Venue::InteractiveBrokers => {
                     execution.time_in_force
                 }
             };
         // older original
         // let time_in_force =
         //     execution.time_in_force;
+
 
         let limit_px =
             execution.limit_px;
