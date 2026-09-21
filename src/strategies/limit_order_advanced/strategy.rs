@@ -222,7 +222,7 @@ impl LimitOrderAdvancedStrategy {
             // Number of resting buys AND resting sells per asset.
             //
             // 1 = 1 buy + 1 sell + 1 marketable buy = 3 total entry orders.
-            resting_orders_per_side: 1,
+            resting_orders_per_side: 2,
 
             // 3% spacing:
             //

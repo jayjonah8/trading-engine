@@ -748,8 +748,8 @@ async fn main() -> Result<()> {
         // StrategyKind::Base,
         // StrategyKind::MeanReversion,
         // StrategyKind::MarketOrder,
-        StrategyKind::LimitOrder,
-        // StrategyKind::LimitOrderAdvanced,
+        // StrategyKind::LimitOrder,
+        StrategyKind::LimitOrderAdvanced,
     ];
 
 
