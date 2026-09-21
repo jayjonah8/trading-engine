@@ -129,6 +129,7 @@ struct AlpacaQuoteMessage {
 pub async fn run_alpaca_feed(
     cfg: Config,
     tx_master: UnboundedSender<AppEventEnvelope>,
+    symbols: Vec<String>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
     // ============================================================
@@ -145,16 +146,20 @@ pub async fn run_alpaca_feed(
     let real_stream_url = env::var("ALPACA_REAL_STREAM_URL")?;
     let fake_stream_url = env::var("ALPACA_FAKE_STREAM_URL")?;
 
-    let (alpaca_stream, symbol) = if fake_mode {
-        (fake_stream_url, "FAKEPACA".to_string())
+    let (alpaca_stream, symbols) = if fake_mode {
+        (fake_stream_url, vec!["FAKEPACA".to_string()])
     } else {
-        (real_stream_url, "AAPL".to_string())
+        (real_stream_url, symbols)
     };
 
+    if symbols.is_empty() {
+        return Err("Alpaca market-data feed requires at least one symbol".into());
+    }
+
     println!(
-        "[ALPACA MARKET] mode={} | symbol={}",
+        "[ALPACA MARKET] mode={} | symbols={:?}",
         if fake_mode { "FAKE" } else { "REAL" },
-        symbol
+        symbols,
     );
 
 
@@ -162,8 +167,8 @@ pub async fn run_alpaca_feed(
     // CANDLE MANAGER
     // ============================================================
 
-    // Uses exactly the same candle configuration as the other live
-    // providers and historical backtest candle construction.
+    // One CandleManager can maintain independent candle state for all
+    // subscribed symbols and configured timeframes.
     let candle_config = CandleConfig::default();
     let mut candle_manager = CandleManager::new(&candle_config.timeframes);
 
@@ -193,8 +198,8 @@ pub async fn run_alpaca_feed(
 
     loop {
         println!(
-            "[ALPACA MARKET] connecting | symbol={}",
-            symbol
+            "[ALPACA MARKET] connecting | symbols={:?}",
+            symbols
         );
 
 
@@ -207,7 +212,7 @@ pub async fn run_alpaca_feed(
                 &alpaca_stream,
                 &api_key,
                 &api_secret,
-                &symbol,
+                &symbols,
             )
             .await
             {
@@ -224,12 +229,12 @@ pub async fn run_alpaca_feed(
                         "🚨 ALPACA MARKET DATA ERROR – `{}`\n\
                         Market-data WebSocket startup failed\n\
                         Feed: `AlpacaMarketData`\n\
-                        Symbol: `{}`\n\
+                        Symbols: `{:?}`\n\
                         Error: `{}`\n\
                         Retry: `{}s`\n\
                         Time: `{}`",
                         get_bot_name(),
-                        symbol,
+                        symbols,
                         error,
                         backoff_secs,
                         get_local_timestamp(),
@@ -260,25 +265,25 @@ pub async fn run_alpaca_feed(
         // ========================================================
 
         println!(
-            "[ALPACA MARKET] connected and subscribed | symbol={}",
-            symbol
+            "[ALPACA MARKET] connected and subscribed | symbols={:?}",
+            symbols
         );
 
         if has_connected_once {
             println!(
-                "[ALPACA MARKET] reconnected | symbol={}",
-                symbol
+                "[ALPACA MARKET] reconnected | symbols={:?}",
+                symbols
             );
 
             let remote_message = format!(
                 "✅ ALPACA MARKET DATA RECONNECTED – `{}`\n\
                 Market-data WebSocket connection restored\n\
                 Feed: `AlpacaMarketData`\n\
-                Symbol: `{}`\n\
+                Symbols: `{:?}`\n\
                 Status: `Connected and subscribed`\n\
                 Time: `{}`",
                 get_bot_name(),
-                symbol,
+                symbols,
                 get_local_timestamp(),
             );
 
@@ -618,12 +623,12 @@ pub async fn run_alpaca_feed(
             "🔌 ALPACA MARKET DATA DISCONNECTED – `{}`\n\
             Market-data WebSocket connection lost\n\
             Feed: `AlpacaMarketData`\n\
-            Symbol: `{}`\n\
+            Symbols: `{:?}`\n\
             Action: `Reconnecting`\n\
             Retry: `{}s`\n\
             Time: `{}`",
             get_bot_name(),
-            symbol,
+            symbols,
             backoff_secs,
             get_local_timestamp(),
         );

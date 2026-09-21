@@ -49,11 +49,12 @@ pub(crate) const MAX_BACKOFF_SECS: u64 = 10;
 /// 1. Connect to the configured Alpaca market-data endpoint.
 /// 2. Send Alpaca authentication credentials.
 /// 3. Wait for Alpaca to confirm authentication.
-/// 4. Subscribe to trades and quotes for the configured symbol.
-/// 5. Wait for Alpaca to confirm the requested subscriptions.
+/// 4. Subscribe to trades and quotes for all configured symbols.
+/// 5. Wait for Alpaca to confirm all requested subscriptions.
 ///
 /// The function only returns after the market-data connection is fully
-/// authenticated and the requested subscriptions have been confirmed.
+/// authenticated and every requested trade/quote subscription has been
+/// confirmed.
 ///
 /// This function does not own long-running reconnection policy. If the
 /// returned WebSocket later disconnects, the market-data supervisor should
@@ -65,8 +66,19 @@ pub(crate) async fn connect_alpaca_market_data_ws(
     ws_url: &str,
     api_key: &str,
     api_secret: &str,
-    symbol: &str,
+    symbols: &[String],
 ) -> anyhow::Result<AlpacaMarketDataWebSocket> {
+
+    // ============================================================
+    // VALIDATE SYMBOLS
+    // ============================================================
+
+    if symbols.is_empty() {
+        anyhow::bail!(
+            "Alpaca market-data WebSocket requires at least one symbol"
+        );
+    }
+
 
     // ============================================================
     // CONNECT
@@ -120,8 +132,8 @@ pub(crate) async fn connect_alpaca_market_data_ws(
 
     let subscription = json!({
         "action": "subscribe",
-        "trades": [symbol],
-        "quotes": [symbol],
+        "trades": symbols,
+        "quotes": symbols,
     });
 
     ws_stream
@@ -139,7 +151,7 @@ pub(crate) async fn connect_alpaca_market_data_ws(
 
     wait_for_subscription(
         &mut ws_stream,
-        symbol,
+        symbols,
     )
     .await?;
 
@@ -213,14 +225,14 @@ async fn wait_for_authentication(
 // WAIT FOR SUBSCRIPTION
 // ============================================================
 
-/// Waits until Alpaca confirms both the trade and quote subscription
-/// for the requested symbol.
+/// Waits until Alpaca confirms both trade and quote subscriptions
+/// for every requested symbol.
 ///
-/// The connection is not considered ready until both requested streams
-/// appear in Alpaca's subscription acknowledgement.
+/// The connection is not considered ready until every configured symbol
+/// appears in both Alpaca subscription acknowledgement lists.
 async fn wait_for_subscription(
     ws_stream: &mut AlpacaMarketDataWebSocket,
-    symbol: &str,
+    symbols: &[String],
 ) -> anyhow::Result<()> {
     tokio::time::timeout(
         Duration::from_secs(10),
@@ -238,24 +250,34 @@ async fn wait_for_subscription(
                         .and_then(Value::as_str)
                     {
                         Some("subscription") => {
-                            let trades_ok =
+                            let subscribed_trades =
                                 message
                                     .get("trades")
-                                    .and_then(Value::as_array)
-                                    .map(|symbols| {
-                                        symbols.iter().any(|value| {
-                                            value.as_str() == Some(symbol)
+                                    .and_then(Value::as_array);
+
+                            let subscribed_quotes =
+                                message
+                                    .get("quotes")
+                                    .and_then(Value::as_array);
+
+                            let trades_ok =
+                                subscribed_trades
+                                    .map(|subscribed| {
+                                        symbols.iter().all(|symbol| {
+                                            subscribed.iter().any(|value| {
+                                                value.as_str() == Some(symbol.as_str())
+                                            })
                                         })
                                     })
                                     .unwrap_or(false);
 
                             let quotes_ok =
-                                message
-                                    .get("quotes")
-                                    .and_then(Value::as_array)
-                                    .map(|symbols| {
-                                        symbols.iter().any(|value| {
-                                            value.as_str() == Some(symbol)
+                                subscribed_quotes
+                                    .map(|subscribed| {
+                                        symbols.iter().all(|symbol| {
+                                            subscribed.iter().any(|value| {
+                                                value.as_str() == Some(symbol.as_str())
+                                            })
                                         })
                                     })
                                     .unwrap_or(false);

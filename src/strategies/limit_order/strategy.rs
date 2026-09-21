@@ -237,7 +237,7 @@ impl LimitOrderStrategy {
             first_trade_delay: Duration::from_secs(10),
             resting_duration: Duration::from_secs(15),
             repeat_delay: Duration::from_secs(15),
-            max_cycles_per_asset: 1,
+            max_cycles_per_asset: 3,
             started_at: Instant::now(),
             asset_state,
         }

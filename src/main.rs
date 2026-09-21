@@ -747,8 +747,8 @@ async fn main() -> Result<()> {
     let enabled = vec![
         // StrategyKind::Base,
         // StrategyKind::MeanReversion,
-        StrategyKind::MarketOrder,
-        // StrategyKind::LimitOrder,
+        // StrategyKind::MarketOrder,
+        StrategyKind::LimitOrder,
         // StrategyKind::LimitOrderAdvanced,
     ];
 
@@ -1025,6 +1025,7 @@ async fn main() -> Result<()> {
         // ========================================================
 
         let market_data_cfg = cfg.clone();
+        let market_data_symbols = market_data_cfg.symbols.clone();
 
 
         // Select the live market-data provider independently from the
@@ -1047,9 +1048,9 @@ async fn main() -> Result<()> {
 
             LiveMarketDataProvider::Hyperliquid => {
                 data::live::hyperliquid::market_data::run_hyperliquid_feed(
-                    market_data_cfg.clone(),
+                    market_data_cfg,
                     tx_master,
-                    market_data_cfg.symbols.clone(),
+                    market_data_symbols,
                 )
                 .await
                 .map_err(|error| anyhow::anyhow!(error.to_string()))?;
@@ -1064,6 +1065,7 @@ async fn main() -> Result<()> {
                 data::live::alpaca::market_data::run_alpaca_feed(
                     market_data_cfg,
                     tx_master,
+                    market_data_symbols,
                 )
                 .await
                 .map_err(|error| anyhow::anyhow!(error.to_string()))?;
