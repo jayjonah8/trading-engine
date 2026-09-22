@@ -1,7 +1,6 @@
-#![allow(dead_code)]
-
 pub mod health;
 pub mod runtime;
+pub mod order_updates;
 
 pub use health::{
     wait_until_execution_ws_ready,
