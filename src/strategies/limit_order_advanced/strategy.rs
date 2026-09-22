@@ -217,12 +217,12 @@ impl LimitOrderAdvancedStrategy {
             rx_view,
             allowed_assets,
 
-            trade_amount_usd: 13.0,
+            trade_amount_usd: 100.0,
 
             // Number of resting buys AND resting sells per asset.
             //
             // 1 = 1 buy + 1 sell + 1 marketable buy = 3 total entry orders.
-            resting_orders_per_side: 2,
+            resting_orders_per_side: 1,
 
             // 3% spacing:
             //
@@ -246,7 +246,7 @@ impl LimitOrderAdvancedStrategy {
 
             repeat_delay: Duration::from_secs(10),
 
-            max_cycles_per_asset: 3,
+            max_cycles_per_asset: 1,
 
             started_at: Instant::now(),
             asset_state,
