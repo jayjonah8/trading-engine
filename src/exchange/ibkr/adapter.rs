@@ -8,6 +8,7 @@ use std::{
 use chrono::Utc;
 use ibapi::{
     orders::OrderUpdate,
+    register_timezone_alias,
     subscriptions::SubscriptionItem,
     Client,
 };
@@ -129,10 +130,38 @@ use crate::{
 pub async fn run_ibkr_adapter(
     address: String,
     client_id: i32,
+    timezone_name: String,
+    timezone_alias: String,
     mut rx_cmd: UnboundedReceiver<ExecCommand>,
     tx_evt: UnboundedSender<ExecEvent>,
     debug_mode: bool,
 ) {
+    // ============================================================
+    // TIMEZONE
+    // ============================================================
+
+    // TWS / IB Gateway may report a timezone name that is not directly
+    // recognized by the timezone parser used by the IBKR SDK.
+    //
+    // The alias must be registered BEFORE Client::connect() because the
+    // connection handshake itself can contain the configured TWS timezone.
+    //
+    // Keep this configurable rather than hardcoding a particular timezone.
+    //
+    // Current paper TWS example:
+    //
+    //     timezone_name  = "Hawaii-Aleutian Standard Time"
+    //     timezone_alias = "Pacific/Honolulu"
+    //
+    // TODO:
+    // Move these values into canonical IBKR configuration once exchange
+    // configuration is centralized.
+    register_timezone_alias(
+        &timezone_name,
+        &timezone_alias,
+    );
+
+
     // ============================================================
     // CONNECT
     // ============================================================
@@ -154,7 +183,10 @@ pub async fn run_ibkr_adapter(
     print_log(
         debug_mode,
         true,
-        format!("[IBKR ADAPTER] CONNECTED | address={} | client_id={}", address, client_id),
+        format!(
+            "[IBKR ADAPTER] CONNECTED | address={} | client_id={} | timezone={} -> {}",
+            address, client_id, timezone_name, timezone_alias,
+        ),
     );
 
 
@@ -165,7 +197,10 @@ pub async fn run_ibkr_adapter(
     // The execution WS uses the same persistent IBKR Client as command
     // submission/cancellation. It forwards raw IBKR order updates back into
     // this authoritative adapter loop.
-    let mut execution_ws = start_execution_ws(Arc::clone(&client), debug_mode);
+    let mut execution_ws = start_execution_ws(
+        Arc::clone(&client),
+        debug_mode,
+    );
 
 
     // ============================================================
@@ -188,7 +223,8 @@ pub async fn run_ibkr_adapter(
     // CORRELATION
     // ============================================================
 
-    let mut correlation = IbkrOrderCorrelation::new();
+    let mut correlation =
+        IbkrOrderCorrelation::new();
 
 
     // ============================================================
@@ -215,7 +251,8 @@ pub async fn run_ibkr_adapter(
     // TODO:
     // Before production hardening, add a bounded/expiry policy so permanently
     // uncorrelated external updates cannot remain in memory indefinitely.
-    let mut pending_updates: HashMap<i32, Vec<SubscriptionItem<OrderUpdate>>> = HashMap::new();
+    let mut pending_updates: HashMap<i32, Vec<SubscriptionItem<OrderUpdate>>> =
+        HashMap::new();
 
 
     // ============================================================
@@ -267,7 +304,9 @@ pub async fn run_ibkr_adapter(
                     ExecCommand::CancelOrder { venue: _, order_id } => {
                         // Cancellation requires IBKR's native order ID.
                         // Resolve it from adapter-owned correlation first.
-                        let Some(order_ref) = correlation.get_by_order_id(order_id).copied() else {
+                        let Some(order_ref) =
+                            correlation.get_by_order_id(order_id).copied()
+                        else {
                             let _ = tx_evt.send(ExecEvent::Error {
                                 order_id: Some(order_id),
                                 message: "IBKR cancellation failed: order correlation not found".to_string(),
@@ -303,7 +342,10 @@ pub async fn run_ibkr_adapter(
                         print_log(
                             debug_mode,
                             true,
-                            format!("[IBKR ADAPTER] REPLACE NOT IMPLEMENTED | order_id={}", order_id),
+                            format!(
+                                "[IBKR ADAPTER] REPLACE NOT IMPLEMENTED | order_id={}",
+                                order_id,
+                            ),
                         );
                     }
                 }
@@ -320,7 +362,10 @@ pub async fn run_ibkr_adapter(
                     // 1. ESTABLISH CORRELATION
                     // ------------------------------------------------
 
-                    correlation.insert(result.order_id, result.ibkr_order_id);
+                    correlation.insert(
+                        result.order_id,
+                        result.ibkr_order_id,
+                    );
 
                     print_log(
                         debug_mode,
@@ -341,13 +386,17 @@ pub async fn run_ibkr_adapter(
                     //
                     // Removing the Vec also guarantees each buffered update is
                     // replayed only once from this buffer.
-                    if let Some(updates) = pending_updates.remove(&result.ibkr_order_id) {
+                    if let Some(updates) =
+                        pending_updates.remove(&result.ibkr_order_id)
+                    {
                         print_log(
                             debug_mode,
                             true,
                             format!(
                                 "[IBKR ADAPTER] REPLAYING BUFFERED UPDATES | order_id={} | ibkr_order_id={} | count={}",
-                                result.order_id, result.ibkr_order_id, updates.len(),
+                                result.order_id,
+                                result.ibkr_order_id,
+                                updates.len(),
                             ),
                         );
 
@@ -378,13 +427,17 @@ pub async fn run_ibkr_adapter(
                 // 1. EXTRACT NATIVE ORDER ID WHEN AVAILABLE
                 // ------------------------------------------------
 
-                if let Some(ibkr_order_id) = get_ibkr_order_id(&item) {
-
+                if let Some(ibkr_order_id) =
+                    get_ibkr_order_id(&item)
+                {
                     // ------------------------------------------------
                     // 2. CORRELATION NOT READY -> BUFFER
                     // ------------------------------------------------
 
-                    if correlation.get_by_ibkr_order_id(ibkr_order_id).is_none() {
+                    if correlation
+                        .get_by_ibkr_order_id(ibkr_order_id)
+                        .is_none()
+                    {
                         print_log(
                             debug_mode,
                             true,
@@ -398,7 +451,10 @@ pub async fn run_ibkr_adapter(
                         //
                         // The update will be replayed when the corresponding
                         // IbkrSubmissionResult establishes correlation.
-                        pending_updates.entry(ibkr_order_id).or_default().push(item);
+                        pending_updates
+                            .entry(ibkr_order_id)
+                            .or_default()
+                            .push(item);
 
                         continue;
                     }
@@ -445,12 +501,28 @@ pub async fn run_ibkr_adapter(
 ///
 /// CommissionReport does not directly expose the order ID in the currently
 /// used mapping path, so it passes directly to the mapper.
-fn get_ibkr_order_id(item: &SubscriptionItem<OrderUpdate>) -> Option<i32> {
+fn get_ibkr_order_id(
+    item: &SubscriptionItem<OrderUpdate>,
+) -> Option<i32> {
     match item {
-        SubscriptionItem::Data(OrderUpdate::OpenOrder(data)) => Some(data.order_id),
-        SubscriptionItem::Data(OrderUpdate::OrderStatus(status)) => Some(status.order_id),
-        SubscriptionItem::Data(OrderUpdate::ExecutionData(data)) => Some(data.execution.order_id),
-        SubscriptionItem::Data(OrderUpdate::CommissionReport(_)) => None,
-        SubscriptionItem::Notice(notice) => notice.request_id,
+        SubscriptionItem::Data(OrderUpdate::OpenOrder(data)) => {
+            Some(data.order_id)
+        }
+
+        SubscriptionItem::Data(OrderUpdate::OrderStatus(status)) => {
+            Some(status.order_id)
+        }
+
+        SubscriptionItem::Data(OrderUpdate::ExecutionData(data)) => {
+            Some(data.execution.order_id)
+        }
+
+        SubscriptionItem::Data(OrderUpdate::CommissionReport(_)) => {
+            None
+        }
+
+        SubscriptionItem::Notice(notice) => {
+            notice.request_id
+        }
     }
 }

@@ -438,11 +438,29 @@ impl Engine {
                 }
 
                 // TEST:
-                // Temporarily bypass canonical quantity normalization for IBKR.
+                // IBKR equity API testing currently uses whole-share quantities.
+                //
+                // Temporarily floor the Engine's requested quantity to a whole number.
+                // Replace this with canonical IBKR InstrumentState / venue capability
+                // normalization once IBKR behavior has been fully tested.
                 Venue::InteractiveBrokers => {
-                    raw_quantity
+                    raw_quantity.floor()
                 }
             };
+
+        if !quantity.is_finite() || quantity <= 0.0 {
+            print_log(
+                self.debug_mode,
+                true,
+                format!(
+                    "[ENGINE] OPEN TRADE REJECTED | strategy={} | symbol={} | raw_quantity={} | normalized_quantity={}",
+                    intent.strategy_id, intent.symbol, raw_quantity, quantity,
+                ),
+            );
+
+            return;
+        }
+
 
         // ============================================================
         // LIMIT PRICE

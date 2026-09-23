@@ -74,6 +74,10 @@ use crate::exchange::{
         pollers::run_hyperliquid_meta_poller,
     },
 
+    ibkr::{
+        adapter::run_ibkr_adapter,
+    },
+
     router::{
         run_execution_router,
         ExecutionRoutes,
@@ -110,7 +114,7 @@ async fn main() -> Result<()> {
         // EXECUTION / MARKET DATA
         // ============================================================
 
-        execution_venue: Venue::Alpaca,
+        execution_venue: Venue::InteractiveBrokers,
 
         // Live market data is intentionally independent from execution.
         live_market_data_provider: LiveMarketDataProvider::Alpaca,
@@ -559,21 +563,13 @@ async fn main() -> Result<()> {
     );
 
 
-    // ============================================================
-    // FUTURE IBKR EXECUTION ROUTE
-    // ============================================================
+    let (tx_ibkr_exec, rx_ibkr_exec) =
+        mpsc::unbounded_channel::<ExecCommand>();
 
-    // TODO:
-    // Add once the IBKR execution adapter is implemented against the
-    // canonical execution architecture.
-    //
-    // let (tx_ibkr_exec, rx_ibkr_exec) =
-    //     mpsc::unbounded_channel::<ExecCommand>();
-    //
-    // execution_routes.register(
-    //     Venue::InteractiveBrokers,
-    //     tx_ibkr_exec,
-    // );
+    execution_routes.register(
+        Venue::InteractiveBrokers,
+        tx_ibkr_exec,
+    );
 
 
     // ============================================================
@@ -678,6 +674,62 @@ async fn main() -> Result<()> {
         );
     }
 
+    // ============================================================
+    // START IBKR EXECUTION ADAPTER
+    // ============================================================
+    //
+    // Engine
+    //     -> tx_exec
+    //     -> ExecutionRouter
+    //     -> tx_ibkr_exec
+    //     -> IBKRAdapter
+    //     -> TWS / IB Gateway
+    //     -> IBKR
+    //
+    // IBKR order updates
+    //     -> IBKRAdapter
+    //     -> tx_exec_evt
+    //     -> Engine
+    //
+    // Live execution adapters do not run during simulation or historical
+    // backtesting.
+    if !cfg.enable_backtest_mode
+        && !cfg.enable_simulation_mode
+        && cfg.execution_venue == Venue::InteractiveBrokers
+    {
+        let tx_exec_evt = tx_exec_evt.clone();
+
+        // TEST:
+        // Temporary IBKR connection configuration while proving the adapter.
+        //
+        // TODO:
+        // Move IBKR address/client ID into canonical application/exchange
+        // configuration after the adapter lifecycle has been fully tested.
+        let address = "127.0.0.1:7497".to_string();
+        let client_id = 200;
+
+        // TEST:
+        // Temporary TWS timezone mapping.
+        // Move into canonical IBKR configuration later.
+        let timezone_name = "Hawaii-Aleutian Standard Time".to_string();
+        let timezone_alias = "Pacific/Honolulu".to_string();
+
+        tokio::spawn(
+            async move {
+                run_ibkr_adapter(
+                    address,
+                    client_id,
+                    timezone_name,
+                    timezone_alias,
+                    rx_ibkr_exec,
+                    tx_exec_evt,
+                    true,
+                )
+                .await;
+            }
+        );
+    }
+
 
     // ============================================================
     // LIVE MARKET DATA -> ENGINE PRICE TICKS
@@ -747,9 +799,9 @@ async fn main() -> Result<()> {
     let enabled = vec![
         // StrategyKind::Base,
         // StrategyKind::MeanReversion,
-        // StrategyKind::MarketOrder,
+        StrategyKind::MarketOrder,
         // StrategyKind::LimitOrder,
-        StrategyKind::LimitOrderAdvanced,
+        // StrategyKind::LimitOrderAdvanced,
     ];
 
 
