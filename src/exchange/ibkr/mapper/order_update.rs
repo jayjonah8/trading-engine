@@ -21,13 +21,19 @@ use crate::{
 // HANDLE IBKR ORDER UPDATE
 // ============================================================
 
-/// Translates one IBKR order-update stream item into canonical Engine
-/// execution events.
+/// Translates one IBKR order-update stream item into canonical execution events.
 ///
-/// Individual executions come exclusively from `ExecutionData`.
+/// Important IBKR behavior confirmed from live PAPER testing:
 ///
-/// `OrderStatus.filled`, `cumulative_quantity`, and `average_price` are
-/// cumulative values and must never be converted into individual Fills.
+/// - `OpenOrder` and `OrderStatus` may be emitted repeatedly.
+/// - `PreSubmitted` can represent a valid working order, including an order
+///   waiting for the market to open.
+/// - `OrderStatus.filled` is cumulative and must not create canonical Fills.
+/// - Every individual execution arrives through `ExecutionData`.
+/// - Partial fills produce separate `ExecutionData` events with unique
+///   execution IDs.
+/// - `CommissionReport` may arrive after its corresponding execution/order
+///   lifecycle event.
 pub fn handle_order_update(
     item: SubscriptionItem<OrderUpdate>,
     correlation: &IbkrOrderCorrelation,
@@ -35,10 +41,6 @@ pub fn handle_order_update(
     debug_mode: bool,
 ) {
     match item {
-        // ========================================================
-        // ORDER DATA
-        // ========================================================
-
         SubscriptionItem::Data(update) => {
             match update {
                 OrderUpdate::OpenOrder(data) => {
@@ -55,8 +57,8 @@ pub fn handle_order_update(
                         ),
                     );
 
-                    // OpenOrder is useful venue state/diagnostic information.
-                    // OrderStatus remains authoritative for canonical lifecycle.
+                    // Diagnostic venue state only.
+                    // OrderStatus drives canonical order lifecycle events.
                 }
 
                 OrderUpdate::OrderStatus(status) => {
@@ -77,24 +79,19 @@ pub fn handle_order_update(
                         ),
                     );
 
+                    // Commission reports are asynchronous and may arrive after
+                    // the execution/order has otherwise completed.
+                    //
                     // TODO:
-                    // Correlate CommissionReport.execution_id with
-                    // Execution.execution_id if canonical Fill fees are later
-                    // updated/accounted for after execution.
+                    // Correlate report.execution_id with the canonical Fill if
+                    // post-execution fee accounting is added.
                 }
             }
         }
 
-
-        // ========================================================
-        // ORDER NOTICE
-        // ========================================================
-
         SubscriptionItem::Notice(notice) => {
             let ts_ms = Utc::now().timestamp_millis();
-
-            let order_id = notice.request_id
-                .and_then(|ibkr_order_id| correlation.get_by_ibkr_order_id(ibkr_order_id));
+            let order_id = notice.request_id.and_then(|ibkr_order_id| correlation.get_by_ibkr_order_id(ibkr_order_id));
 
             print_log(
                 debug_mode,
@@ -123,8 +120,12 @@ pub fn handle_order_update(
                 });
             }
 
-            // Warnings/system/informational notices are logged but do not
+            // Warnings, system messages and informational notices do not
             // mutate canonical order state.
+            //
+            // Example confirmed from PAPER testing:
+            // warning 399 can indicate that a valid market order is being
+            // held until the next market open.
         }
     }
 }
@@ -144,11 +145,6 @@ fn handle_order_status(
         return;
     };
 
-    // Preserve IBKR's venue-side order ID before matching on status.status.
-    //
-    // OrderStatusKind::Unknown contains its own String value, so using the
-    // variable name `status` inside that match arm would otherwise shadow
-    // this OrderStatus structure.
     let ibkr_order_id = status.order_id;
     let ts_ms = Utc::now().timestamp_millis();
 
@@ -169,67 +165,36 @@ fn handle_order_status(
     );
 
     match status.status {
-        // ========================================================
-        // PRE-WORKING
-        // ========================================================
-
         OrderStatusKind::ApiPending |
         OrderStatusKind::PendingSubmit => {
             // Engine already owns PendingSubmit.
         }
 
-
-        // ========================================================
-        // WORKING
-        // ========================================================
-
         OrderStatusKind::PreSubmitted |
         OrderStatusKind::Submitted => {
+            // Both are valid working states.
+            //
+            // PreSubmitted may persist while an order waits for the market
+            // to open, and may also appear during an actively filling order.
             let _ = tx_evt.send(ExecEvent::OrderWorking { order_id, ts_ms });
         }
 
-
-        // ========================================================
-        // PENDING CANCEL
-        // ========================================================
-
         OrderStatusKind::PendingCancel => {
             // Engine already owns PendingCancel after issuing CancelOrder.
-            //
-            // Fills may still arrive before cancellation is confirmed.
+            // Executions may still arrive before cancellation completes.
         }
-
-
-        // ========================================================
-        // CANCELED
-        // ========================================================
 
         OrderStatusKind::ApiCancelled |
         OrderStatusKind::Cancelled => {
             let _ = tx_evt.send(ExecEvent::OrderCanceled { order_id, ts_ms });
         }
 
-
-        // ========================================================
-        // FILLED
-        // ========================================================
-
         OrderStatusKind::Filled => {
-            // IMPORTANT:
+            // Do not emit a Fill here.
             //
-            // Do NOT create a Fill here.
-            //
-            // Individual canonical Fills come exclusively from ExecutionData.
-            //
-            // OrderStatus.filled is cumulative order state and using it here
-            // would double count executions already emitted through
-            // ExecutionData.
+            // `filled` is cumulative. Individual executions are emitted
+            // exclusively from ExecutionData.
         }
-
-
-        // ========================================================
-        // INACTIVE
-        // ========================================================
 
         OrderStatusKind::Inactive => {
             let _ = tx_evt.send(ExecEvent::OrderRejected {
@@ -238,11 +203,6 @@ fn handle_order_status(
                 ts_ms,
             });
         }
-
-
-        // ========================================================
-        // UNKNOWN
-        // ========================================================
 
         OrderStatusKind::Unknown(unknown_status) => {
             print_log(
@@ -274,35 +234,15 @@ fn handle_execution(
         return;
     };
 
-
-    // ============================================================
-    // SIDE
-    // ============================================================
-
     let side = match execution.side {
         ExecutionSide::Bought => Side::Buy,
         ExecutionSide::Sold => Side::Sell,
     };
 
-
-    // ============================================================
-    // TIMESTAMP
-    // ============================================================
-
     // TODO:
-    // Capture and inspect a real IBKR `Execution.time` value from TWS.
-    //
-    // Once its runtime format is confirmed, parse `execution.time` into the
-    // canonical venue execution timestamp instead of using local receipt time.
-    //
-    // Until then, receipt time is intentionally isolated here so replacing it
-    // later does not affect Fill mapping or Engine execution accounting.
+    // Parse the confirmed IBKR execution.time format into the canonical
+    // execution timestamp. Receipt time is used until that is implemented.
     let ts_ms = Utc::now().timestamp_millis();
-
-
-    // ============================================================
-    // MAP EXECUTION -> FILL
-    // ============================================================
 
     let Some(fill) = map_ibkr_execution_to_fill(
         order_id,
@@ -316,11 +256,6 @@ fn handle_execution(
     ) else {
         return;
     };
-
-
-    // ============================================================
-    // LOG
-    // ============================================================
 
     print_log(
         debug_mode,
@@ -341,11 +276,6 @@ fn handle_execution(
             fill.ts_ms,
         ),
     );
-
-
-    // ============================================================
-    // EMIT CANONICAL FILL
-    // ============================================================
 
     let _ = tx_evt.send(ExecEvent::Fill { fill });
 }

@@ -6,9 +6,7 @@ use tokio::sync::mpsc::UnboundedSender;
 
 use crate::{
     core::execution::{ExecEvent, Order, Side},
-
     exchange::ibkr::submission_result::IbkrSubmissionResult,
-
     shared::print_log,
 };
 
@@ -19,25 +17,9 @@ use crate::{
 
 /// Submits a canonical market order to IBKR.
 ///
-/// IBKR execution behavior is represented by:
-///
-///     symbol + side + quantity
-///
-/// IBKR returns its order ID after the request is successfully sent to TWS.
-///
-/// That IBKR order ID is returned to the authoritative adapter event loop
-/// through `IbkrSubmissionResult`, allowing the adapter to maintain:
-///
-///     Engine OrderId <-> IBKR order ID
-///
-/// without sharing mutable correlation state with this submission task.
-///
-/// IMPORTANT:
-///
-/// Successful `submit()` means the order was sent to TWS. It does not prove
-/// broker acceptance, routing, working state, or execution.
-///
-/// Those facts arrive asynchronously through the IBKR order update stream.
+/// A successful `submit()` returns IBKR's order ID but does not prove the
+/// order is working or filled. Authoritative lifecycle state arrives through
+/// the IBKR order-update stream.
 pub async fn handle_market_order(
     client: &Client,
     tx_evt: &UnboundedSender<ExecEvent>,
@@ -111,19 +93,6 @@ pub async fn handle_market_order(
         Ok(ibkr_order_id) => {
             let ibkr_order_id = ibkr_order_id.0;
 
-            // ----------------------------------------------------
-            // RETURN IBKR ORDER ID TO ADAPTER
-            // ----------------------------------------------------
-
-            // This submission task does not own or mutate
-            // IbkrOrderCorrelation.
-            //
-            // Return IBKR's assigned order ID to the authoritative adapter
-            // event loop. The adapter will perform:
-            //
-            //     correlation.insert(order.id, ibkr_order_id)
-            //
-            // This preserves single ownership of correlation state.
             if tx_submission_result.send(IbkrSubmissionResult {
                 order_id: order.id,
                 ibkr_order_id,
@@ -133,8 +102,7 @@ pub async fn handle_market_order(
                     true,
                     format!(
                         "[IBKR ADAPTER] MARKET CORRELATION RESULT FAILED | order_id={} | ibkr_order_id={}",
-                        order.id,
-                        ibkr_order_id,
+                        order.id, ibkr_order_id,
                     ),
                 );
 
@@ -147,39 +115,15 @@ pub async fn handle_market_order(
                 return;
             }
 
-
-            // ----------------------------------------------------
-            // SENT TO TWS
-            // ----------------------------------------------------
-
-            // Do NOT emit ExecEvent::OrderAccepted here.
-            //
-            // IBKR returning an order ID only confirms that the request was
-            // successfully submitted to TWS.
-            //
-            // The IBKR order update stream remains authoritative for:
-            //
-            // - acceptance
-            // - working state
-            // - fills
-            // - cancellation
-            // - rejection
             print_log(
                 debug_mode,
                 true,
                 format!(
                     "[IBKR ADAPTER] MARKET SENT | order_id={} | symbol={} | ibkr_order_id={}",
-                    order.id,
-                    order.symbol,
-                    ibkr_order_id,
+                    order.id, order.symbol, ibkr_order_id,
                 ),
             );
         }
-
-
-        // ========================================================
-        // SUBMISSION ERROR
-        // ========================================================
 
         Err(error) => {
             print_log(
@@ -187,9 +131,7 @@ pub async fn handle_market_order(
                 true,
                 format!(
                     "[IBKR ADAPTER] MARKET SUBMIT ERROR | order_id={} | symbol={} | error={:?}",
-                    order.id,
-                    order.symbol,
-                    error,
+                    order.id, order.symbol, error,
                 ),
             );
 

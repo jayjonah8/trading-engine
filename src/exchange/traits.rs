@@ -1,0 +1,1 @@
+// May add traits in the future as more adapters are added to the engine

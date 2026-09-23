@@ -32,8 +32,8 @@ use crate::{
 ///
 /// TODO:
 /// `ts_ms` currently comes from local receipt time in `order_update.rs`.
-/// Once we capture a real `Execution.time` value from TWS, parse the IBKR
-/// execution timestamp and pass that venue timestamp here instead.
+/// Once the exact runtime format of `Execution.time` is confirmed, parse the
+/// IBKR execution timestamp there and pass that venue timestamp here instead.
 pub fn map_ibkr_execution_to_fill(
     order_id: OrderId,
     symbol: String,

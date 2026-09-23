@@ -1,8 +1,11 @@
 #![allow(dead_code)]
 
+use std::sync::Arc;
+
 use ibapi::{
     orders::OrderUpdate,
     subscriptions::SubscriptionItem,
+    Client,
 };
 use tokio::sync::{
     mpsc::{self, UnboundedReceiver},
@@ -11,7 +14,7 @@ use tokio::sync::{
 
 use crate::exchange::ibkr::execution_ws::{
     health::ExecutionWsHealth,
-    order_updates::run_ibkr_order_updates,
+    order_updates_ws::run_ibkr_order_updates,
 };
 
 
@@ -37,28 +40,20 @@ pub struct IbkrExecutionWs {
 // START EXECUTION WS
 // ============================================================
 
-/// Starts persistent IBKR execution monitoring.
+/// Starts persistent IBKR execution monitoring using the adapter's shared
+/// TWS / IB Gateway client.
 ///
-/// The spawned supervisor owns:
-///
-/// - TWS / IB Gateway connection lifecycle
-/// - IBKR API handshake/authentication
-/// - order-update stream creation
-/// - execution-monitoring health
-/// - automatic reconnection
-///
-/// Raw IBKR updates are forwarded to the adapter where they are mapped into
-/// canonical Engine `ExecEvent`s.
+/// The same IBKR client connection is used for execution monitoring and
+/// execution commands such as submit/cancel.
 pub fn start_execution_ws(
-    address: String,
-    client_id: i32,
+    client: Arc<Client>,
     debug_mode: bool,
 ) -> IbkrExecutionWs {
     let (tx_raw, raw_rx) = mpsc::unbounded_channel::<SubscriptionItem<OrderUpdate>>();
     let (health_tx, health_rx) = watch::channel(ExecutionWsHealth::Connecting);
 
     tokio::spawn(async move {
-        run_ibkr_order_updates(address, client_id, tx_raw, health_tx, debug_mode).await;
+        run_ibkr_order_updates(&client, tx_raw, health_tx, debug_mode).await;
     });
 
     IbkrExecutionWs { raw_rx, health_rx }

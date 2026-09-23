@@ -5,7 +5,6 @@ use tokio::sync::mpsc::UnboundedSender;
 
 use crate::{
     core::execution::{ExecEvent, Order, OrderType},
-
     exchange::ibkr::{
         commands::submit::{
             handle_limit_order,
@@ -25,39 +24,14 @@ use crate::{
 /// Routes a canonical Engine `Order` to the correct IBKR
 /// order-type-specific submit handler.
 ///
-/// The canonical Order remains venue-independent. Each submit handler owns
-/// the IBKR-specific translation into an `ibapi` order request.
+/// Each handler translates the canonical order into the corresponding IBKR
+/// request and submits it through the shared TWS / IB Gateway client.
 ///
-/// Submission flow:
+/// A successful `submit()` only means TWS returned an IBKR order ID.
+/// Authoritative lifecycle state comes from the order-update stream.
 ///
-/// Engine
-///   │
-///   ▼
-/// ExecCommand::SubmitOrder
-///   │
-///   ▼
-/// adapter.rs
-///   │
-///   ▼
-/// submit_order.rs
-///   │
-///   ├── Market ─────► market_order.rs
-///   ├── Limit ──────► limit_order.rs
-///   ├── StopMarket ─► stop_market_order.rs
-///   └── StopLimit ──► stop_limit_order.rs
-///                         │
-///                         ▼
-///                    IBKR / TWS
-///
-/// `submit()` returning an IBKR order ID proves that the request was sent to
-/// TWS, but does not prove that IBKR accepted, routed, or filled the order.
-///
-/// The returned IBKR order ID is sent back to the authoritative adapter event
-/// loop through `IbkrSubmissionResult` so adapter-local correlation can be
-/// updated without shared mutable state.
-///
-/// Authoritative lifecycle events are handled separately through the IBKR
-/// order update stream.
+/// The submission result is returned to the adapter event loop so it can
+/// establish canonical OrderId ↔ IBKR order ID correlation.
 pub async fn handle_submit_order(
     client: &Client,
     tx_evt: &UnboundedSender<ExecEvent>,
@@ -75,11 +49,11 @@ pub async fn handle_submit_order(
         }
 
         OrderType::StopMarket => {
-            handle_stop_market_order(client, tx_evt, order, debug_mode).await;
+            handle_stop_market_order(client, tx_evt, tx_submission_result, order, debug_mode).await;
         }
 
         OrderType::StopLimit => {
-            handle_stop_limit_order(client, tx_evt, order, debug_mode).await;
+            handle_stop_limit_order(client, tx_evt, tx_submission_result, order, debug_mode).await;
         }
     }
 }

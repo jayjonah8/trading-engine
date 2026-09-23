@@ -25,13 +25,13 @@ use crate::core::execution::Side;
 // This sends real orders to the configured IBKR PAPER account.
 //
 // Run:
-// cargo test test_ibkr_market_order_lifecycle -- --nocapture
+// cargo test test_lifecycle_ibkr_market_order -- --nocapture
 #[tokio::test]
-async fn test_ibkr_market_order_lifecycle() {
+async fn test_lifecycle_ibkr_market_order() {
     let address = "127.0.0.1:7497";
     let client_id = 109;
     let symbol = "AAPL";
-    let quantity = 1;
+    let quantity =60;
     let entry_side = Side::Buy;
     let exit_side = entry_side.opposite();
     let hold_secs = 5;

@@ -7,16 +7,15 @@ use tokio::sync::watch;
 // IBKR EXECUTION WS HEALTH
 // ============================================================
 
-/// Health state of the persistent IBKR execution connection.
+/// Health state of IBKR execution monitoring.
 ///
 /// `Ready` means:
 ///
-/// - TWS / IB Gateway connection is established
-/// - the IBKR API handshake/authentication succeeded
+/// - the shared TWS / IB Gateway client is connected
 /// - `order_update_stream()` was successfully created
 /// - execution monitoring is available
 ///
-/// New order submission and replacement should only be allowed while Ready.
+/// New order submission should only be allowed while Ready.
 ///
 /// Cancellation should remain available when possible because it is
 /// risk-reducing.
@@ -40,8 +39,8 @@ impl ExecutionWsHealth {
 
 /// Waits until IBKR execution monitoring becomes ready.
 ///
-/// The runtime owns connection/reconnection attempts. This function only
-/// observes health and returns once execution monitoring is available.
+/// This function only observes execution health and returns once monitoring
+/// is available.
 pub async fn wait_until_execution_ws_ready(
     health_rx: &mut watch::Receiver<ExecutionWsHealth>,
 ) -> Result<(), String> {

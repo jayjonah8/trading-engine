@@ -327,21 +327,21 @@ async fn run_limit_order_cancel_test(
 }
 
 // Run:
-// cargo test test_ibkr_limit_buy_cancel -- --nocapture
+// cargo test test_cancel_ibkr_limit_buy -- --nocapture
 //
 // $100 is intentionally far below the AAPL market so the order should
 // normally rest long enough for us to cancel it.
 #[tokio::test]
-async fn test_ibkr_limit_buy_cancel() {
+async fn test_cancel_ibkr_limit_buy() {
     run_limit_order_cancel_test("AAPL", 1, 100.00, Side::Buy, 110).await;
 }
 
 // Run:
-// cargo test test_ibkr_limit_sell_cancel -- --nocapture
+// cargo test test_cancel_ibkr_limit_sell -- --nocapture
 //
 // $500 is intentionally far above the AAPL market so the order should
 // normally rest long enough for us to cancel it.
 #[tokio::test]
-async fn test_ibkr_limit_sell_cancel() {
+async fn test_cancel_ibkr_limit_sell() {
     run_limit_order_cancel_test("AAPL", 1, 500.00, Side::Sell, 111).await;
 }
