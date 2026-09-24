@@ -148,12 +148,11 @@ async fn main() -> Result<()> {
 
         // ============================================================
         // RISK LIMITS
-        // ============================================================
-
-        max_active_trades: Some(10),
-        max_active_assets: Some(10),
-        max_active_trades_per_symbol: Some(10),
-        max_active_trades_per_strategy: Some(10),
+        // =========================================================20
+        max_active_trades: Some(20),
+        max_active_assets: Some(20),
+        max_active_trades_per_symbol: Some(20),
+        max_active_trades_per_strategy: Some(20),
 
         max_order_notional: Some(150_000.0),
         max_gross_notional: Some(150_000.0),
@@ -800,8 +799,8 @@ async fn main() -> Result<()> {
         // StrategyKind::Base,
         // StrategyKind::MeanReversion,
         // StrategyKind::MarketOrder,
-        StrategyKind::LimitOrder,
-        // StrategyKind::LimitOrderAdvanced,
+        // StrategyKind::LimitOrder,
+        StrategyKind::LimitOrderAdvanced,
     ];
 
 
