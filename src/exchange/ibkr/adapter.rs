@@ -15,7 +15,7 @@ use ibapi::{
 use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
 
 use crate::{
-    core::execution::{ExecCommand, ExecEvent},
+    core::execution::{ExecCommand, ExecEvent, Order},
     exchange::ibkr::{
         commands::{
             cancel_order::handle_cancel_order,
@@ -44,7 +44,10 @@ use crate::{
 //                 ┌──────────────┼──────────────┐
 //                 │              │              │
 //                 ▼              ▼              ▼
-//              Submit          Cancel       execution_ws
+//          Submit Queue        Cancel       execution_ws
+//                 │              │              │
+//                 ▼              │              │
+//       Submission Worker        │              │
 //                 │              │              │
 //                 └─────── Arc<Client> ─────────┘
 //                                │
@@ -53,6 +56,21 @@ use crate::{
 //                                │
 //                                ▼
 //                               IBKR
+//
+// ORDER SUBMISSION:
+//
+// IBKR submissions are intentionally serialized through one submission
+// worker. The engine remains fully concurrent and any number of orders may
+// remain active at IBKR simultaneously.
+//
+// Only the actual submit() operations are serialized:
+//
+//     Order A ─┐
+//     Order B ─┼─> submission queue -> submit A -> submit B -> submit C
+//     Order C ─┘
+//
+// This prevents concurrent IBKR submissions from racing native order-ID
+// allocation while leaving cancellation and execution processing concurrent.
 //
 // IBKR asynchronous updates:
 //
@@ -96,7 +114,7 @@ use crate::{
 // `submit().await` and the IBKR order-update stream are asynchronous.
 //
 // A fast IBKR update can theoretically reach this event loop before the
-// submission task's `IbkrSubmissionResult` has been processed:
+// submission worker's `IbkrSubmissionResult` has been processed:
 //
 //     ExecutionData(ibkr_order_id=7)
 //                  ↓
@@ -156,10 +174,7 @@ pub async fn run_ibkr_adapter(
     // TODO:
     // Move these values into canonical IBKR configuration once exchange
     // configuration is centralized.
-    register_timezone_alias(
-        &timezone_name,
-        &timezone_alias,
-    );
+    register_timezone_alias(&timezone_name, &timezone_alias);
 
 
     // ============================================================
@@ -197,20 +212,15 @@ pub async fn run_ibkr_adapter(
     // The execution WS uses the same persistent IBKR Client as command
     // submission/cancellation. It forwards raw IBKR order updates back into
     // this authoritative adapter loop.
-    let mut execution_ws = start_execution_ws(
-        Arc::clone(&client),
-        debug_mode,
-    );
+    let mut execution_ws = start_execution_ws(Arc::clone(&client), debug_mode);
 
 
     // ============================================================
     // SUBMISSION RESULTS
     // ============================================================
 
-    // Submission handlers run asynchronously.
-    //
-    // After IBKR's submit() returns its native order ID, the handler sends an
-    // IbkrSubmissionResult here so this adapter can establish:
+    // After IBKR's submit() returns its native order ID, the submission
+    // worker sends an IbkrSubmissionResult here so this adapter can establish:
     //
     //     canonical OrderId <-> IBKR order ID
     //
@@ -220,11 +230,46 @@ pub async fn run_ibkr_adapter(
 
 
     // ============================================================
+    // SERIALIZED ORDER SUBMISSION
+    // ============================================================
+
+    // IBKR order submission is intentionally processed by exactly one worker.
+    //
+    // This does NOT limit the number of simultaneously active IBKR orders.
+    // It only prevents multiple submit().await calls from racing each other
+    // while IBKR native order IDs are allocated.
+    //
+    // Cancellation and execution processing remain independent/concurrent.
+    let (tx_submit, mut rx_submit) = mpsc::unbounded_channel::<Order>();
+
+    let submit_client = Arc::clone(&client);
+    let submit_tx_evt = tx_evt.clone();
+    let submit_tx_submission_result = tx_submission_result.clone();
+
+    tokio::spawn(async move {
+        while let Some(order) = rx_submit.recv().await {
+            handle_submit_order(
+                &submit_client,
+                &submit_tx_evt,
+                &submit_tx_submission_result,
+                order,
+                debug_mode,
+            ).await;
+        }
+
+        print_log(
+            debug_mode,
+            true,
+            "[IBKR ADAPTER] SUBMISSION WORKER STOPPED".to_string(),
+        );
+    });
+
+
+    // ============================================================
     // CORRELATION
     // ============================================================
 
-    let mut correlation =
-        IbkrOrderCorrelation::new();
+    let mut correlation = IbkrOrderCorrelation::new();
 
 
     // ============================================================
@@ -251,8 +296,7 @@ pub async fn run_ibkr_adapter(
     // TODO:
     // Before production hardening, add a bounded/expiry policy so permanently
     // uncorrelated external updates cannot remain in memory indefinitely.
-    let mut pending_updates: HashMap<i32, Vec<SubscriptionItem<OrderUpdate>>> =
-        HashMap::new();
+    let mut pending_updates: HashMap<i32, Vec<SubscriptionItem<OrderUpdate>>> = HashMap::new();
 
 
     // ============================================================
@@ -276,24 +320,19 @@ pub async fn run_ibkr_adapter(
                     // ------------------------------------------------
 
                     ExecCommand::SubmitOrder { order } => {
-                        let client = Arc::clone(&client);
-                        let tx_evt = tx_evt.clone();
-                        let tx_submission_result = tx_submission_result.clone();
+                        let order_id = order.id;
 
-                        // Submission must not block the authoritative adapter
-                        // loop while waiting on TWS/IBKR.
+                        // Queue the order for the single IBKR submission worker.
                         //
-                        // The task returns the native IBKR order ID through
-                        // tx_submission_result after submit() succeeds.
-                        tokio::spawn(async move {
-                            handle_submit_order(
-                                &client,
-                                &tx_evt,
-                                &tx_submission_result,
-                                order,
-                                debug_mode,
-                            ).await;
-                        });
+                        // This keeps the authoritative adapter loop responsive
+                        // while guaranteeing submit() calls are serialized.
+                        if tx_submit.send(order).is_err() {
+                            let _ = tx_evt.send(ExecEvent::Error {
+                                order_id: Some(order_id),
+                                message: "IBKR submission worker closed".to_string(),
+                                ts_ms: Utc::now().timestamp_millis(),
+                            });
+                        }
                     }
 
 
@@ -304,9 +343,7 @@ pub async fn run_ibkr_adapter(
                     ExecCommand::CancelOrder { venue: _, order_id } => {
                         // Cancellation requires IBKR's native order ID.
                         // Resolve it from adapter-owned correlation first.
-                        let Some(order_ref) =
-                            correlation.get_by_order_id(order_id).copied()
-                        else {
+                        let Some(order_ref) = correlation.get_by_order_id(order_id).copied() else {
                             let _ = tx_evt.send(ExecEvent::Error {
                                 order_id: Some(order_id),
                                 message: "IBKR cancellation failed: order correlation not found".to_string(),
@@ -362,10 +399,7 @@ pub async fn run_ibkr_adapter(
                     // 1. ESTABLISH CORRELATION
                     // ------------------------------------------------
 
-                    correlation.insert(
-                        result.order_id,
-                        result.ibkr_order_id,
-                    );
+                    correlation.insert(result.order_id, result.ibkr_order_id);
 
                     print_log(
                         debug_mode,
@@ -386,9 +420,7 @@ pub async fn run_ibkr_adapter(
                     //
                     // Removing the Vec also guarantees each buffered update is
                     // replayed only once from this buffer.
-                    if let Some(updates) =
-                        pending_updates.remove(&result.ibkr_order_id)
-                    {
+                    if let Some(updates) = pending_updates.remove(&result.ibkr_order_id) {
                         print_log(
                             debug_mode,
                             true,
@@ -427,17 +459,12 @@ pub async fn run_ibkr_adapter(
                 // 1. EXTRACT NATIVE ORDER ID WHEN AVAILABLE
                 // ------------------------------------------------
 
-                if let Some(ibkr_order_id) =
-                    get_ibkr_order_id(&item)
-                {
+                if let Some(ibkr_order_id) = get_ibkr_order_id(&item) {
                     // ------------------------------------------------
                     // 2. CORRELATION NOT READY -> BUFFER
                     // ------------------------------------------------
 
-                    if correlation
-                        .get_by_ibkr_order_id(ibkr_order_id)
-                        .is_none()
-                    {
+                    if correlation.get_by_ibkr_order_id(ibkr_order_id).is_none() {
                         print_log(
                             debug_mode,
                             true,
@@ -451,10 +478,7 @@ pub async fn run_ibkr_adapter(
                         //
                         // The update will be replayed when the corresponding
                         // IbkrSubmissionResult establishes correlation.
-                        pending_updates
-                            .entry(ibkr_order_id)
-                            .or_default()
-                            .push(item);
+                        pending_updates.entry(ibkr_order_id).or_default().push(item);
 
                         continue;
                     }
@@ -505,24 +529,14 @@ fn get_ibkr_order_id(
     item: &SubscriptionItem<OrderUpdate>,
 ) -> Option<i32> {
     match item {
-        SubscriptionItem::Data(OrderUpdate::OpenOrder(data)) => {
-            Some(data.order_id)
-        }
-
-        SubscriptionItem::Data(OrderUpdate::OrderStatus(status)) => {
-            Some(status.order_id)
-        }
-
-        SubscriptionItem::Data(OrderUpdate::ExecutionData(data)) => {
-            Some(data.execution.order_id)
-        }
-
-        SubscriptionItem::Data(OrderUpdate::CommissionReport(_)) => {
-            None
-        }
-
-        SubscriptionItem::Notice(notice) => {
-            notice.request_id
-        }
+        SubscriptionItem::Data(OrderUpdate::OpenOrder(data)) => Some(data.order_id),
+        SubscriptionItem::Data(OrderUpdate::OrderStatus(status)) => Some(status.order_id),
+        SubscriptionItem::Data(OrderUpdate::ExecutionData(data)) => Some(data.execution.order_id),
+        SubscriptionItem::Data(OrderUpdate::CommissionReport(_)) => None,
+        SubscriptionItem::Notice(notice) => notice.request_id,
     }
 }
+
+
+
+
