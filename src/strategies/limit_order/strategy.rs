@@ -231,7 +231,7 @@ impl LimitOrderStrategy {
             tx_engine,
             rx_view,
             allowed_assets,
-            trade_amount_usd: 13.0,
+            trade_amount_usd: 500.0,
             direction: Direction::Long,
             limit_offset_percent: 5.0,
             first_trade_delay: Duration::from_secs(10),

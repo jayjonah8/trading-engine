@@ -533,9 +533,14 @@ impl Engine {
                         }
 
                         // TEST:
-                        // Temporarily bypass canonical price normalization for IBKR.
+                        // Temporarily normalize IBKR equity limit prices to cents.
+                        // Replace with canonical IBKR instrument/order metadata
+                        // normalization once implemented.
                         Venue::InteractiveBrokers => {
-                            Some(raw_limit_px)
+                            Some(
+                                (raw_limit_px * 100.0).floor()
+                                    / 100.0
+                            )
                         }
                     }
                 }

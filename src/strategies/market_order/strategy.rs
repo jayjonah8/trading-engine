@@ -192,8 +192,8 @@ impl MarketOrderStrategy {
 
             // Stocks
             "AAPL".to_string(),
-            // "MSFT".to_string(),
-            //"NVDA".to_string(),
+            "MSFT".to_string(),
+            "NVDA".to_string(),
         ];
 
         let asset_state = allowed_assets
@@ -215,7 +215,7 @@ impl MarketOrderStrategy {
             tx_engine,
             rx_view,
             allowed_assets,
-            trade_amount_usd: 400.0,
+            trade_amount_usd: 500.0,
             direction: Direction::Long,
             first_trade_delay: Duration::from_secs(10),
             close_delay: Duration::from_secs(15),

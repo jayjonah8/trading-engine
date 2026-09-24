@@ -799,8 +799,8 @@ async fn main() -> Result<()> {
     let enabled = vec![
         // StrategyKind::Base,
         // StrategyKind::MeanReversion,
-        StrategyKind::MarketOrder,
-        // StrategyKind::LimitOrder,
+        // StrategyKind::MarketOrder,
+        StrategyKind::LimitOrder,
         // StrategyKind::LimitOrderAdvanced,
     ];
 
