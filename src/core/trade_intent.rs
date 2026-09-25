@@ -8,6 +8,14 @@ use crate::core::{
     trades::Direction,
 };
 
+
+// TradeIntent::validate() validates the strategy-level request before the Engine
+// constructs the final canonical Order.
+//
+// validate_order() separately validates the final canonical Order after
+// venue/instrument normalization and construction.
+
+
 /// Strategy request to create a new directional trade.
 ///
 /// `TradeIntent` describes:

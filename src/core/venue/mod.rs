@@ -6,6 +6,7 @@ pub mod capabilities;
 pub mod event;
 pub mod instrument;
 pub mod state;
+pub mod order_validation;
 
 
 // ============================================================
@@ -57,3 +58,10 @@ pub use capabilities::{
     FractionalQuantityMode,
     VenueCapabilities,
 };
+
+
+// ============================================================
+// ORDER VALIDATION
+// ============================================================
+
+pub use order_validation::{validate_order, OrderValidationError};

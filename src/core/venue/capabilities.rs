@@ -64,17 +64,17 @@ use crate::core::execution::Venue;
 // FRACTIONAL QUANTITY MODE
 // ============================================================================
 
-/// Describes the venue's default support for fractional order quantities.
+/// Describes the Engine's current fractional quantity policy for a venue.
 ///
-/// This represents venue capability, not whether fractional trading is enabled
-/// by the Engine configuration.
+/// Disabled:
+///     Fractional quantities are not currently used by the Engine.
 ///
-/// Alpaca supports fractional quantities for supported long-side equity
-/// workflows, but fractional short selling is not treated as supported.
+/// LongOnly:
+///     Reserved for venue workflows where fractional long-side execution is
+///     supported but fractional short entry is not.
 ///
-/// IBKR is currently treated as whole-share only by this Engine's API path.
-///
-/// Hyperliquid quantity precision is determined by InstrumentState metadata.
+/// Instrument:
+///     Fractional behavior is determined by InstrumentState metadata.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FractionalQuantityMode {
     Disabled,
@@ -141,13 +141,12 @@ impl VenueCapabilities {
             // Current Engine behavior:
             //
             // - instrument metadata is not required
-            // - fractional long-side equity quantities are supported
-            // - fractional short entry is not treated as supported
-            // - temporary quantity normalization uses 9 decimal places
-            // - temporary equity price normalization uses cents
+            // - fractional quantities are temporarily disabled
+            // - quantities are therefore normalized to whole shares
+            // - tested U.S. equity limit prices use cent precision
             //
-            // Whether the Engine actually permits fractional trading will be
-            // controlled separately by Config.
+            // Alpaca fractional equity support will be re-enabled later after
+            // long-entry, short-entry, and exact-exit behavior is fully tested.
             Venue::Alpaca => Self {
                 requires_instrument_metadata: false,
                 fractional_quantity_mode: FractionalQuantityMode::Disabled,
