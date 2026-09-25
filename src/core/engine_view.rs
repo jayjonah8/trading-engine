@@ -9,7 +9,7 @@ use crate::core::{
         TradeId,
         Trades,
     },
-    venue_state::VenueState,
+    venue::VenueState,
 };
 
 

@@ -2,7 +2,7 @@
 
 use crate::core::{
     execution::Venue,
-    venue_state::{
+    venue::{
         AccountState,
         InstrumentState,
     },

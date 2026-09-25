@@ -43,7 +43,7 @@ use crate::core::{
         Venue,
     },
 
-    venue_state::VenueStateEvent,
+    venue::VenueStateEvent,
 };
 
 use crate::data::{

@@ -18,7 +18,7 @@ use tokio::{
 use crate::{
     core::{
         execution::Venue,
-        venue_state::VenueStateEvent,
+        venue::VenueStateEvent,
     },
 
     exchange::hyperliquid::meta::{

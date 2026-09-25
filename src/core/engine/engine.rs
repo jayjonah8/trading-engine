@@ -13,7 +13,7 @@ use tokio::sync::{
 
 use crate::core::{
     config::Config,
-    venue_state::VenueState,
+    venue::VenueState,
     engine::{
         shared::{
             get_execution_mode,

@@ -2,6 +2,7 @@
 
 pub mod account;
 pub mod account_details;
+pub mod capabilities;
 pub mod event;
 pub mod instrument;
 pub mod state;
@@ -51,3 +52,8 @@ pub use instrument::{
 // ============================================================
 
 pub use state::VenueState;
+
+pub use capabilities::{
+    FractionalQuantityMode,
+    VenueCapabilities,
+};

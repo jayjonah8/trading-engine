@@ -6,7 +6,7 @@ use hyperliquid_rust_sdk::Meta;
 
 use crate::core::{
     execution::Venue,
-    venue_state::InstrumentState,
+    venue::InstrumentState,
 };
 
 

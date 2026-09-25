@@ -2,7 +2,7 @@
 
 use crate::core::{
     engine::engine::Engine,
-    venue_state::VenueStateEvent,
+    venue::VenueStateEvent,
 };
 
 use crate::shared::print_log;
