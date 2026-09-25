@@ -34,6 +34,7 @@ use crate::core::{
 };
 
 use crate::shared::print_log;
+use crate::core::venue::validate_order;
 
 
 // TODO:
@@ -489,6 +490,24 @@ impl Engine {
             created_ts_ms: intent.ts_ms,
             updated_ts_ms: intent.ts_ms,
         };
+
+
+        // ============================================================
+        // VALIDATE CANONICAL ORDER
+        // ============================================================
+
+        if let Err(error) = validate_order(&order) {
+            print_log(
+                self.debug_mode,
+                true,
+                format!(
+                    "[ENGINE] OPEN TRADE REJECTED | strategy={} | symbol={} | error={:?}",
+                    intent.strategy_id, intent.symbol, error,
+                ),
+            );
+
+            return;
+        }
 
 
         // ============================================================
