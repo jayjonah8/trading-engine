@@ -9,8 +9,6 @@ use crate::core::{
         Order,
         OrderPurpose,
         OrderState,
-        TimeInForce,
-        Venue,
     },
 
     risk::{
@@ -37,22 +35,6 @@ use crate::core::{
 
 use crate::shared::print_log;
 
-// TODO:
-// Alpaca and Interactive Brokers temporarily bypass VenueState instrument
-// metadata normalization so their execution adapters can be tested before
-// canonical metadata support is implemented.
-//
-// Hyperliquid must continue requiring InstrumentState because its executable
-// quantity and price precision depend on venue metadata.
-//
-// Later:
-// - add Alpaca meta/fetch.rs + mapper.rs
-// - add IBKR contract/instrument metadata support
-// - require metadata for all production execution venues
-// - remove the raw quantity/price passthrough below
-// - validate venue capabilities such as tradable, fractionable, shortable,
-//   quantity increments, price ticks, minimum sizes, and other constraints
-
 
 // TODO:
 // Add detailed TradeIntent printout for the new execution architecture.
@@ -61,11 +43,22 @@ use crate::shared::print_log;
 // Add any remaining strategy ownership / cooldown admission rules here
 // if those policies remain part of the final engine behavior.
 
-
 // TODO:
 // Add structured rejection/output events later so failed intents can be
 // surfaced to metrics, persistence, notifications, or strategies without
 // relying only on logs.
+
+// TODO:
+// Add shared venue capability validation before order submission.
+//
+// This should validate execution behavior such as:
+// - supported order types
+// - supported time-in-force values
+// - post-only support
+// - reduce-only support
+//
+// Keep these rules outside open_trade.rs so this handler remains
+// venue-independent.
 
 
 // ============================================================
@@ -85,7 +78,7 @@ impl Engine {
     ///     ↓
     /// notional/exposure risk checks
     ///     ↓
-    /// calculate quantity
+    /// normalize executable quantity/prices
     ///     ↓
     /// create Trade + Order + RiskReservation
     ///     ↓
@@ -96,10 +89,7 @@ impl Engine {
     /// execution router
     ///     ↓
     /// venue adapter
-    pub fn handle_open_trade(
-        &mut self,
-        intent: TradeIntent,
-    ) {
+    pub fn handle_open_trade(&mut self, intent: TradeIntent) {
         // ============================================================
         // VALIDATE INTENT
         // ============================================================
@@ -110,9 +100,7 @@ impl Engine {
                 true,
                 format!(
                     "[ENGINE] OPEN TRADE REJECTED | strategy={} | symbol={} | error={:?}",
-                    intent.strategy_id,
-                    intent.symbol,
-                    err,
+                    intent.strategy_id, intent.symbol, err,
                 ),
             );
 
@@ -124,20 +112,13 @@ impl Engine {
         // TOTAL ACTIVE TRADE LIMIT
         // ============================================================
 
-        if let Err(err) =
-            check_active_trade_limit(
-                &self.state.risk.limits,
-                &self.state.trades,
-            )
-        {
+        if let Err(err) = check_active_trade_limit(&self.state.risk.limits, &self.state.trades) {
             print_log(
                 self.debug_mode,
                 true,
                 format!(
                     "[ENGINE] OPEN TRADE REJECTED | strategy={} | symbol={} | error={:?}",
-                    intent.strategy_id,
-                    intent.symbol,
-                    err,
+                    intent.strategy_id, intent.symbol, err,
                 ),
             );
 
@@ -149,21 +130,17 @@ impl Engine {
         // ACTIVE ASSET LIMIT
         // ============================================================
 
-        if let Err(err) =
-            check_active_asset_limit(
-                &self.state.risk.limits,
-                &self.state.trades,
-                &intent.symbol,
-            )
-        {
+        if let Err(err) = check_active_asset_limit(
+            &self.state.risk.limits,
+            &self.state.trades,
+            &intent.symbol,
+        ) {
             print_log(
                 self.debug_mode,
                 true,
                 format!(
                     "[ENGINE] OPEN TRADE REJECTED | strategy={} | symbol={} | error={:?}",
-                    intent.strategy_id,
-                    intent.symbol,
-                    err,
+                    intent.strategy_id, intent.symbol, err,
                 ),
             );
 
@@ -175,21 +152,17 @@ impl Engine {
         // ACTIVE TRADES PER SYMBOL LIMIT
         // ============================================================
 
-        if let Err(err) =
-            check_active_trades_per_symbol(
-                &self.state.risk.limits,
-                &self.state.trades,
-                &intent.symbol,
-            )
-        {
+        if let Err(err) = check_active_trades_per_symbol(
+            &self.state.risk.limits,
+            &self.state.trades,
+            &intent.symbol,
+        ) {
             print_log(
                 self.debug_mode,
                 true,
                 format!(
                     "[ENGINE] OPEN TRADE REJECTED | strategy={} | symbol={} | error={:?}",
-                    intent.strategy_id,
-                    intent.symbol,
-                    err,
+                    intent.strategy_id, intent.symbol, err,
                 ),
             );
 
@@ -201,21 +174,17 @@ impl Engine {
         // ACTIVE TRADES PER STRATEGY LIMIT
         // ============================================================
 
-        if let Err(err) =
-            check_active_trades_per_strategy(
-                &self.state.risk.limits,
-                &self.state.trades,
-                &intent.strategy_id,
-            )
-        {
+        if let Err(err) = check_active_trades_per_strategy(
+            &self.state.risk.limits,
+            &self.state.trades,
+            &intent.strategy_id,
+        ) {
             print_log(
                 self.debug_mode,
                 true,
                 format!(
                     "[ENGINE] OPEN TRADE REJECTED | strategy={} | symbol={} | error={:?}",
-                    intent.strategy_id,
-                    intent.symbol,
-                    err,
+                    intent.strategy_id, intent.symbol, err,
                 ),
             );
 
@@ -227,20 +196,13 @@ impl Engine {
         // SINGLE ORDER NOTIONAL LIMIT
         // ============================================================
 
-        if let Err(err) =
-            check_order_notional(
-                &self.state.risk.limits,
-                intent.target_notional,
-            )
-        {
+        if let Err(err) = check_order_notional(&self.state.risk.limits, intent.target_notional) {
             print_log(
                 self.debug_mode,
                 true,
                 format!(
                     "[ENGINE] OPEN TRADE REJECTED | strategy={} | symbol={} | error={:?}",
-                    intent.strategy_id,
-                    intent.symbol,
-                    err,
+                    intent.strategy_id, intent.symbol, err,
                 ),
             );
 
@@ -257,21 +219,15 @@ impl Engine {
         // If a current market price is unavailable, average entry price is
         // used as a fallback so existing exposure is still represented in
         // admission checks.
-        let current_gross_notional =
-            self.state
-                .positions
-                .iter()
-                .map(|(_, position)| {
-                    let px =
-                        self.last_px
-                            .get(&position.key.symbol)
-                            .map(|last| last.px)
-                            .or(position.avg_entry_px)
-                            .unwrap_or(0.0);
+        let current_gross_notional = self.state.positions.iter().map(|(_, position)| {
+            let px = self.last_px
+                .get(&position.key.symbol)
+                .map(|last| last.px)
+                .or(position.avg_entry_px)
+                .unwrap_or(0.0);
 
-                    position.absolute_quantity() * px
-                })
-                .sum::<f64>();
+            position.absolute_quantity() * px
+        }).sum::<f64>();
 
 
         // ============================================================
@@ -285,22 +241,18 @@ impl Engine {
         // all active Entry RiskReservations
         //     +
         // this proposed Trade
-        if let Err(err) =
-            check_gross_notional(
-                &self.state.risk.limits,
-                &self.state.risk.reservations,
-                current_gross_notional,
-                intent.target_notional,
-            )
-        {
+        if let Err(err) = check_gross_notional(
+            &self.state.risk.limits,
+            &self.state.risk.reservations,
+            current_gross_notional,
+            intent.target_notional,
+        ) {
             print_log(
                 self.debug_mode,
                 true,
                 format!(
                     "[ENGINE] OPEN TRADE REJECTED | strategy={} | symbol={} | error={:?}",
-                    intent.strategy_id,
-                    intent.symbol,
-                    err,
+                    intent.strategy_id, intent.symbol, err,
                 ),
             );
 
@@ -312,60 +264,44 @@ impl Engine {
         // CURRENT SYMBOL POSITION NOTIONAL
         // ============================================================
 
-        let current_symbol_notional =
-            self.state
-                .positions
-                .iter()
-                .filter(|(_, position)| {
-                    position.key.symbol == intent.symbol
-                })
-                .map(|(_, position)| {
-                    let px =
-                        self.last_px
-                            .get(&position.key.symbol)
-                            .map(|last| last.px)
-                            .or(position.avg_entry_px)
-                            .unwrap_or(intent.signal_px);
+        let current_symbol_notional = self.state.positions.iter()
+            .filter(|(_, position)| position.key.symbol == intent.symbol)
+            .map(|(_, position)| {
+                let px = self.last_px
+                    .get(&position.key.symbol)
+                    .map(|last| last.px)
+                    .or(position.avg_entry_px)
+                    .unwrap_or(intent.signal_px);
 
-                    position.absolute_quantity() * px
-                })
-                .sum::<f64>();
+                position.absolute_quantity() * px
+            })
+            .sum::<f64>();
 
 
         // ============================================================
         // RESERVED SYMBOL NOTIONAL
         // ============================================================
 
-        let reserved_symbol_notional =
-            self.state
-                .risk
-                .reservations
-                .entry_notional_for_symbol(
-                    &intent.symbol
-                );
+        let reserved_symbol_notional = self.state.risk.reservations.entry_notional_for_symbol(&intent.symbol);
 
 
         // ============================================================
         // SYMBOL NOTIONAL LIMIT
         // ============================================================
 
-        if let Err(err) =
-            check_symbol_notional(
-                &self.state.risk.limits,
-                &intent.symbol,
-                current_symbol_notional,
-                reserved_symbol_notional,
-                intent.target_notional,
-            )
-        {
+        if let Err(err) = check_symbol_notional(
+            &self.state.risk.limits,
+            &intent.symbol,
+            current_symbol_notional,
+            reserved_symbol_notional,
+            intent.target_notional,
+        ) {
             print_log(
                 self.debug_mode,
                 true,
                 format!(
                     "[ENGINE] OPEN TRADE REJECTED | strategy={} | symbol={} | error={:?}",
-                    intent.strategy_id,
-                    intent.symbol,
-                    err,
+                    intent.strategy_id, intent.symbol, err,
                 ),
             );
 
@@ -374,261 +310,128 @@ impl Engine {
 
 
         // ============================================================
-        // REQUESTED QUANTITY
+        // EXECUTABLE QUANTITY
         // ============================================================
 
-        // Convert the strategy's requested notional exposure into an initial
-        // raw asset quantity:
+        // Convert the strategy's requested notional exposure into a desired
+        // asset quantity:
         //
-        //     quantity = target_notional / signal_price
+        //     raw_quantity = target_notional / signal_price
         //
-        // This raw quantity is only the Engine's mathematical request. It must
-        // NOT be assumed to be executable at the destination venue.
+        // VenueState then converts that desired quantity into the largest
+        // executable quantity allowed by the destination venue/instrument
+        // without increasing requested exposure.
         //
-        // VenueState::normalize_quantity() applies canonical InstrumentState
-        // rules such as:
+        // Examples of rules applied by VenueState:
         //
+        // - fractional quantity support
         // - quantity step
         // - quantity decimal precision
-        // - fractional quantity support
         // - minimum quantity
         // - instrument trading status
         //
-        // Venue-specific metadata is translated into InstrumentState before
-        // reaching this handler, keeping OpenTrade venue-independent.
-        //
-        let raw_quantity =
-        intent.target_notional
-            / intent.signal_px;
+        // Alpaca and IBKR may use VenueCapabilities defaults when instrument
+        // metadata is unavailable. Hyperliquid requires InstrumentState.
+        let raw_quantity = intent.target_notional / intent.signal_px;
 
-        let quantity =
-            match self.cfg.execution_venue {
-                Venue::Hyperliquid => {
-                    match self.venue_state.normalize_quantity(
-                        self.cfg.execution_venue,
-                        &intent.symbol,
-                        raw_quantity,
-                    ) {
-                        Ok(quantity) => quantity,
+        let quantity = match self.venue_state.normalize_quantity(
+            self.cfg.execution_venue,
+            &intent.symbol,
+            raw_quantity,
+        ) {
+            Ok(quantity) => quantity,
 
-                        Err(error) => {
-                            print_log(
-                                self.debug_mode,
-                                true,
-                                format!(
-                                    "[ENGINE] OPEN TRADE REJECTED | strategy={} | symbol={} | error={:?}",
-                                    intent.strategy_id,
-                                    intent.symbol,
-                                    error,
-                                ),
-                            );
+            Err(error) => {
+                print_log(
+                    self.debug_mode,
+                    true,
+                    format!(
+                        "[ENGINE] OPEN TRADE REJECTED | strategy={} | symbol={} | raw_quantity={} | error={:?}",
+                        intent.strategy_id, intent.symbol, raw_quantity, error,
+                    ),
+                );
 
-                            return;
-                        }
-                    }
-                }
-
-                // TEST:
-                // Temporarily normalize Alpaca fractional-share quantities to
-                // 9 decimal places until canonical Alpaca instrument/order
-                // metadata normalization is implemented.
-                Venue::Alpaca => {
-                    (raw_quantity * 1_000_000_000.0).floor()
-                        / 1_000_000_000.0
-                }
-
-                // TEST:
-                // IBKR equity API testing currently uses whole-share quantities.
-                //
-                // Temporarily floor the Engine's requested quantity to a whole number.
-                // Replace this with canonical IBKR InstrumentState / venue capability
-                // normalization once IBKR behavior has been fully tested.
-                Venue::InteractiveBrokers => {
-                    raw_quantity.floor()
-                }
-            };
-
-        if !quantity.is_finite() || quantity <= 0.0 {
-            print_log(
-                self.debug_mode,
-                true,
-                format!(
-                    "[ENGINE] OPEN TRADE REJECTED | strategy={} | symbol={} | raw_quantity={} | normalized_quantity={}",
-                    intent.strategy_id, intent.symbol, raw_quantity, quantity,
-                ),
-            );
-
-            return;
-        }
+                return;
+            }
+        };
 
 
         // ============================================================
         // LIMIT PRICE
         // ============================================================
 
-        // Strategy-provided prices represent desired prices, not necessarily
-        // directly executable venue prices.
-        //
-        // Normalize any limit price through canonical InstrumentState before
-        // constructing the Order.
-        //
-        // Depending on the venue/instrument, normalization may apply:
-        //
-        // - explicit price tick
-        // - decimal-place precision
-        // - significant-digit precision
-        //
-        // Example:
-        //
-        // Hyperliquid:
-        //
-        //     strategy price:
-        //         71834.72499999999
-        //
-        //     normalized executable price:
-        //         71835
-        //
-        // The Engine does not contain Hyperliquid-specific logic here.
-        // Hyperliquid Meta is mapped into InstrumentState and the generic
-        // VenueState normalization path applies those rules.
-        let limit_px =
-            match intent.limit_px {
-                Some(raw_limit_px) => {
-                    match self.cfg.execution_venue {
-                        Venue::Hyperliquid => {
-                            match self.venue_state.normalize_price(
-                                self.cfg.execution_venue,
-                                &intent.symbol,
-                                raw_limit_px,
-                            ) {
-                                Ok(limit_px) => Some(limit_px),
+        // Strategy-provided prices are desired prices. VenueState converts
+        // them into executable prices using canonical venue/instrument rules.
+        let limit_px = match intent.limit_px {
+            Some(raw_limit_px) => {
+                match self.venue_state.normalize_price(
+                    self.cfg.execution_venue,
+                    &intent.symbol,
+                    raw_limit_px,
+                ) {
+                    Ok(limit_px) => Some(limit_px),
 
-                                Err(error) => {
-                                    print_log(
-                                        self.debug_mode,
-                                        true,
-                                        format!(
-                                            "[ENGINE] OPEN TRADE REJECTED | strategy={} | symbol={} | raw_limit_px={} | error={:?}",
-                                            intent.strategy_id,
-                                            intent.symbol,
-                                            raw_limit_px,
-                                            error,
-                                        ),
-                                    );
+                    Err(error) => {
+                        print_log(
+                            self.debug_mode,
+                            true,
+                            format!(
+                                "[ENGINE] OPEN TRADE REJECTED | strategy={} | symbol={} | raw_limit_px={} | error={:?}",
+                                intent.strategy_id, intent.symbol, raw_limit_px, error,
+                            ),
+                        );
 
-                                    return;
-                                }
-                            }
-                        }
-
-                        // TEST:
-                        // Temporarily normalize Alpaca equity limit prices to cents.
-                        // Replace with canonical Alpaca instrument/order metadata
-                        // normalization once implemented.
-                        Venue::Alpaca => {
-                            Some(
-                                (raw_limit_px * 100.0).floor()
-                                    / 100.0
-                            )
-                        }
-
-                        // TEST:
-                        // Temporarily normalize IBKR equity limit prices to cents.
-                        // Replace with canonical IBKR instrument/order metadata
-                        // normalization once implemented.
-                        Venue::InteractiveBrokers => {
-                            Some(
-                                (raw_limit_px * 100.0).floor()
-                                    / 100.0
-                            )
-                        }
+                        return;
                     }
                 }
+            }
 
-                None => None,
-            };
+            None => None,
+        };
+
 
         // ============================================================
         // STOP PRICE
         // ============================================================
 
-        // Stop prices pass through the same canonical price normalization
+        // Stop prices pass through the same canonical price-normalization
         // boundary as limit prices.
-        //
-        // This supports StopMarket and StopLimit orders without introducing
-        // venue-specific price handling into the Engine.
-        let stop_px =
-            match intent.stop_px {
-                Some(raw_stop_px) => {
-                    match self.cfg.execution_venue {
-                        Venue::Hyperliquid => {
-                            match self.venue_state.normalize_price(
-                                self.cfg.execution_venue,
-                                &intent.symbol,
-                                raw_stop_px,
-                            ) {
-                                Ok(stop_px) => Some(stop_px),
+        let stop_px = match intent.stop_px {
+            Some(raw_stop_px) => {
+                match self.venue_state.normalize_price(
+                    self.cfg.execution_venue,
+                    &intent.symbol,
+                    raw_stop_px,
+                ) {
+                    Ok(stop_px) => Some(stop_px),
 
-                                Err(error) => {
-                                    print_log(
-                                        self.debug_mode,
-                                        true,
-                                        format!(
-                                            "[ENGINE] OPEN TRADE REJECTED | strategy={} | symbol={} | raw_stop_px={} | error={:?}",
-                                            intent.strategy_id,
-                                            intent.symbol,
-                                            raw_stop_px,
-                                            error,
-                                        ),
-                                    );
+                    Err(error) => {
+                        print_log(
+                            self.debug_mode,
+                            true,
+                            format!(
+                                "[ENGINE] OPEN TRADE REJECTED | strategy={} | symbol={} | raw_stop_px={} | error={:?}",
+                                intent.strategy_id, intent.symbol, raw_stop_px, error,
+                            ),
+                        );
 
-                                    return;
-                                }
-                            }
-                        }
-
-                        Venue::Alpaca | Venue::InteractiveBrokers => {
-                            Some(raw_stop_px)
-                        }
+                        return;
                     }
                 }
+            }
 
-                None => None,
-            };
-
-
-        // TEST:
-        // Alpaca fractional equity orders require DAY time-in-force.
-        // Remove this override once Alpaca execution capability
-        // normalization is implemented.
-        let time_in_force =
-            match self.cfg.execution_venue {
-                Venue::Alpaca => {
-                    TimeInForce::Day
-                }
-
-                Venue::Hyperliquid => {
-                    intent.time_in_force
-                }
-
-                Venue::InteractiveBrokers => {
-                    intent.time_in_force
-                }
-            };
+            None => None,
+        };
 
 
         // ============================================================
         // IDS
         // ============================================================
 
-        let trade_id =
-            self.state.allocate_trade_id();
+        let trade_id = self.state.allocate_trade_id();
+        let order_id = self.state.allocate_order_id();
+        let client_order_id = ClientOrderId::new();
 
-        let order_id =
-            self.state.allocate_order_id();
-
-        let client_order_id =
-            ClientOrderId::new();
 
         // ============================================================
         // TRADE
@@ -673,7 +476,7 @@ impl Engine {
             side: intent.entry_side(),
             purpose: OrderPurpose::Entry,
             order_type: intent.order_type,
-            time_in_force,
+            time_in_force: intent.time_in_force,
             quantity,
             limit_px,
             stop_px,
@@ -723,13 +526,7 @@ impl Engine {
         // SUBMIT ORDER
         // ============================================================
 
-        if let Err(err) =
-            self.tx_exec.send(
-                ExecCommand::SubmitOrder {
-                    order,
-                }
-            )
-        {
+        if let Err(err) = self.tx_exec.send(ExecCommand::SubmitOrder { order }) {
             // The command never reached the execution router, so roll back all
             // state created for this submission.
             self.state.risk.reservations.release(order_id);
@@ -741,11 +538,7 @@ impl Engine {
                 true,
                 format!(
                     "[ENGINE] OPEN TRADE SUBMIT FAILED | trade_id={} | order_id={} | strategy={} | symbol={} | error={}",
-                    trade_id,
-                    order_id,
-                    intent.strategy_id,
-                    intent.symbol,
-                    err,
+                    trade_id, order_id, intent.strategy_id, intent.symbol, err,
                 ),
             );
 

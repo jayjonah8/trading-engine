@@ -150,7 +150,7 @@ impl VenueCapabilities {
             // controlled separately by Config.
             Venue::Alpaca => Self {
                 requires_instrument_metadata: false,
-                fractional_quantity_mode: FractionalQuantityMode::LongOnly,
+                fractional_quantity_mode: FractionalQuantityMode::Disabled,
                 default_quantity_decimals: Some(9),
                 default_quantity_step: None,
                 default_price_decimals: Some(2),

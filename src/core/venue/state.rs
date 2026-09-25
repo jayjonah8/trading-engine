@@ -6,6 +6,7 @@ use crate::core::{
     execution::Venue,
     venue::{
         AccountState,
+        FractionalQuantityMode,
         InstrumentKey,
         InstrumentState,
         VenueAccountKey,
@@ -151,27 +152,17 @@ impl VenueState {
     /// paths have safe venue-level defaults.
     ///
     /// Hyperliquid requires metadata and therefore rejects `None`.
-    fn instrument_for_execution(
-        &self,
-        venue: Venue,
-        symbol: &str,
-    ) -> Result<Option<&InstrumentState>, String> {
+    fn instrument_for_execution(&self, venue: Venue, symbol: &str) -> Result<Option<&InstrumentState>, String> {
         let capabilities = VenueCapabilities::for_venue(venue);
         let instrument = self.instrument(venue, symbol);
 
         if capabilities.requires_instrument_metadata && instrument.is_none() {
-            return Err(format!(
-                "instrument metadata unavailable | venue={:?} | symbol={}",
-                venue, symbol,
-            ));
+            return Err(format!("instrument metadata unavailable | venue={:?} | symbol={}", venue, symbol));
         }
 
         if let Some(instrument) = instrument {
             if !instrument.active {
-                return Err(format!(
-                    "instrument is not active | venue={:?} | symbol={}",
-                    venue, symbol,
-                ));
+                return Err(format!("instrument is not active | venue={:?} | symbol={}", venue, symbol));
             }
         }
 
@@ -183,19 +174,24 @@ impl VenueState {
     // QUANTITY NORMALIZATION
     // =========================================================================
 
-    /// Normalizes a requested quantity into an executable venue quantity.
+    /// Normalizes a desired quantity into an executable venue quantity.
     ///
-    /// Instrument-specific rules take precedence when available. Otherwise,
-    /// venue-level defaults from VenueCapabilities are used.
+    /// Strategies may size positions from target notional:
+    ///
+    ///     target_notional / price = desired quantity
+    ///
+    /// The execution layer then converts that desired quantity into the
+    /// largest valid venue quantity without increasing requested exposure.
+    ///
+    /// When fractional quantities are disabled, the quantity is normalized
+    /// directly to whole units.
+    ///
+    /// When fractional quantities are supported, instrument-specific
+    /// constraints take precedence over venue defaults.
     ///
     /// The returned quantity is the exact quantity that should be stored in
     /// canonical Order.quantity and sent to the execution adapter.
-    pub fn normalize_quantity(
-        &self,
-        venue: Venue,
-        symbol: &str,
-        raw_quantity: f64,
-    ) -> Result<f64, String> {
+    pub fn normalize_quantity(&self, venue: Venue, symbol: &str, raw_quantity: f64) -> Result<f64, String> {
         // =====================================================================
         // VALIDATE RAW QUANTITY
         // =====================================================================
@@ -215,7 +211,19 @@ impl VenueState {
         let capabilities = VenueCapabilities::for_venue(venue);
         let instrument = self.instrument_for_execution(venue, symbol)?;
 
-        // Instrument-specific constraints take precedence over venue defaults.
+        // Determine whether fractional quantities are currently allowed.
+        //
+        // Disabled   -> always use whole units.
+        // LongOnly   -> fractional support is enabled for now; Side + OrderPurpose
+        //               will be added later to distinguish long vs short execution.
+        // Instrument -> use the instrument's venue-specific fractional capability.
+        let fractional_quantity_supported = match capabilities.fractional_quantity_mode {
+            FractionalQuantityMode::Disabled => false,
+            FractionalQuantityMode::LongOnly => true,
+            FractionalQuantityMode::Instrument => instrument.map(|instrument| instrument.fractional_quantity_supported).unwrap_or(false),
+        };
+
+        // Instrument-specific precision takes precedence over venue defaults.
         let quantity_step = instrument
             .and_then(|instrument| instrument.quantity_step)
             .or(capabilities.default_quantity_step);
@@ -224,21 +232,28 @@ impl VenueState {
             .and_then(|instrument| instrument.quantity_decimals)
             .or(capabilities.default_quantity_decimals);
 
-        let fractional_quantity_supported = instrument
-            .map(|instrument| instrument.fractional_quantity_supported)
-            .unwrap_or_else(|| {
-                !matches!(
-                    capabilities.fractional_quantity_mode,
-                    crate::core::venue::FractionalQuantityMode::Disabled
-                )
-            });
-
 
         // =====================================================================
         // NORMALIZE QUANTITY
         // =====================================================================
 
-        let quantity = if let Some(step) = quantity_step {
+        // Fractional support is checked before decimal/step precision.
+        //
+        // This is important because a venue may still define fractional
+        // precision defaults while fractional execution is currently disabled.
+        //
+        // Example:
+        //
+        //     raw quantity = 3.7284
+        //
+        //     fractional disabled -> 3
+        //     fractional enabled  -> apply quantity step/decimal precision
+        //
+        // Flooring whole-unit quantities allows strategies to size from target
+        // notional without requiring venue-specific quantity calculations.
+        let quantity = if !fractional_quantity_supported {
+            raw_quantity.floor()
+        } else if let Some(step) = quantity_step {
             if !step.is_finite() || step <= 0.0 {
                 return Err(format!(
                     "invalid quantity step | venue={:?} | symbol={} | step={}",
@@ -253,10 +268,8 @@ impl VenueState {
 
             // Never increase requested exposure during quantity normalization.
             (raw_quantity * factor).floor() / factor
-        } else if fractional_quantity_supported {
-            raw_quantity
         } else {
-            raw_quantity.floor()
+            raw_quantity
         };
 
 
@@ -305,12 +318,7 @@ impl VenueState {
     ///
     /// Hyperliquid continues to require InstrumentState metadata. Alpaca and
     /// IBKR currently use their venue defaults when metadata is unavailable.
-    pub fn normalize_price(
-        &self,
-        venue: Venue,
-        symbol: &str,
-        raw_price: f64,
-    ) -> Result<f64, String> {
+    pub fn normalize_price(&self, venue: Venue, symbol: &str, raw_price: f64) -> Result<f64, String> {
         // =====================================================================
         // VALIDATE RAW PRICE
         // =====================================================================
@@ -330,8 +338,7 @@ impl VenueState {
         let capabilities = VenueCapabilities::for_venue(venue);
         let instrument = self.instrument_for_execution(venue, symbol)?;
 
-        let significant_digits = instrument
-            .and_then(|instrument| instrument.price_significant_digits);
+        let significant_digits = instrument.and_then(|instrument| instrument.price_significant_digits);
 
         let price_decimals = instrument
             .and_then(|instrument| instrument.price_decimals)

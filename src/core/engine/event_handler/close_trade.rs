@@ -373,21 +373,12 @@ impl Engine {
         // EXIT SIDE
         // ============================================================
 
-        // Direction describes the logical Trade.
-        // Side describes what the execution venue must do.
-        //
         // Long exposure is closed by selling.
         // Short exposure is closed by buying.
-        let side =
-            match direction {
-                Direction::Long => {
-                    Side::Sell
-                }
-
-                Direction::Short => {
-                    Side::Buy
-                }
-            };
+        let side = match direction {
+            Direction::Long => Side::Sell,
+            Direction::Short => Side::Buy,
+        };
 
 
         // ============================================================
@@ -418,24 +409,24 @@ impl Engine {
         // Alpaca fractional equity orders require DAY time-in-force.
         // Remove this override once Alpaca execution capability
         // normalization is implemented.
-        let time_in_force =
-            match venue {
-                Venue::Alpaca => {
-                    TimeInForce::Day
-                }
-
-                Venue::Hyperliquid => {
-                    execution.time_in_force
-                }
-
-                Venue::InteractiveBrokers => {
-                    execution.time_in_force
-                }
-            };
-        // older original
         // let time_in_force =
-        //     execution.time_in_force;
+        //     match venue {
+        //         Venue::Alpaca => {
+        //             TimeInForce::Day
+        //         }
 
+        //         Venue::Hyperliquid => {
+        //             execution.time_in_force
+        //         }
+
+        //         Venue::InteractiveBrokers => {
+        //             execution.time_in_force
+        //         }
+        //     };
+
+       
+        let time_in_force =
+            execution.time_in_force;
 
         let limit_px =
             execution.limit_px;
