@@ -12,8 +12,6 @@ use crate::{
             OrderPurpose,
             OrderState,
             Side,
-            TimeInForce,
-            Venue,
         },
 
         risk::{
@@ -404,29 +402,16 @@ impl Engine {
         let order_type =
             execution.order_type;
 
-            
-        // TEST:
-        // Alpaca fractional equity orders require DAY time-in-force.
-        // Remove this override once Alpaca execution capability
-        // normalization is implemented.
-        // let time_in_force =
-        //     match venue {
-        //         Venue::Alpaca => {
-        //             TimeInForce::Day
-        //         }
-
-        //         Venue::Hyperliquid => {
-        //             execution.time_in_force
-        //         }
-
-        //         Venue::InteractiveBrokers => {
-        //             execution.time_in_force
-        //         }
-        //     };
-
-       
-        let time_in_force =
-            execution.time_in_force;
+              
+        // Preserve the requested exit TIF unless a proven venue execution rule
+        // requires a different canonical representation.
+        //
+        // Alpaca fractional equity orders require DAY, including fractional exits.
+        let time_in_force = self.venue_state.normalize_time_in_force(
+            venue,
+            quantity,
+            execution.time_in_force,
+        );
 
         let limit_px =
             execution.limit_px;
@@ -476,76 +461,44 @@ impl Engine {
         // EXIT ORDER
         // ============================================================
 
-        let order =
-            Order {
-                id:
-                    order_id,
+        let order = Order {
+            id: order_id,
+            venue,
+            venue_order_id: None,
+            client_order_id,
+            strategy_id: strategy_id.clone(),
+            trade_id: Some(trade_id),
+            symbol: symbol.clone(),
+            side,
+            purpose: OrderPurpose::Exit,
 
-                venue,
+            // Exit execution behavior comes from the validated canonical
+            // ExitOrderRequest.
+            order_type,
+            time_in_force,
+            quantity,
+            limit_px,
+            stop_px,
 
-                venue_order_id:
-                    None,
+            // ====================================================
+            // REDUCE-ONLY INVARIANT
+            // ====================================================
 
-                client_order_id,
+            // Every directional Trade exit created through this handler
+            // MUST reduce existing exposure.
+            //
+            // This is intentionally Engine-controlled rather than supplied
+            // through ExitOrderRequest.
+            reduce_only: true,
 
-                strategy_id:
-                    strategy_id.clone(),
-
-                trade_id:
-                    Some(trade_id),
-
-                symbol:
-                    symbol.clone(),
-
-                side,
-
-                purpose:
-                    OrderPurpose::Exit,
-
-                // Exit execution behavior comes from the validated canonical
-                // ExitOrderRequest.
-                order_type,
-
-                time_in_force,
-
-                quantity,
-
-                limit_px,
-
-                stop_px,
-
-                // ====================================================
-                // REDUCE-ONLY INVARIANT
-                // ====================================================
-
-                // Every directional Trade exit created through this handler
-                // MUST reduce existing exposure.
-                //
-                // This is intentionally Engine-controlled rather than supplied
-                // through ExitOrderRequest.
-                reduce_only:
-                    true,
-
-                post_only,
-
-                filled_quantity:
-                    0.0,
-
-                avg_fill_px:
-                    None,
-
-                pending_replace:
-                    None,
-
-                state:
-                    OrderState::PendingSubmit,
-
-                created_ts_ms:
-                    ts_ms,
-
-                updated_ts_ms:
-                    ts_ms,
-            };
+            post_only,
+            filled_quantity: 0.0,
+            avg_fill_px: None,
+            pending_replace: None,
+            state: OrderState::PendingSubmit,
+            created_ts_ms: ts_ms,
+            updated_ts_ms: ts_ms,
+        };
 
 
         // ============================================================
@@ -613,33 +566,17 @@ impl Engine {
         // EXIT RISK RESERVATION
         // ============================================================
 
-        let reservation =
-            RiskReservation {
-                order_id,
-
-                trade_id:
-                    Some(trade_id),
-
-                strategy_id:
-                    strategy_id.clone(),
-
-                symbol:
-                    symbol.clone(),
-
-                purpose:
-                    ReservationPurpose::Exit,
-
-                quantity,
-
-                notional:
-                    reserved_notional,
-
-                created_ts_ms:
-                    ts_ms,
-
-                updated_ts_ms:
-                    ts_ms,
-            };
+        let reservation = RiskReservation {
+            order_id,
+            trade_id: Some(trade_id),
+            strategy_id: strategy_id.clone(),
+            symbol: symbol.clone(),
+            purpose: ReservationPurpose::Exit,
+            quantity,
+            notional: reserved_notional,
+            created_ts_ms: ts_ms,
+            updated_ts_ms: ts_ms,
+        };
 
 
         // ============================================================

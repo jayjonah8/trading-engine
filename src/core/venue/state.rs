@@ -3,7 +3,12 @@
 use std::collections::HashMap;
 
 use crate::core::{
-    execution::Venue,
+    execution::{
+        OrderPurpose,
+        Side,
+        TimeInForce,
+        Venue,
+    },
     venue::{
         AccountState,
         FractionalQuantityMode,
@@ -180,18 +185,36 @@ impl VenueState {
     ///
     ///     target_notional / price = desired quantity
     ///
-    /// The execution layer then converts that desired quantity into the
-    /// largest valid venue quantity without increasing requested exposure.
+    /// The execution layer converts that desired quantity into the largest valid
+    /// venue quantity without increasing requested exposure.
     ///
-    /// When fractional quantities are disabled, the quantity is normalized
-    /// directly to whole units.
+    /// Fractional execution policy:
     ///
-    /// When fractional quantities are supported, instrument-specific
-    /// constraints take precedence over venue defaults.
+    ///     Disabled
+    ///         -> always normalize to whole units
+    ///
+    ///     LongOnly
+    ///         -> long entries may use fractional quantities
+    ///         -> short entries are normalized to whole units
+    ///         -> established-position exits may use fractional quantities
+    ///
+    ///     Instrument
+    ///         -> fractional support comes from InstrumentState metadata
+    ///
+    /// `Side` + `OrderPurpose` provide the execution context required to
+    /// distinguish an Alpaca long entry from a short entry. Side alone is not
+    /// sufficient because Sell may represent either a short entry or a long exit.
     ///
     /// The returned quantity is the exact quantity that should be stored in
     /// canonical Order.quantity and sent to the execution adapter.
-    pub fn normalize_quantity(&self, venue: Venue, symbol: &str, raw_quantity: f64) -> Result<f64, String> {
+    pub fn normalize_quantity(
+        &self,
+        venue: Venue,
+        symbol: &str,
+        side: Side,
+        purpose: OrderPurpose,
+        raw_quantity: f64,
+    ) -> Result<f64, String> {
         // =====================================================================
         // VALIDATE RAW QUANTITY
         // =====================================================================
@@ -211,16 +234,40 @@ impl VenueState {
         let capabilities = VenueCapabilities::for_venue(venue);
         let instrument = self.instrument_for_execution(venue, symbol)?;
 
-        // Determine whether fractional quantities are currently allowed.
+        // Determine whether fractional execution is allowed for this specific
+        // order context.
         //
-        // Disabled   -> always use whole units.
-        // LongOnly   -> fractional support is enabled for now; Side + OrderPurpose
-        //               will be added later to distinguish long vs short execution.
-        // Instrument -> use the instrument's venue-specific fractional capability.
+        // Alpaca LongOnly behavior currently proven by live testing:
+        //
+        //     Entry + Buy
+        //         -> fractional long entry allowed
+        //
+        //     Entry + Sell
+        //         -> fractional short entry unsupported; use whole shares
+        //
+        //     Exit / StopLoss / TakeProfit / EmergencyExit
+        //         -> fractional quantity allowed so an established fractional
+        //            position can be closed exactly
+        //
+        // Quote and Hedge remain conservative until those execution workflows
+        // have explicit fractional behavior.
         let fractional_quantity_supported = match capabilities.fractional_quantity_mode {
             FractionalQuantityMode::Disabled => false,
-            FractionalQuantityMode::LongOnly => true,
-            FractionalQuantityMode::Instrument => instrument.map(|instrument| instrument.fractional_quantity_supported).unwrap_or(false),
+
+            FractionalQuantityMode::LongOnly => match purpose {
+                OrderPurpose::Entry => side == Side::Buy,
+                OrderPurpose::Exit |
+                OrderPurpose::StopLoss |
+                OrderPurpose::TakeProfit |
+                OrderPurpose::EmergencyExit => true,
+                OrderPurpose::Quote | OrderPurpose::Hedge => false,
+            },
+
+            FractionalQuantityMode::Instrument => {
+                instrument
+                    .map(|instrument| instrument.fractional_quantity_supported)
+                    .unwrap_or(false)
+            }
         };
 
         // Instrument-specific precision takes precedence over venue defaults.
@@ -237,20 +284,26 @@ impl VenueState {
         // NORMALIZE QUANTITY
         // =====================================================================
 
-        // Fractional support is checked before decimal/step precision.
+        // Fractional capability is resolved before quantity precision.
         //
-        // This is important because a venue may still define fractional
-        // precision defaults while fractional execution is currently disabled.
+        // If fractional execution is unavailable, desired quantity is floored to
+        // whole units regardless of any configured fractional precision.
         //
-        // Example:
+        // Examples:
         //
-        //     raw quantity = 3.7284
+        //     Alpaca long entry:
+        //         3.7284567894 -> 3.728456789
         //
-        //     fractional disabled -> 3
-        //     fractional enabled  -> apply quantity step/decimal precision
+        //     Alpaca short entry:
+        //         3.7284567894 -> 3
         //
-        // Flooring whole-unit quantities allows strategies to size from target
-        // notional without requiring venue-specific quantity calculations.
+        //     IBKR:
+        //         3.7284567894 -> 3
+        //
+        //     Hyperliquid:
+        //         -> normalized using InstrumentState precision
+        //
+        // Normalization never intentionally increases requested exposure.
         let quantity = if !fractional_quantity_supported {
             raw_quantity.floor()
         } else if let Some(step) = quantity_step {
@@ -261,12 +314,9 @@ impl VenueState {
                 ));
             }
 
-            // Never increase requested exposure during quantity normalization.
             (raw_quantity / step).floor() * step
         } else if let Some(decimals) = quantity_decimals {
             let factor = 10_f64.powi(decimals as i32);
-
-            // Never increase requested exposure during quantity normalization.
             (raw_quantity * factor).floor() / factor
         } else {
             raw_quantity
@@ -409,5 +459,46 @@ impl VenueState {
         }
 
         Ok(price)
+    }
+
+
+    // =========================================================================
+    // TIME-IN-FORCE NORMALIZATION
+    // =========================================================================
+
+    /// Normalizes a requested TimeInForce according to execution rules that are
+    /// known to require a specific venue representation.
+    ///
+    /// TradeIntent retains the strategy's requested TimeInForce. This function
+    /// only overrides that request when a proven venue constraint requires it.
+    ///
+    /// Current proven rule:
+    ///
+    ///     Alpaca fractional equity order -> DAY
+    ///
+    /// Whole-share Alpaca orders preserve the requested TimeInForce.
+    ///
+    /// IBKR currently preserves the requested TimeInForce because canonical TIF
+    /// behavior has not yet been fully wired/tested through the IBKR SDK path.
+    ///
+    /// Hyperliquid TIF capability validation remains separate because its valid
+    /// TIF behavior depends on order type and post-only semantics.
+    pub fn normalize_time_in_force(
+        &self,
+        venue: Venue,
+        quantity: f64,
+        requested: TimeInForce,
+    ) -> TimeInForce {
+        match venue {
+            Venue::Alpaca if self.is_fractional_quantity(quantity) => TimeInForce::Day,
+            _ => requested,
+        }
+    }
+
+    // Returns true when the quantity contains a meaningful fractional component,
+    // while ignoring tiny floating-point precision artifacts.
+    // Used in normalize_time_in_force()
+    fn is_fractional_quantity(&self, quantity: f64) -> bool {
+        (quantity - quantity.round()).abs() > 1e-9
     }
 }

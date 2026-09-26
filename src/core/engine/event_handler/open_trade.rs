@@ -323,21 +323,27 @@ impl Engine {
         // executable quantity allowed by the destination venue/instrument
         // without increasing requested exposure.
         //
-        // Examples of rules applied by VenueState:
+        // Side + OrderPurpose provide execution context for venue rules that
+        // cannot be determined from quantity alone.
         //
-        // - fractional quantity support
-        // - quantity step
-        // - quantity decimal precision
-        // - minimum quantity
-        // - instrument trading status
+        // Alpaca:
+        // - long entry  -> fractional quantity supported
+        // - short entry -> fractional quantity normalized to whole shares
         //
-        // Alpaca and IBKR may use VenueCapabilities defaults when instrument
-        // metadata is unavailable. Hyperliquid requires InstrumentState.
+        // IBKR:
+        // - quantities are currently normalized to whole shares
+        //
+        // Hyperliquid:
+        // - fractional behavior and precision come from InstrumentState
+        let side = intent.entry_side();
+        let purpose = OrderPurpose::Entry;
         let raw_quantity = intent.target_notional / intent.signal_px;
 
         let quantity = match self.venue_state.normalize_quantity(
             self.cfg.execution_venue,
             &intent.symbol,
+            side,
+            purpose,
             raw_quantity,
         ) {
             Ok(quantity) => quantity,
@@ -347,8 +353,8 @@ impl Engine {
                     self.debug_mode,
                     true,
                     format!(
-                        "[ENGINE] OPEN TRADE REJECTED | strategy={} | symbol={} | raw_quantity={} | error={:?}",
-                        intent.strategy_id, intent.symbol, raw_quantity, error,
+                        "[ENGINE] OPEN TRADE REJECTED | strategy={} | symbol={} | side={:?} | raw_quantity={} | error={:?}",
+                        intent.strategy_id, intent.symbol, side, raw_quantity, error,
                     ),
                 );
 
@@ -426,6 +432,22 @@ impl Engine {
 
 
         // ============================================================
+        // TIME IN FORCE
+        // ============================================================
+
+        // Preserve the strategy-requested TIF unless a proven venue execution rule
+        // requires a different canonical representation.
+        //
+        // Alpaca fractional equity orders require DAY. Whole-share Alpaca orders,
+        // IBKR orders, and Hyperliquid orders preserve the requested TIF here.
+        let time_in_force = self.venue_state.normalize_time_in_force(
+            self.cfg.execution_venue,
+            quantity,
+            intent.time_in_force,
+        );
+
+
+        // ============================================================
         // IDS
         // ============================================================
 
@@ -474,10 +496,10 @@ impl Engine {
             strategy_id: intent.strategy_id.clone(),
             trade_id: Some(trade_id),
             symbol: intent.symbol.clone(),
-            side: intent.entry_side(),
-            purpose: OrderPurpose::Entry,
+            side,
+            purpose,
             order_type: intent.order_type,
-            time_in_force: intent.time_in_force,
+            time_in_force,
             quantity,
             limit_px,
             stop_px,
@@ -573,13 +595,14 @@ impl Engine {
             self.debug_mode,
             true,
             format!(
-                "[ENGINE] OPEN TRADE SUBMITTED | trade_id={} | order_id={} | strategy={} | symbol={} | side={:?} | type={:?} | qty={} | limit_px={:?} | stop_px={:?} | notional=${:.2} | venue={:?}",
+                "[ENGINE] OPEN TRADE SUBMITTED | trade_id={} | order_id={} | strategy={} | symbol={} | side={:?} | type={:?} | tif={:?} | qty={} | limit_px={:?} | stop_px={:?} | notional=${:.2} | venue={:?}",
                 trade_id,
                 order_id,
                 intent.strategy_id,
                 intent.symbol,
-                intent.entry_side(),
+                side,
                 intent.order_type,
+                time_in_force,
                 quantity,
                 limit_px,
                 stop_px,

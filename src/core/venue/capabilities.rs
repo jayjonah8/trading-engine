@@ -141,15 +141,17 @@ impl VenueCapabilities {
             // Current Engine behavior:
             //
             // - instrument metadata is not required
-            // - fractional quantities are temporarily disabled
-            // - quantities are therefore normalized to whole shares
+            // - fractional long entries are supported
+            // - fractional established-position exits are supported
+            // - fractional short entries are not supported and fall back to whole shares
+            // - fractional quantities are normalized to 9 decimal places
             // - tested U.S. equity limit prices use cent precision
             //
-            // Alpaca fractional equity support will be re-enabled later after
-            // long-entry, short-entry, and exact-exit behavior is fully tested.
+            // Alpaca fractional orders also require DAY time-in-force. That rule is
+            // handled separately by the order capability/TIF normalization layer.
             Venue::Alpaca => Self {
                 requires_instrument_metadata: false,
-                fractional_quantity_mode: FractionalQuantityMode::Disabled,
+                fractional_quantity_mode: FractionalQuantityMode::LongOnly,
                 default_quantity_decimals: Some(9),
                 default_quantity_step: None,
                 default_price_decimals: Some(2),
