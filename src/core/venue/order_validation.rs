@@ -116,6 +116,9 @@ pub fn validate_order(order: &Order) -> Result<(), OrderValidationError> {
     // POST ONLY
     // ============================================================
 
+    // TODO:
+    // Revisit StopLimit + post_only after venue-specific execution testing.
+    // For now, post_only is only valid for standard Limit orders.
     if order.post_only && order.order_type != OrderType::Limit {
         return Err(OrderValidationError::PostOnlyRequiresLimitOrder);
     }
