@@ -24,6 +24,8 @@ use crate::{
             TradeId,
             TradeState,
         },
+
+        venue::validate_order,
     },
 
     shared::print_log,
@@ -354,17 +356,13 @@ impl Engine {
         // ============================================================
 
         // Capture everything needed before mutating Trades.
-        let strategy_id =
-            trade.strategy_id.clone();
+        let strategy_id = trade.strategy_id.clone();
 
-        let symbol =
-            trade.symbol.clone();
+        let symbol = trade.symbol.clone();
 
-        let direction =
-            trade.direction;
+        let direction = trade.direction;
 
-        let quantity =
-            trade.quantity;
+        let quantity = trade.quantity;
 
 
         // ============================================================
@@ -388,21 +386,91 @@ impl Engine {
         //
         // The canonical Order carries the venue and the execution router uses
         // that field to select the correct venue adapter.
-        let venue =
-            self.cfg.execution_venue;
+        let venue = self.cfg.execution_venue;
 
 
         // ============================================================
         // CAPTURE EXECUTION INSTRUCTIONS
         // ============================================================
 
-        // Capture these before moving their values into the canonical Order.
-        //
-        // They are also useful for the submission log below.
-        let order_type =
-            execution.order_type;
+        // Exit quantity comes directly from authoritative Trade state and is NOT
+        // normalized again. Execution instructions may still require venue/instrument
+        // normalization before constructing the canonical exit Order.
+        let order_type = execution.order_type;
 
-              
+
+        // ============================================================
+        // LIMIT PRICE
+        // ============================================================
+
+        // Exit limit prices pass through the same canonical venue/instrument
+        // normalization boundary as entry limit prices.
+        let limit_px = match execution.limit_px {
+            Some(raw_limit_px) => {
+                match self.venue_state.normalize_price(
+                    venue,
+                    &symbol,
+                    raw_limit_px,
+                ) {
+                    Ok(limit_px) => Some(limit_px),
+
+                    Err(error) => {
+                        print_log(
+                            self.debug_mode,
+                            true,
+                            format!(
+                                "[ENGINE] CLOSE TRADE REJECTED | trade_id={} | symbol={} | raw_limit_px={} | error={:?}",
+                                trade_id, symbol, raw_limit_px, error,
+                            ),
+                        );
+
+                        return;
+                    }
+                }
+            }
+
+            None => None,
+        };
+
+
+        // ============================================================
+        // STOP PRICE
+        // ============================================================
+
+        // Exit stop prices pass through the same canonical venue/instrument
+        // normalization boundary as entry stop prices.
+        let stop_px = match execution.stop_px {
+            Some(raw_stop_px) => {
+                match self.venue_state.normalize_price(
+                    venue,
+                    &symbol,
+                    raw_stop_px,
+                ) {
+                    Ok(stop_px) => Some(stop_px),
+
+                    Err(error) => {
+                        print_log(
+                            self.debug_mode,
+                            true,
+                            format!(
+                                "[ENGINE] CLOSE TRADE REJECTED | trade_id={} | symbol={} | raw_stop_px={} | error={:?}",
+                                trade_id, symbol, raw_stop_px, error,
+                            ),
+                        );
+
+                        return;
+                    }
+                }
+            }
+
+            None => None,
+        };
+
+
+        // ============================================================
+        // TIME IN FORCE
+        // ============================================================
+
         // Preserve the requested exit TIF unless a proven venue execution rule
         // requires a different canonical representation.
         //
@@ -413,14 +481,14 @@ impl Engine {
             execution.time_in_force,
         );
 
-        let limit_px =
-            execution.limit_px;
 
-        let stop_px =
-            execution.stop_px;
+        // ============================================================
+        // POST ONLY
+        // ============================================================
 
-        let post_only =
-            execution.post_only;
+        // Preserve the requested post-only policy. Venue capability validation
+        // determines whether the final Order/venue combination supports it.
+        let post_only = execution.post_only;
 
 
         // ============================================================
@@ -499,6 +567,26 @@ impl Engine {
             created_ts_ms: ts_ms,
             updated_ts_ms: ts_ms,
         };
+
+
+        // ============================================================
+        // VALIDATE CANONICAL ORDER
+        // ============================================================
+
+        // Validate the final canonical exit Order after venue/instrument
+        // normalization and before committing any authoritative Engine state.
+        if let Err(error) = validate_order(&order) {
+            print_log(
+                self.debug_mode,
+                true,
+                format!(
+                    "[ENGINE] CLOSE TRADE REJECTED | trade_id={} | strategy={} | symbol={} | error={:?}",
+                    trade_id, strategy_id, symbol, error,
+                ),
+            );
+
+            return;
+        }
 
 
         // ============================================================
