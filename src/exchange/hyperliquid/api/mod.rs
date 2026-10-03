@@ -4,4 +4,6 @@ pub mod balance;
 pub mod close;
 pub mod candle;
 pub mod flatten;
-pub mod leverage;
+pub mod update_leverage;
+
+pub use update_leverage::update_leverage;
