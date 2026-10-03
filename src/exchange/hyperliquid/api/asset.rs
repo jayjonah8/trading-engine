@@ -1,1 +1,0 @@
-// asset specific info like 24hr movement etc.

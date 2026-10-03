@@ -6,4 +6,5 @@ pub mod mapper;
 pub mod correlation;
 pub mod meta;
 pub mod api;
+pub mod types;
 pub mod tests;
