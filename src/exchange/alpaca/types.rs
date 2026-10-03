@@ -127,6 +127,7 @@ pub struct AlpacaAsset {
     pub marginable: bool,
     pub maintenance_margin_requirement: f64,
     pub shortable: bool,
-    pub easy_to_borrow: bool,
+    pub easy_to_borrow: bool, // deprecated, use barrow_status instead
+    pub borrow_status: Option<String>,
     pub fractionable: bool,
 }

@@ -33,11 +33,9 @@ async fn test_get_alpaca_asset() {
     println!("Marginable:      {}", asset.marginable);
     println!("Shortable:       {}", asset.shortable);
     println!("Easy To Borrow:  {}", asset.easy_to_borrow);
+    println!("Borrow Status:   {:?}", asset.borrow_status);
     println!("Fractionable:    {}", asset.fractionable);
-    println!(
-        "Maintenance MM:  {}",
-        asset.maintenance_margin_requirement
-    );
+    println!("Maintenance MM:  {}", asset.maintenance_margin_requirement);
     println!("========================================");
 }
 
@@ -55,6 +53,7 @@ async fn test_get_alpaca_asset() {
 // Marginable:      true
 // Shortable:       true
 // Easy To Borrow:  true
+// Borrow Status:   Some("easy_to_borrow")
 // Fractionable:    true
 // Maintenance MM:  30
 // ========================================
