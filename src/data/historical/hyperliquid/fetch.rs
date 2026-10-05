@@ -86,8 +86,11 @@ pub fn fetch_hyperliquid_historical_trades(
 
     // TODO:
     // Preserve deterministic archive ordering for trades with identical timestamps.
-    // Timestamp ordering is sufficient for the current directional backtester, but
-    // exact same-timestamp ordering may matter for future tick-sensitive strategies.
+    // Timestamp ordering is sufficient for the current medium-frequency directional
+    // backtester, but exact same-timestamp ordering may matter for future HFT,
+    // fine-grained tick strategies, market-making simulation, queue-position modeling,
+    // order-book reconstruction, or millisecond/sub-millisecond execution simulation,
+    // where exact event sequence can affect observed prices and whether orders fill.
     trades.sort_by_key(|trade| trade.timestamp);
 
     println!(
