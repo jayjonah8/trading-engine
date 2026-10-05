@@ -83,6 +83,11 @@ pub fn fetch_hyperliquid_historical_trades(
     }
 
     let mut trades: Vec<HistoricalTrade> = trades_by_tid.into_values().collect();
+
+    // TODO:
+    // Preserve deterministic archive ordering for trades with identical timestamps.
+    // Timestamp ordering is sufficient for the current directional backtester, but
+    // exact same-timestamp ordering may matter for future tick-sensitive strategies.
     trades.sort_by_key(|trade| trade.timestamp);
 
     println!(
