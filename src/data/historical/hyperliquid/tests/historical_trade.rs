@@ -15,6 +15,53 @@ use crate::data::historical::{
     types::HistoricalTrade,
 };
 
+use crate::data::historical::hyperliquid::fetch::fetch_hyperliquid_historical_trades;
+
+// test_hyperliquid_historical_trades
+//     → low-level archive/parser + dedup invariant test
+
+// test_prod_hyperliquid_historical_trades
+//     → actual fetch_hyperliquid_historical_trades() API test
+
+
+// ============================================================
+// PRODUCTION HYPERLIQUID HISTORICAL TRADES
+// ============================================================
+// Tests the production Hyperliquid historical trade fetcher using a
+// locally cached hourly `node_fills_by_block` archive.
+//
+// The fetcher reads the LZ4 archive, filters requested symbols and time,
+// deduplicates participant fills by trade ID, and returns the shared
+// `HistoricalTrade` format used by the backtest system.
+//
+// Run:
+// cargo test test_prod_hyperliquid_historical_trades -- --nocapture
+
+#[test]
+fn test_prod_hyperliquid_historical_trades() {
+    let trades = fetch_hyperliquid_historical_trades(
+        &["BTC", "ETH", "SOL", "HYPE", "NEAR", "ZEC"],
+        "2025-07-27T10:00:00Z",
+        "2025-07-27T11:00:00Z",
+    )
+    .expect("Failed to get Hyperliquid historical trades");
+
+    println!("Received {} total trades", trades.len());
+
+    for trade in trades.iter().take(100) {
+        println!(
+            "{} | {} | P: {:.6} | S: {}",
+            trade.timestamp,
+            trade.symbol,
+            trade.price,
+            trade.size,
+        );
+    }
+
+    assert!(!trades.is_empty());
+}
+
+
 
 // ============================================================
 // TEST HYPERLIQUID HISTORICAL TRADES
