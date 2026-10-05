@@ -59,29 +59,18 @@ use crate::data::{
 };
 
 use crate::exchange::{
-    alpaca::{
-        adapter::run_alpaca_adapter,
-    },
+    alpaca::adapter::run_alpaca_adapter,
 
     hyperliquid::{
         adapter::run_hyperliquid_adapter,
-
-        meta::{
-            fetch_meta,
-            map_meta_to_instruments,
-        },
-
+        api::close_all_positions,
+        meta::{fetch_meta, map_meta_to_instruments},
         pollers::run_hyperliquid_meta_poller,
     },
 
-    ibkr::{
-        adapter::run_ibkr_adapter,
-    },
+    ibkr::adapter::run_ibkr_adapter,
 
-    router::{
-        run_execution_router,
-        ExecutionRoutes,
-    },
+    router::{run_execution_router, ExecutionRoutes},
 };
 
 use crate::strategies::{
@@ -162,6 +151,7 @@ async fn main() -> Result<()> {
         // ENGINE SETTINGS
         // ============================================================
 
+        close_trades_on_startup: true,
         min_trade_age_before_exit_secs: 1, // delete later
 
         enable_simulation_mode: false,
@@ -172,6 +162,36 @@ async fn main() -> Result<()> {
         enable_discord_notifications: true,
         enable_slack_notifications: true,
     };
+
+    // ============================================================
+    // STARTUP POSITION CLEANUP
+    // ============================================================
+
+    // Startup cleanup must only touch the live execution account.
+    // Never close real venue positions during backtest or simulation mode.
+    if cfg.close_trades_on_startup
+        && !cfg.enable_backtest_mode
+        && !cfg.enable_simulation_mode
+    {
+        match cfg.execution_venue {
+            Venue::Hyperliquid => {
+                if let Err(error) = close_all_positions().await {
+                    // TODO: Log fatal Hyperliquid startup position cleanup failure.
+                    // TODO: Send Discord/Slack fatal error message before terminating the bot.
+
+                    panic!("Hyperliquid startup position cleanup failed: {}", error);
+                }
+            }
+
+            Venue::Alpaca => {
+                // TODO: Add Alpaca startup position cleanup.
+            }
+
+            Venue::InteractiveBrokers => {
+                // TODO: Add Interactive Brokers startup position cleanup.
+            }
+        }
+    }
 
 
     // ============================================================

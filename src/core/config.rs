@@ -96,8 +96,11 @@ pub struct Config {
     pub max_symbol_notional: Option<f64>,
 
     // ============================================================
-    // OTHER ENGINE SETTINGS
+    // ENGINE SETTINGS
     // ============================================================
+
+    // Flatten all live trades when starting the bot for the selected venue
+    pub close_trades_on_startup: bool,
 
     // Maybe delete later.
     /// Minimum number of seconds a trade must remain open before it can be exited.

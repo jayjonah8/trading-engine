@@ -1,62 +1,53 @@
-#![allow(dead_code)]
-
-use std::time::Duration;
+use std::{
+    sync::Arc,
+    time::Duration,
+};
 
 use dotenvy::dotenv;
+use hyperliquid_rust_sdk::Meta;
 
 use tokio::{
-    sync::mpsc,
+    sync::{mpsc, RwLock},
+    task::JoinHandle,
     time::timeout,
 };
 
 use crate::{
-    core::{
-        config::Config,
+    core::execution::{
+        ClientOrderId,
+        ExecCommand,
+        ExecEvent,
+        Order,
+        OrderId,
+        OrderPurpose,
+        OrderState,
+        OrderType,
+        Side,
+        TimeInForce,
+        Venue,
+    },
 
-        execution::{
-            ClientOrderId,
-            ExecCommand,
-            ExecEvent,
-            Order,
-            OrderId,
-            OrderPurpose,
-            OrderState,
-            OrderType,
-            Side,
-            TimeInForce,
-            Venue,
-        },
+    data::{
+        historical::provider::HistoricalDataProvider,
+        live::provider::LiveMarketDataProvider,
     },
 
     exchange::{
-        hyperliquid::adapter::run_hyperliquid_adapter,
+        hyperliquid::{
+            adapter::run_hyperliquid_adapter,
+            meta::fetch_meta,
+        },
 
         router::{
             run_execution_router,
             ExecutionRoutes,
         },
     },
+
+    shared::tests::default_test_config,
 };
 
 use super::shared::fetch_test_meta_cache;
-
-use std::sync::Arc;
-
-use hyperliquid_rust_sdk::Meta;
-
-use tokio::{
-    sync::RwLock,
-    task::JoinHandle,
-};
-
-use crate::exchange::hyperliquid::{
-    meta::fetch_meta,
-};
-
-use crate::data::{
-    historical::provider::HistoricalDataProvider,
-    live::provider::LiveMarketDataProvider,
-};
 
 // ============================================================
 // HYPERLIQUID MARKET ORDER PRODUCTION-PIPELINE INTEGRATION TEST
@@ -232,34 +223,34 @@ async fn test_hyperliquid_market_order_production_pipeline() {
     // CONFIG
     // ============================================================
 
-    let cfg = Config {
-        execution_venue: Venue::Hyperliquid,
-        live_market_data_provider: LiveMarketDataProvider::Hyperliquid,
-        historical_data_provider: HistoricalDataProvider::Hyperliquid,
+    let mut cfg = default_test_config();
 
-        symbols: vec![
-            SYMBOL.to_string(),
-        ],
+    cfg.execution_venue = Venue::Hyperliquid;
+    cfg.live_market_data_provider = LiveMarketDataProvider::Hyperliquid;
+    cfg.historical_data_provider = HistoricalDataProvider::Hyperliquid;
 
-        max_active_trades: Some(1),
-        max_active_assets: Some(1),
-        max_active_trades_per_symbol: Some(1),
-        max_active_trades_per_strategy: Some(1),
+    cfg.symbols = vec![SYMBOL.to_string()];
 
-        max_order_notional: Some(20.0),
-        max_gross_notional: Some(20.0),
-        max_symbol_notional: Some(20.0),
+    cfg.max_active_trades = Some(1);
+    cfg.max_active_assets = Some(1);
+    cfg.max_active_trades_per_symbol = Some(1);
+    cfg.max_active_trades_per_strategy = Some(1);
 
-        min_trade_age_before_exit_secs: 1,
+    cfg.max_order_notional = Some(20.0);
+    cfg.max_gross_notional = Some(20.0);
+    cfg.max_symbol_notional = Some(20.0);
 
-        enable_simulation_mode: false,
-        enable_backtest_mode: false,
+    cfg.min_trade_age_before_exit_secs = 1;
 
-        backtest_starting_balance: 100_000.0,
+    cfg.enable_simulation_mode = false;
+    cfg.enable_backtest_mode = false;
 
-        enable_discord_notifications: false,
-        enable_slack_notifications: false,
-    };
+    cfg.backtest_starting_balance = 100_000.0;
+
+    cfg.close_trades_on_startup = false;
+
+    cfg.enable_discord_notifications = false;
+    cfg.enable_slack_notifications = false;
 
 
     // ============================================================

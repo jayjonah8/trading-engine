@@ -11,10 +11,10 @@ use tokio::{
 
 use crate::{
     core::{
-        config::Config,
         events::AppEvent,
         execution::Venue,
     },
+
     data::{
         historical::provider::HistoricalDataProvider,
         live::{
@@ -22,6 +22,8 @@ use crate::{
             provider::LiveMarketDataProvider,
         },
     },
+
+    shared::tests::default_test_config,
 };
 
 // Run test:
@@ -45,53 +47,39 @@ async fn test_hyperliquid_market_data_feed() -> Result<()> {
     // CONFIG
     // ============================================================
 
-    let cfg = Config {
-        // ============================================================
-        // EXECUTION / MARKET DATA
-        // ============================================================
+    let mut cfg = default_test_config();
 
-        execution_venue: Venue::Hyperliquid,
-        live_market_data_provider: LiveMarketDataProvider::Hyperliquid,
-        historical_data_provider: HistoricalDataProvider::Hyperliquid,
+    cfg.execution_venue = Venue::Hyperliquid;
+    cfg.live_market_data_provider = LiveMarketDataProvider::Hyperliquid;
+    cfg.historical_data_provider = HistoricalDataProvider::Hyperliquid;
 
-        symbols: vec![
-            "BTC".to_string(),
-            "ETH".to_string(),
-            "SOL".to_string(),
-            "HYPE".to_string(),
-            "ZEC".to_string(),
-        ],
+    cfg.symbols = vec![
+        "BTC".to_string(),
+        "ETH".to_string(),
+        "SOL".to_string(),
+        "HYPE".to_string(),
+        "ZEC".to_string(),
+    ];
 
-        // ============================================================
-        // TRADE / ASSET LIMITS
-        // ============================================================
+    cfg.max_active_trades = Some(1);
+    cfg.max_active_assets = Some(1);
+    cfg.max_active_trades_per_symbol = Some(1);
+    cfg.max_active_trades_per_strategy = Some(1);
 
-        max_active_trades: Some(1),
-        max_active_assets: Some(1),
-        max_active_trades_per_symbol: Some(1),
-        max_active_trades_per_strategy: Some(1),
+    cfg.max_order_notional = Some(20.0);
+    cfg.max_gross_notional = Some(20.0);
+    cfg.max_symbol_notional = Some(20.0);
 
-        // ============================================================
-        // NOTIONAL LIMITS
-        // ============================================================
+    cfg.min_trade_age_before_exit_secs = 1;
 
-        max_order_notional: Some(20.0),
-        max_gross_notional: Some(20.0),
-        max_symbol_notional: Some(20.0),
+    cfg.enable_simulation_mode = false;
+    cfg.enable_backtest_mode = false;
+    cfg.backtest_starting_balance = 100_000.0;
 
-        // ============================================================
-        // OTHER ENGINE SETTINGS
-        // ============================================================
+    cfg.close_trades_on_startup = false;
 
-        min_trade_age_before_exit_secs: 1,
-
-        enable_simulation_mode: false,
-        enable_backtest_mode: false,
-        backtest_starting_balance: 100_000.0,
-
-        enable_slack_notifications: true,
-        enable_discord_notifications: true,
-    };
+    cfg.enable_slack_notifications = true;
+    cfg.enable_discord_notifications = true;
 
     // ============================================================
     // MASTER EVENT CHANNEL

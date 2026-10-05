@@ -5,32 +5,33 @@ use tokio::sync::{
     watch,
 };
 
-use crate::core::{
-    config::Config,
+use crate::{
+    core::{
+        engine::engine::Engine,
+        engine_view::EngineView,
 
-    engine::engine::Engine,
+        execution::{
+            ExecCommand,
+            OrderState,
+            OrderType,
+            TimeInForce,
+            Venue,
+        },
 
-    engine_view::EngineView,
+        trade_intent::TradeIntent,
 
-    execution::{
-        ExecCommand,
-        OrderState,
-        OrderType,
-        TimeInForce,
-        Venue,
+        trades::{
+            Direction,
+            TradeState,
+        },
     },
 
-    trade_intent::TradeIntent,
-
-    trades::{
-        Direction,
-        TradeState,
+    data::{
+        historical::provider::HistoricalDataProvider,
+        live::provider::LiveMarketDataProvider,
     },
-};
 
-use crate::data::{
-    historical::provider::HistoricalDataProvider,
-    live::provider::LiveMarketDataProvider,
+    shared::tests::default_test_config,
 };
 
 
@@ -54,34 +55,34 @@ async fn test_handle_open_trade_creates_state_and_command() {
     // CONFIG
     // ============================================================
 
-    let cfg = Config {
-        execution_venue: Venue::Hyperliquid,
-        live_market_data_provider: LiveMarketDataProvider::Hyperliquid,
-        historical_data_provider: HistoricalDataProvider::Hyperliquid,
+    let mut cfg = default_test_config();
 
-        symbols: vec![
-            "BTC".to_string(),
-        ],
+    cfg.execution_venue = Venue::Hyperliquid;
+    cfg.live_market_data_provider = LiveMarketDataProvider::Hyperliquid;
+    cfg.historical_data_provider = HistoricalDataProvider::Hyperliquid;
 
-        max_active_trades: Some(4),
-        max_active_assets: Some(4),
-        max_active_trades_per_symbol: Some(2),
-        max_active_trades_per_strategy: Some(4),
+    cfg.symbols = vec!["BTC".to_string()];
 
-        max_order_notional: Some(10_000.0),
-        max_gross_notional: Some(50_000.0),
-        max_symbol_notional: Some(20_000.0),
+    cfg.max_active_trades = Some(4);
+    cfg.max_active_assets = Some(4);
+    cfg.max_active_trades_per_symbol = Some(2);
+    cfg.max_active_trades_per_strategy = Some(4);
 
-        min_trade_age_before_exit_secs: 1,
+    cfg.max_order_notional = Some(10_000.0);
+    cfg.max_gross_notional = Some(50_000.0);
+    cfg.max_symbol_notional = Some(20_000.0);
 
-        enable_simulation_mode: false,
-        enable_backtest_mode: false,
+    cfg.min_trade_age_before_exit_secs = 1;
 
-        backtest_starting_balance: 100_000.0,
+    cfg.enable_simulation_mode = false;
+    cfg.enable_backtest_mode = false;
 
-        enable_discord_notifications: false,
-        enable_slack_notifications: false,
-    };
+    cfg.backtest_starting_balance = 100_000.0;
+
+    cfg.close_trades_on_startup = false;
+
+    cfg.enable_discord_notifications = false;
+    cfg.enable_slack_notifications = false;
 
 
     // ============================================================
