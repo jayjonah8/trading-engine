@@ -1,6 +1,11 @@
 run:
 	caffeinate -i cargo run
 
+###################################################
+###################################################
+
+# Hyperliquid 
+
 # Lists (not download) the first 20 objects in Hyperliquid's historical fills archive. (Cost almost nothing)
 hyperliquid-list-history:
 	aws s3api list-objects-v2 \
@@ -25,6 +30,11 @@ hyperliquid-download-test-hour:
 		--request-payer requester \
 		--profile admin \
 		~/trading-data/hyperliquid/node_fills_by_block/hourly/20250727/10.lz4
+
+# Deletes all locally cached Hyperliquid historical archive data.
+# This does not affect the remote Hyperliquid S3 archive.
+hyperliquid-delete-history:
+	rm -rf ~/trading-data/hyperliquid/node_fills_by_block
 
 
 ###################################################
