@@ -39,10 +39,14 @@ use crate::data::historical::hyperliquid::fetch::fetch_hyperliquid_historical_tr
 
 #[test]
 fn test_prod_hyperliquid_historical_trades() {
+    let symbols = ["BTC", "ETH", "SOL", "HYPE", "NEAR", "ZEC", "TRUMP"];
+    let start = "2025-07-27T10:00:00Z";
+    let end = "2025-07-27T11:00:00Z";
+
     let trades = fetch_hyperliquid_historical_trades(
-        &["BTC", "ETH", "SOL", "HYPE", "NEAR", "ZEC"],
-        "2025-07-27T10:00:00Z",
-        "2025-07-27T11:00:00Z",
+        &symbols,
+        start,
+        end,
     )
     .expect("Failed to get Hyperliquid historical trades");
 
@@ -58,9 +62,15 @@ fn test_prod_hyperliquid_historical_trades() {
         );
     }
 
+    println!("\nTrades by symbol:");
+
+    for symbol in symbols {
+        let count = trades.iter().filter(|trade| trade.symbol == symbol).count();
+        println!("{}: {} trades", symbol, count);
+    }
+
     assert!(!trades.is_empty());
 }
-
 
 
 // ============================================================

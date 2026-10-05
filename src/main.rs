@@ -120,7 +120,7 @@ async fn main() -> Result<()> {
         live_market_data_provider: LiveMarketDataProvider::Alpaca,
 
         // Used only when enable_backtest_mode = true.
-        historical_data_provider: HistoricalDataProvider::Alpaca,
+        historical_data_provider: HistoricalDataProvider::Hyperliquid,
 
         // symbols: vec![
         //     "BTC".to_string(),
@@ -165,7 +165,7 @@ async fn main() -> Result<()> {
         min_trade_age_before_exit_secs: 1, // delete later
 
         enable_simulation_mode: false,
-        enable_backtest_mode: false,
+        enable_backtest_mode: true,
 
         backtest_starting_balance: 100_000.0,
 
@@ -796,11 +796,11 @@ async fn main() -> Result<()> {
     // The same StrategyKind identifies a strategy family while the factory
     // chooses the live or historical implementation.
     let enabled = vec![
-        // StrategyKind::Base,
+        StrategyKind::Base,
         // StrategyKind::MeanReversion,
         // StrategyKind::MarketOrder,
         // StrategyKind::LimitOrder,
-        StrategyKind::LimitOrderAdvanced,
+        // StrategyKind::LimitOrderAdvanced,
     ];
 
 
@@ -1023,11 +1023,12 @@ async fn main() -> Result<()> {
             // ====================================================
 
             HistoricalDataProvider::Hyperliquid => {
-                return Err(
-                    anyhow::anyhow!(
-                        "Hyperliquid historical backtest provider is not connected yet"
-                    )
-                );
+                data::historical::hyperliquid::runner::run_hyperliquid_backtest_feed(
+                    &backtest_senders,
+                    &tx_engine,
+                )
+                .await
+                .map_err(|error| anyhow::anyhow!(error.to_string()))?;
             }
 
 
