@@ -8,6 +8,7 @@ use tokio::sync::{
 use crate::{
     core::{
         engine::engine::Engine,
+        general::General,
         engine_view::EngineView,
 
         execution::{
@@ -112,9 +113,16 @@ async fn test_handle_open_trade_creates_state_and_command() {
     // ENGINE
     // ============================================================
 
+    let general = General {
+        realized_pnl: 0.0,
+        sim_realized_pnl: 0.0,
+        starting_balance: 0.0,
+    };
+
     let mut engine =
         Engine::new(
             cfg,
+            general,
             tx_view,
             tx_engine,
             tx_exec,

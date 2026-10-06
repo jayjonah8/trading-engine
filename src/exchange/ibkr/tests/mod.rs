@@ -6,3 +6,4 @@ pub mod asset;
 pub mod positions;
 pub mod connection;
 pub mod shortable;
+pub mod balance;

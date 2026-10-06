@@ -18,6 +18,7 @@ use tokio::{
 use crate::{
     core::{
         engine::engine::Engine,
+        general::General,
         engine_view::EngineView,
         execution::{
             ExecCommand,
@@ -203,9 +204,16 @@ async fn test_open_trade_routes_to_hyperliquid_adapter() {
     // ENGINE
     // ============================================================
 
+    let general = General {
+        realized_pnl: 0.0,
+        sim_realized_pnl: 0.0,
+        starting_balance: 0.0,
+    };
+
     let mut engine =
         Engine::new(
             cfg,
+            general,
             tx_view,
             tx_engine,
             tx_exec,

@@ -183,6 +183,7 @@ impl Engine {
     /// any future venue.
     pub fn new(
         cfg: Config,
+        general: General,
         tx_view: watch::Sender<Arc<EngineView>>,
         tx_engine: UnboundedSender<EngineEvent>,
         tx_exec: UnboundedSender<ExecCommand>,
@@ -219,17 +220,6 @@ impl Engine {
 
                 max_symbol_notional:
                     cfg.max_symbol_notional,
-            };
-
-
-        // ============================================================
-        // INITIALIZE GENERAL STATE
-        // ============================================================
-        let general =
-            General {
-                realized_pnl: 0.0,
-                sim_realized_pnl: 0.0,
-                account_balance: 0.0, // @todo must get acount balance based on the venue / exchange
             };
 
 

@@ -13,5 +13,5 @@ pub struct General {
     pub sim_realized_pnl: f64,
 
     /// Current account balance used by the engine.
-    pub account_balance: f64,
+    pub starting_balance: f64,
 }

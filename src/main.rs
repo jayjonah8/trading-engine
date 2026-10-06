@@ -8,8 +8,8 @@ mod notifications;
 mod data;
 
 use std::sync::Arc;
-
 use anyhow::Result;
+use anyhow::Context;
 
 use hyperliquid_rust_sdk::Meta;
 
@@ -27,6 +27,7 @@ use tokio::sync::{
 
 use crate::core::{
     config::Config,
+    general::General,
 
     engine::engine::{
         Engine,
@@ -59,11 +60,14 @@ use crate::data::{
 };
 
 use crate::exchange::{
-    alpaca::adapter::run_alpaca_adapter,
+    alpaca::{
+        adapter::run_alpaca_adapter,
+        api::get_alpaca_account_balances,
+    },
 
     hyperliquid::{
         adapter::run_hyperliquid_adapter,
-        api::close_all_positions,
+        api::{close_all_positions, get_hyperliquid_account_balances},
         meta::{fetch_meta, map_meta_to_instruments},
         pollers::run_hyperliquid_meta_poller,
     },
@@ -192,6 +196,47 @@ async fn main() -> Result<()> {
             }
         }
     }
+
+    // ============================================================
+    // INITIAL ACCOUNT BALANCE
+    // ============================================================
+
+    // Backtests use configured starting capital.
+    // Live and simulation modes obtain the account balance from
+    // the configured execution venue.
+
+    let starting_balance = if cfg.enable_backtest_mode {
+        cfg.backtest_starting_balance
+    } else {
+        match cfg.execution_venue {
+            Venue::Hyperliquid => {
+                let (account_value, _, _, _, _) =
+                    get_hyperliquid_account_balances().await?;
+
+                account_value
+            }
+
+            Venue::Alpaca => {
+                let account = get_alpaca_account_balances().await?;
+
+                account.portfolio_value.parse::<f64>()
+                    .context("Failed to parse Alpaca portfolio value")?
+            }
+
+            Venue::InteractiveBrokers => {
+                // TODO: Fetch IBKR account equity.
+                anyhow::bail!("IBKR account balance initialization not implemented");
+            }
+        }
+    };
+
+    let general = General {
+        realized_pnl: 0.0,
+        sim_realized_pnl: 0.0,
+        starting_balance,
+    };
+
+    println!("Starting balance: ${:.2}", general.starting_balance);
 
 
     // ============================================================
@@ -400,6 +445,7 @@ async fn main() -> Result<()> {
     let mut engine =
         Engine::new(
             cfg.clone(),
+            general,
             tx_view.clone(),
             tx_engine.clone(),
             tx_exec.clone(),

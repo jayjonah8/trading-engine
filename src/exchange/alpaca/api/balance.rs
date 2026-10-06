@@ -20,7 +20,7 @@ use crate::exchange::alpaca::{
 /// Returns an error if the configuration cannot be loaded, the Alpaca
 /// request fails, Alpaca returns a non-success HTTP status, or the
 /// response cannot be parsed.
-pub async fn get_alpaca_account_balance()
+pub async fn get_alpaca_account_balances()
     -> anyhow::Result<AlpacaAccountBalance>
 {
     let config =

@@ -2,7 +2,7 @@
 
 
 use crate::exchange::alpaca::api::balance::{
-    get_alpaca_account_balance,
+    get_alpaca_account_balances,
 };
 
 
@@ -22,7 +22,7 @@ async fn test_alpaca_account_balance() {
     // ============================================================
 
     let account_balance =
-        get_alpaca_account_balance()
+        get_alpaca_account_balances()
             .await
             .expect(
                 "Failed to get Alpaca account balance"
