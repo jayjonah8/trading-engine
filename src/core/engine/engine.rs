@@ -16,7 +16,6 @@ use crate::core::{
     venue::VenueState,
     engine::{
         shared::{
-            get_execution_mode,
             verify_engine_config,
         },
         state::{
@@ -188,10 +187,11 @@ impl Engine {
         tx_engine: UnboundedSender<EngineEvent>,
         tx_exec: UnboundedSender<ExecCommand>,
     ) -> Self {
+
         verify_engine_config(&cfg);
         validate_notification_env(&cfg);
 
-        let execution_mode = get_execution_mode(&cfg);
+        let execution_mode = cfg.execution_mode;
 
 
         // ============================================================

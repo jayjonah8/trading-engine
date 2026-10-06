@@ -28,6 +28,7 @@ use crate::core::{
         Engine,
         EngineEvent,
     },
+    engine::state::ExecutionMode,
 
     engine_view::EngineView,
 
@@ -105,6 +106,8 @@ async fn main() -> Result<()> {
         // EXECUTION / MARKET DATA
         // ============================================================
 
+        execution_mode: ExecutionMode::Live,
+
         execution_venue: Venue::InteractiveBrokers,
 
         // Live market data is intentionally independent from execution.
@@ -156,27 +159,22 @@ async fn main() -> Result<()> {
         close_trades_on_startup: true,
         min_trade_age_before_exit_secs: 1, // delete later
 
-        enable_simulation_mode: false,
-        enable_backtest_mode: true,
-
-        backtest_starting_balance: 100_000.0,
+        backtest_starting_balance: 250_000.0,
 
         enable_discord_notifications: true,
         enable_slack_notifications: true,
     };
 
-    // ============================================================
+
+   // ============================================================
     // STARTUP POSITION CLEANUP
     // ============================================================
 
-    // Startup cleanup must only touch the live execution account.
-    // Never close real venue positions during backtest or simulation mode.
-    if cfg.close_trades_on_startup
-        && !cfg.enable_backtest_mode
-        && !cfg.enable_simulation_mode
-    {
-        match cfg.execution_venue {
-            Venue::Hyperliquid => {
+    // Startup cleanup only applies to venue-backed execution modes.
+    // Never close venue positions during backtest or simulation mode.
+    if cfg.close_trades_on_startup {
+        match (cfg.execution_mode, cfg.execution_venue) {
+            (ExecutionMode::Live, Venue::Hyperliquid) => {
                 if let Err(error) = close_all_positions().await {
                     // TODO: Log fatal Hyperliquid startup position cleanup failure.
                     // TODO: Send Discord/Slack fatal error message before terminating the bot.
@@ -185,58 +183,65 @@ async fn main() -> Result<()> {
                 }
             }
 
-            Venue::Alpaca => {
+            (ExecutionMode::Live | ExecutionMode::Paper, Venue::Alpaca) => {
                 // TODO: Add Alpaca startup position cleanup.
             }
 
-            Venue::InteractiveBrokers => {
+            (ExecutionMode::Live | ExecutionMode::Paper, Venue::InteractiveBrokers) => {
                 // TODO: Add Interactive Brokers startup position cleanup.
             }
+
+            _ => {}
         }
     }
+
 
     // ============================================================
     // INITIAL ACCOUNT BALANCE
     // ============================================================
 
-    // Backtests use configured starting capital.
-    // Live and simulation modes obtain the account balance from
-    // the configured execution venue.
+    // Backtest and simulation use configured starting capital.
+    // Live and supported paper modes obtain the account balance
+    // from the configured execution venue.
 
-    let starting_balance = if cfg.enable_backtest_mode {
-        cfg.backtest_starting_balance
-    } else {
-        match cfg.execution_venue {
-            Venue::Hyperliquid => {
-                let (account_value, _, _, _, _) =
-                    get_hyperliquid_account_balances().await?;
+    let starting_balance = match (cfg.execution_mode, cfg.execution_venue) {
+        (ExecutionMode::Backtest | ExecutionMode::Simulation, _) => {
+            cfg.backtest_starting_balance
+        }
 
-                account_value
-            }
+        (ExecutionMode::Live, Venue::Hyperliquid) => {
+            let (account_value, _, _, _, _) =
+                get_hyperliquid_account_balances().await?;
 
-            Venue::Alpaca => {
-                let account = get_alpaca_account_balances().await?;
+            account_value
+        }
 
-                account.portfolio_value.parse::<f64>()
-                    .context("Failed to parse Alpaca portfolio value")?
-            }
+        (ExecutionMode::Live | ExecutionMode::Paper, Venue::Alpaca) => {
+            let account = get_alpaca_account_balances().await?;
 
-            Venue::InteractiveBrokers => {
-                // TODO: Move IBKR connection settings into Config or .env.
-                let address = "127.0.0.1:7497";
-                let client_id = 201; // mut be unquie from other ibkr client_id connections
+            account.portfolio_value.parse::<f64>()
+                .context("Failed to parse Alpaca portfolio value")?
+        }
 
-                let timezone_name = "Hawaii-Aleutian Standard Time";
-                let timezone_alias = "Pacific/Honolulu";
+        (ExecutionMode::Live | ExecutionMode::Paper, Venue::InteractiveBrokers) => {
+            // TODO: Move IBKR connection settings into Config or .env.
+            let address = "127.0.0.1:7497";
+            let client_id = 201; // Must be unique from other active IBKR client ID connections.
 
-                // TODO: Potentially Add account_id filtering for future multi-account support.
-                get_ibkr_account_balances(
-                    address,
-                    client_id,
-                    timezone_name,
-                    timezone_alias,
-                ).await?
-            }
+            let timezone_name = "Hawaii-Aleutian Standard Time";
+            let timezone_alias = "Pacific/Honolulu";
+
+            // TODO: Potentially add account_id filtering for future multi-account support.
+            get_ibkr_account_balances(
+                address,
+                client_id,
+                timezone_name,
+                timezone_alias,
+            ).await?
+        }
+
+        (ExecutionMode::Paper, Venue::Hyperliquid) => {
+            anyhow::bail!("Hyperliquid does not support paper trading");
         }
     };
 
@@ -368,10 +373,10 @@ async fn main() -> Result<()> {
         None;
 
     let hyperliquid_meta_cache:
-        Option<Arc<RwLock<Meta>>> =
-        if !cfg.enable_backtest_mode
-            && cfg.execution_venue == Venue::Hyperliquid
-        {
+    Option<Arc<RwLock<Meta>>> =
+    if cfg.execution_mode == ExecutionMode::Live
+        && cfg.execution_venue == Venue::Hyperliquid
+    {
             // ========================================================
             // FETCH REQUIRED STARTUP META
             // ========================================================
@@ -572,7 +577,10 @@ async fn main() -> Result<()> {
     // - canonical Engine VenueState
     //
     // Pollers run in live and simulation modes, never historical backtests.
-    if !cfg.enable_backtest_mode {
+    if matches!(
+        cfg.execution_mode,
+        ExecutionMode::Live | ExecutionMode::Simulation
+    ) {
         if let Some(meta_cache) =
             hyperliquid_meta_cache
                 .as_ref()
@@ -677,10 +685,9 @@ async fn main() -> Result<()> {
     //     -> tx_exec_evt
     //     -> Engine
     //
-    // Live execution adapters do not run during simulation or historical
-    // backtesting.
-    if !cfg.enable_backtest_mode
-        && !cfg.enable_simulation_mode
+    // The live Hyperliquid execution adapter only runs in Live mode.
+    // Simulation and Backtest use internal execution adapters.
+    if cfg.execution_mode == ExecutionMode::Live
         && cfg.execution_venue == Venue::Hyperliquid
     {
         let adapter_cfg =
@@ -730,9 +737,10 @@ async fn main() -> Result<()> {
     // START ALPACA EXECUTION ADAPTER
     // ============================================================
 
-    if !cfg.enable_backtest_mode
-        && !cfg.enable_simulation_mode
-        && cfg.execution_venue == Venue::Alpaca
+    if matches!(
+        cfg.execution_mode,
+        ExecutionMode::Live | ExecutionMode::Paper
+    ) && cfg.execution_venue == Venue::Alpaca
     {
         let adapter_cfg = cfg.clone();
         let tx_exec_evt = tx_exec_evt.clone();
@@ -766,25 +774,23 @@ async fn main() -> Result<()> {
     //     -> tx_exec_evt
     //     -> Engine
     //
-    // Live execution adapters do not run during simulation or historical
-    // backtesting.
-    if !cfg.enable_backtest_mode
-        && !cfg.enable_simulation_mode
-        && cfg.execution_venue == Venue::InteractiveBrokers
+    // The IBKR execution adapter runs in Live and Paper modes.
+    // Simulation and Backtest use internal execution adapters.
+    if matches!(
+        cfg.execution_mode,
+        ExecutionMode::Live | ExecutionMode::Paper
+    ) && cfg.execution_venue == Venue::InteractiveBrokers
     {
         let tx_exec_evt = tx_exec_evt.clone();
 
-        // TEST:
         // Temporary IBKR connection configuration while proving the adapter.
         //
         // TODO:
-        // Move IBKR address/client ID into canonical application/exchange
-        // configuration after the adapter lifecycle has been fully tested.
-        // TODO: Move IBKR connection settings into Config or .env.
+        // Move IBKR connection settings into Config or .env after the adapter
+        // lifecycle has been fully tested.
         let address = "127.0.0.1:7497".to_string();
         let client_id = 200;
 
-        // TEST:
         // Temporary TWS timezone mapping.
         // Move into canonical IBKR configuration later.
         let timezone_name = "Hawaii-Aleutian Standard Time".to_string();
@@ -811,12 +817,15 @@ async fn main() -> Result<()> {
     // LIVE MARKET DATA -> ENGINE PRICE TICKS
     // ============================================================
 
-    // In live/simulation mode, subscribe the Engine to the market-data
-    // broadcast bus and convert incoming canonical market-data events into
-    // EngineEvents.
+    // Live, paper, and simulation modes subscribe the Engine to the
+    // live market-data broadcast bus and convert incoming canonical
+    // market-data events into EngineEvents.
     //
     // Backtest mode uses its historical deterministic event path instead.
-    if !cfg.enable_backtest_mode {
+    if matches!(
+        cfg.execution_mode,
+        ExecutionMode::Live | ExecutionMode::Paper | ExecutionMode::Simulation
+    ) {
         let mut rx_for_engine =
             tx_bus.subscribe();
 
@@ -899,7 +908,7 @@ async fn main() -> Result<()> {
     // START STRATEGIES
     // ============================================================
 
-    if cfg.enable_backtest_mode {
+    if cfg.execution_mode == ExecutionMode::Backtest {
 
         // ========================================================
         // BACKTEST STRATEGIES
@@ -1027,7 +1036,7 @@ async fn main() -> Result<()> {
     // MARKET DATA SOURCE
     // ============================================================
 
-    if cfg.enable_backtest_mode {
+    if cfg.execution_mode == ExecutionMode::Backtest {
 
         // ========================================================
         // RUN BACKTEST

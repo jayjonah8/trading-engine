@@ -17,26 +17,7 @@ use crate::core::{
 ///
 /// Backtest and simulation modes cannot be enabled at the same time.
 pub fn verify_engine_config(cfg: &Config) {
-    if cfg.enable_backtest_mode
-        && cfg.enable_simulation_mode
-    {
-        panic!(
-            "Invalid engine config: backtest mode and simulation mode \
-             cannot be enabled at the same time."
-        );
-    }
+    // Todo
 }
 
 
-/// Determines the engine execution mode from the validated startup config.
-pub fn get_execution_mode(
-    cfg: &Config,
-) -> ExecutionMode {
-    if cfg.enable_backtest_mode {
-        ExecutionMode::Backtest
-    } else if cfg.enable_simulation_mode {
-        ExecutionMode::Simulation
-    } else {
-        ExecutionMode::Live
-    }
-}

@@ -1,7 +1,10 @@
 #![allow(dead_code)]
 
 use crate::{
-    core::execution::Venue,
+    core::{
+        execution::Venue,
+        engine::state::ExecutionMode,
+    },
     data::{
         historical::provider::HistoricalDataProvider,
         live::provider::LiveMarketDataProvider,
@@ -14,10 +17,16 @@ pub struct Config {
     // EXECUTION / MARKET DATA
     // ============================================================
 
-    /// Default execution venue used when the engine creates live orders.
+    /// Determines how orders are executed by the engine.
     ///
-    /// Execution is intentionally independent from the selected market-data
-    /// provider so different combinations can be used for testing.
+    /// Live and Paper route orders to a real venue adapter, while
+    /// Simulation and Backtest use internal simulated execution.
+    pub execution_mode: ExecutionMode,
+
+    /// Default execution venue used by the engine.
+    ///
+    /// The venue remains relevant in all execution modes because
+    /// venue-specific behavior such as fees may still apply.
     pub execution_venue: Venue,
 
     /// Market-data provider used while running in live mode.
@@ -105,12 +114,6 @@ pub struct Config {
     // Maybe delete later.
     /// Minimum number of seconds a trade must remain open before it can be exited.
     pub min_trade_age_before_exit_secs: u64,
-
-    /// Enables simulation/paper-trading logic instead of real trading.
-    pub enable_simulation_mode: bool,
-
-    /// Uses historical market data instead of the live feed.
-    pub enable_backtest_mode: bool,
 
     /// Starting account balance used when running a historical backtest.
     pub backtest_starting_balance: f64,

@@ -72,8 +72,6 @@ async fn test_hyperliquid_market_data_feed() -> Result<()> {
 
     cfg.min_trade_age_before_exit_secs = 1;
 
-    cfg.enable_simulation_mode = false;
-    cfg.enable_backtest_mode = false;
     cfg.backtest_starting_balance = 100_000.0;
 
     cfg.close_trades_on_startup = false;

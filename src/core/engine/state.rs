@@ -142,6 +142,7 @@ pub enum ExecutionMode {
     Live,
     Backtest, 
     Simulation,
+    Paper,
 }
 
 

@@ -3,6 +3,7 @@
 use std::env;
 
 use crate::core::config::Config;
+use crate::core::engine::state::ExecutionMode;
 
 
 // ============================================================
@@ -111,7 +112,7 @@ pub fn get_discord_status_channel_id() -> u64 {
 ///
 /// validate_notification_env(&cfg);
 pub fn validate_notification_env(cfg: &Config) {
-    if cfg.enable_backtest_mode {
+    if cfg.execution_mode == ExecutionMode::Backtest {
         return;
     }
 

@@ -1,6 +1,7 @@
 #![allow(dead_code)]
 
 use crate::core::config::Config;
+use crate::core::engine::state::ExecutionMode;
 
 use crate::notifications::{
     discord::send_discord_message,
@@ -36,7 +37,7 @@ pub fn send_remote_message(
     discord_channel_id: Option<u64>,
 ) {
     // Never create notification work during backtests.
-    if cfg.enable_backtest_mode {
+    if cfg.execution_mode == ExecutionMode::Backtest {
         return;
     }
 

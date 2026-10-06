@@ -3,6 +3,7 @@
 use crate::{
     core::{
         config::Config,
+        engine::state::ExecutionMode,
         execution::Venue,
     },
     data::{
@@ -18,6 +19,7 @@ use crate::{
 /// only this default test configuration normally needs to be updated.
 pub fn default_test_config() -> Config {
     Config {
+        execution_mode: ExecutionMode::Live,
         execution_venue: Venue::Alpaca,
         live_market_data_provider: LiveMarketDataProvider::Alpaca,
         historical_data_provider: HistoricalDataProvider::Alpaca,
@@ -30,8 +32,6 @@ pub fn default_test_config() -> Config {
         max_gross_notional: Some(150_000.0),
         max_symbol_notional: Some(150_000.0),
         min_trade_age_before_exit_secs: 1,
-        enable_simulation_mode: false,
-        enable_backtest_mode: false,
         backtest_starting_balance: 100_000.0,
         close_trades_on_startup: false,
         enable_discord_notifications: false,
