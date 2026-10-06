@@ -13,11 +13,6 @@ use anyhow::Context;
 
 use hyperliquid_rust_sdk::Meta;
 
-use chrono::{
-    DateTime,
-    Utc,
-};
-
 use tokio::sync::{
     broadcast,
     mpsc,
@@ -72,7 +67,10 @@ use crate::exchange::{
         pollers::run_hyperliquid_meta_poller,
     },
 
-    ibkr::adapter::run_ibkr_adapter,
+    ibkr::{
+        adapter::run_ibkr_adapter,
+        api::get_ibkr_account_balances,
+    },
 
     router::{run_execution_router, ExecutionRoutes},
 };
@@ -224,8 +222,20 @@ async fn main() -> Result<()> {
             }
 
             Venue::InteractiveBrokers => {
-                // TODO: Fetch IBKR account equity.
-                anyhow::bail!("IBKR account balance initialization not implemented");
+                // TODO: Move IBKR connection settings into Config or .env.
+                let address = "127.0.0.1:7497";
+                let client_id = 201; // mut be unquie from other ibkr client_id connections
+
+                let timezone_name = "Hawaii-Aleutian Standard Time";
+                let timezone_alias = "Pacific/Honolulu";
+
+                // TODO: Potentially Add account_id filtering for future multi-account support.
+                get_ibkr_account_balances(
+                    address,
+                    client_id,
+                    timezone_name,
+                    timezone_alias,
+                ).await?
             }
         }
     };
@@ -770,6 +780,7 @@ async fn main() -> Result<()> {
         // TODO:
         // Move IBKR address/client ID into canonical application/exchange
         // configuration after the adapter lifecycle has been fully tested.
+        // TODO: Move IBKR connection settings into Config or .env.
         let address = "127.0.0.1:7497".to_string();
         let client_id = 200;
 
