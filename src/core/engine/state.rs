@@ -140,8 +140,8 @@ impl Default for EngineState {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ExecutionMode {
     Live,
-    Backtest, 
     Simulation,
+    Backtest, 
     Paper,
 }
 

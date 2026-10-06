@@ -106,9 +106,9 @@ async fn main() -> Result<()> {
         // EXECUTION / MARKET DATA
         // ============================================================
 
-        execution_mode: ExecutionMode::Live,
+        execution_mode: ExecutionMode::Backtest,
 
-        execution_venue: Venue::InteractiveBrokers,
+        execution_venue: Venue::Hyperliquid,
 
         // Live market data is intentionally independent from execution.
         live_market_data_provider: LiveMarketDataProvider::Alpaca,
