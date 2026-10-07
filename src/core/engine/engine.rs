@@ -291,7 +291,6 @@ impl Engine {
                 self.handle_price_tick(symbol, px, ts_ms);
             }
 
-            // old working already
             EngineEvent::BacktestBarrier { done } => {
                 let _ = done.send(());
             }
@@ -345,7 +344,6 @@ impl Engine {
                 self.handle_exec_error(order_id, message, ts_ms);
             }
 
-            // new (adding for backtest and simulation syncing for there adapters)
             ExecEvent::BacktestBarrier { done } => {
                 let _ = done.send(());
             }
