@@ -2,7 +2,10 @@
 
 use crate::{
     core::{
-        engine::engine::Engine,
+        engine::{
+            engine::Engine,
+            state::ExecutionMode,
+        },
 
         execution::{
             ClientOrderId,
@@ -403,33 +406,44 @@ impl Engine {
         // LIMIT PRICE
         // ============================================================
 
-        // Exit limit prices pass through the same canonical venue/instrument
-        // normalization boundary as entry limit prices.
-        let limit_px = match execution.limit_px {
-            Some(raw_limit_px) => {
-                match self.venue_state.normalize_price(
-                    venue,
-                    &symbol,
-                    raw_limit_px,
-                ) {
-                    Ok(limit_px) => Some(limit_px),
+        // Live and paper execution normalize exit prices using canonical
+        // venue/instrument rules.
+        //
+        // Simulation and backtest execution preserve the requested price directly.
+        // Simulated venue-specific price rules can be added later if required.
+        let limit_px = match self.cfg.execution_mode {
+            ExecutionMode::Live | ExecutionMode::Paper => {
+                match execution.limit_px {
+                    Some(raw_limit_px) => {
+                        match self.venue_state.normalize_price(
+                            venue,
+                            &symbol,
+                            raw_limit_px,
+                        ) {
+                            Ok(limit_px) => Some(limit_px),
 
-                    Err(error) => {
-                        print_log(
-                            self.debug_mode,
-                            true,
-                            format!(
-                                "[ENGINE] CLOSE TRADE REJECTED | trade_id={} | symbol={} | raw_limit_px={} | error={:?}",
-                                trade_id, symbol, raw_limit_px, error,
-                            ),
-                        );
+                            Err(error) => {
+                                print_log(
+                                    self.debug_mode,
+                                    true,
+                                    format!(
+                                        "[ENGINE] CLOSE TRADE REJECTED | trade_id={} | symbol={} | raw_limit_px={} | error={:?}",
+                                        trade_id, symbol, raw_limit_px, error,
+                                    ),
+                                );
 
-                        return;
+                                return;
+                            }
+                        }
                     }
+
+                    None => None,
                 }
             }
 
-            None => None,
+            ExecutionMode::Simulation | ExecutionMode::Backtest => {
+                execution.limit_px
+            }
         };
 
 
@@ -437,33 +451,43 @@ impl Engine {
         // STOP PRICE
         // ============================================================
 
-        // Exit stop prices pass through the same canonical venue/instrument
-        // normalization boundary as entry stop prices.
-        let stop_px = match execution.stop_px {
-            Some(raw_stop_px) => {
-                match self.venue_state.normalize_price(
-                    venue,
-                    &symbol,
-                    raw_stop_px,
-                ) {
-                    Ok(stop_px) => Some(stop_px),
+        // Live and paper execution normalize exit stop prices using the same
+        // canonical venue/instrument price rules as limit prices.
+        //
+        // Simulation and backtest execution preserve the requested price directly.
+        let stop_px = match self.cfg.execution_mode {
+            ExecutionMode::Live | ExecutionMode::Paper => {
+                match execution.stop_px {
+                    Some(raw_stop_px) => {
+                        match self.venue_state.normalize_price(
+                            venue,
+                            &symbol,
+                            raw_stop_px,
+                        ) {
+                            Ok(stop_px) => Some(stop_px),
 
-                    Err(error) => {
-                        print_log(
-                            self.debug_mode,
-                            true,
-                            format!(
-                                "[ENGINE] CLOSE TRADE REJECTED | trade_id={} | symbol={} | raw_stop_px={} | error={:?}",
-                                trade_id, symbol, raw_stop_px, error,
-                            ),
-                        );
+                            Err(error) => {
+                                print_log(
+                                    self.debug_mode,
+                                    true,
+                                    format!(
+                                        "[ENGINE] CLOSE TRADE REJECTED | trade_id={} | symbol={} | raw_stop_px={} | error={:?}",
+                                        trade_id, symbol, raw_stop_px, error,
+                                    ),
+                                );
 
-                        return;
+                                return;
+                            }
+                        }
                     }
+
+                    None => None,
                 }
             }
 
-            None => None,
+            ExecutionMode::Simulation | ExecutionMode::Backtest => {
+                execution.stop_px
+            }
         };
 
 
@@ -471,15 +495,23 @@ impl Engine {
         // TIME IN FORCE
         // ============================================================
 
-        // Preserve the requested exit TIF unless a proven venue execution rule
-        // requires a different canonical representation.
+        // Live and paper execution apply proven venue-specific TIF rules.
         //
-        // Alpaca fractional equity orders require DAY, including fractional exits.
-        let time_in_force = self.venue_state.normalize_time_in_force(
-            venue,
-            quantity,
-            execution.time_in_force,
-        );
+        // Simulation and backtest execution preserve the requested exit TIF.
+        // Simulated venue-specific TIF behavior can be added later if required.
+        let time_in_force = match self.cfg.execution_mode {
+            ExecutionMode::Live | ExecutionMode::Paper => {
+                self.venue_state.normalize_time_in_force(
+                    venue,
+                    quantity,
+                    execution.time_in_force,
+                )
+            }
+
+            ExecutionMode::Simulation | ExecutionMode::Backtest => {
+                execution.time_in_force
+            }
+        };
 
 
         // ============================================================

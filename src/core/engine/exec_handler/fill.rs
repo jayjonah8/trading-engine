@@ -511,6 +511,20 @@ impl Engine {
 
                         trade.closed_ts_ms =
                             Some(fill.ts_ms);
+
+                        print_log(
+                            self.debug_mode,
+                            true,
+                            format!(
+                                "[ENGINE] TRADE CLOSED | trade_id={} | symbol={} | exited_qty={} | avg_entry_px={:?} | avg_exit_px={:?} | ts_ms={}",
+                                trade.id,
+                                trade.symbol,
+                                trade.exited_quantity,
+                                trade.avg_entry_px,
+                                trade.avg_exit_px,
+                                fill.ts_ms,
+                            ),
+                        );
                     } else {
                         // Some exposure still remains after this fill.
                         trade.state =
