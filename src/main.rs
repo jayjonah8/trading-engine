@@ -10,6 +10,7 @@ mod data;
 use std::sync::Arc;
 use anyhow::Result;
 use anyhow::Context;
+use chrono::Utc;
 
 use hyperliquid_rust_sdk::Meta;
 
@@ -245,10 +246,27 @@ async fn main() -> Result<()> {
         }
     };
 
+    let starting_date = match cfg.execution_mode {
+        ExecutionMode::Live | ExecutionMode::Paper | ExecutionMode::Simulation => {
+            Utc::now()
+        }
+
+        ExecutionMode::Backtest => {
+            // TODO:
+            // Use the actual historical backtest start timestamp.
+            // This should come from the configured/replay backtest date range
+            // rather than the current wall-clock time.
+            Utc::now()
+        }
+    };
+
     let general = General {
         realized_pnl: 0.0,
         sim_realized_pnl: 0.0,
         starting_balance,
+        starting_date,
+        live_closed_trades: 0,
+        sim_closed_trades: 0,
     };
 
     println!("Starting balance: ${:.2}", general.starting_balance);

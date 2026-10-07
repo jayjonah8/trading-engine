@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use chrono::Utc;
 
 use tokio::sync::{
     mpsc,
@@ -114,6 +115,9 @@ async fn test_handle_open_trade_creates_state_and_command() {
         realized_pnl: 0.0,
         sim_realized_pnl: 0.0,
         starting_balance: 0.0,
+        starting_date: Utc::now(),
+        live_closed_trades: 0,
+        sim_closed_trades: 0,
     };
 
     let mut engine =

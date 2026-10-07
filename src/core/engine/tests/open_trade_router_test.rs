@@ -1,3 +1,5 @@
+use chrono::Utc;
+
 use std::{
     sync::Arc,
     time::Duration,
@@ -201,10 +203,17 @@ async fn test_open_trade_routes_to_hyperliquid_adapter() {
     // ENGINE
     // ============================================================
 
+    // ============================================================
+    // ENGINE
+    // ============================================================
+
     let general = General {
         realized_pnl: 0.0,
         sim_realized_pnl: 0.0,
         starting_balance: 0.0,
+        starting_date: Utc::now(),
+        live_closed_trades: 0,
+        sim_closed_trades: 0,
     };
 
     let mut engine =
