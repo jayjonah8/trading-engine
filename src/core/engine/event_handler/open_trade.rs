@@ -2,6 +2,7 @@
 
 use crate::core::{
     engine::engine::Engine,
+    engine::state::ExecutionMode,
 
     execution::{
         ClientOrderId,
@@ -339,26 +340,34 @@ impl Engine {
         let purpose = OrderPurpose::Entry;
         let raw_quantity = intent.target_notional / intent.signal_px;
 
-        let quantity = match self.venue_state.normalize_quantity(
-            self.cfg.execution_venue,
-            &intent.symbol,
-            side,
-            purpose,
-            raw_quantity,
-        ) {
-            Ok(quantity) => quantity,
+        let quantity = match self.cfg.execution_mode {
+            ExecutionMode::Live | ExecutionMode::Paper => {
+                match self.venue_state.normalize_quantity(
+                    self.cfg.execution_venue,
+                    &intent.symbol,
+                    side,
+                    purpose,
+                    raw_quantity,
+                ) {
+                    Ok(quantity) => quantity,
 
-            Err(error) => {
-                print_log(
-                    self.debug_mode,
-                    true,
-                    format!(
-                        "[ENGINE] OPEN TRADE REJECTED | strategy={} | symbol={} | side={:?} | raw_quantity={} | error={:?}",
-                        intent.strategy_id, intent.symbol, side, raw_quantity, error,
-                    ),
-                );
+                    Err(error) => {
+                        print_log(
+                            self.debug_mode,
+                            true,
+                            format!(
+                                "[ENGINE] OPEN TRADE REJECTED | strategy={} | symbol={} | side={:?} | raw_quantity={} | error={:?}",
+                                intent.strategy_id, intent.symbol, side, raw_quantity, error,
+                            ),
+                        );
 
-                return;
+                        return;
+                    }
+                }
+            }
+
+            ExecutionMode::Simulation | ExecutionMode::Backtest => {
+                raw_quantity
             }
         };
 
@@ -367,33 +376,44 @@ impl Engine {
         // LIMIT PRICE
         // ============================================================
 
-        // Strategy-provided prices are desired prices. VenueState converts
-        // them into executable prices using canonical venue/instrument rules.
-        let limit_px = match intent.limit_px {
-            Some(raw_limit_px) => {
-                match self.venue_state.normalize_price(
-                    self.cfg.execution_venue,
-                    &intent.symbol,
-                    raw_limit_px,
-                ) {
-                    Ok(limit_px) => Some(limit_px),
+        // Live and paper execution normalize strategy-provided prices using
+        // canonical venue/instrument rules.
+        //
+        // Simulation and backtest execution preserve the requested price directly.
+        // Simulated venue-specific price rules can be added later if required.
+        let limit_px = match self.cfg.execution_mode {
+            ExecutionMode::Live | ExecutionMode::Paper => {
+                match intent.limit_px {
+                    Some(raw_limit_px) => {
+                        match self.venue_state.normalize_price(
+                            self.cfg.execution_venue,
+                            &intent.symbol,
+                            raw_limit_px,
+                        ) {
+                            Ok(limit_px) => Some(limit_px),
 
-                    Err(error) => {
-                        print_log(
-                            self.debug_mode,
-                            true,
-                            format!(
-                                "[ENGINE] OPEN TRADE REJECTED | strategy={} | symbol={} | raw_limit_px={} | error={:?}",
-                                intent.strategy_id, intent.symbol, raw_limit_px, error,
-                            ),
-                        );
+                            Err(error) => {
+                                print_log(
+                                    self.debug_mode,
+                                    true,
+                                    format!(
+                                        "[ENGINE] OPEN TRADE REJECTED | strategy={} | symbol={} | raw_limit_px={} | error={:?}",
+                                        intent.strategy_id, intent.symbol, raw_limit_px, error,
+                                    ),
+                                );
 
-                        return;
+                                return;
+                            }
+                        }
                     }
+
+                    None => None,
                 }
             }
 
-            None => None,
+            ExecutionMode::Simulation | ExecutionMode::Backtest => {
+                intent.limit_px
+            }
         };
 
 
@@ -401,33 +421,43 @@ impl Engine {
         // STOP PRICE
         // ============================================================
 
-        // Stop prices pass through the same canonical price-normalization
-        // boundary as limit prices.
-        let stop_px = match intent.stop_px {
-            Some(raw_stop_px) => {
-                match self.venue_state.normalize_price(
-                    self.cfg.execution_venue,
-                    &intent.symbol,
-                    raw_stop_px,
-                ) {
-                    Ok(stop_px) => Some(stop_px),
+        // Live and paper execution normalize stop prices using the same
+        // canonical venue/instrument price rules as limit prices.
+        //
+        // Simulation and backtest execution preserve the requested price directly.
+        let stop_px = match self.cfg.execution_mode {
+            ExecutionMode::Live | ExecutionMode::Paper => {
+                match intent.stop_px {
+                    Some(raw_stop_px) => {
+                        match self.venue_state.normalize_price(
+                            self.cfg.execution_venue,
+                            &intent.symbol,
+                            raw_stop_px,
+                        ) {
+                            Ok(stop_px) => Some(stop_px),
 
-                    Err(error) => {
-                        print_log(
-                            self.debug_mode,
-                            true,
-                            format!(
-                                "[ENGINE] OPEN TRADE REJECTED | strategy={} | symbol={} | raw_stop_px={} | error={:?}",
-                                intent.strategy_id, intent.symbol, raw_stop_px, error,
-                            ),
-                        );
+                            Err(error) => {
+                                print_log(
+                                    self.debug_mode,
+                                    true,
+                                    format!(
+                                        "[ENGINE] OPEN TRADE REJECTED | strategy={} | symbol={} | raw_stop_px={} | error={:?}",
+                                        intent.strategy_id, intent.symbol, raw_stop_px, error,
+                                    ),
+                                );
 
-                        return;
+                                return;
+                            }
+                        }
                     }
+
+                    None => None,
                 }
             }
 
-            None => None,
+            ExecutionMode::Simulation | ExecutionMode::Backtest => {
+                intent.stop_px
+            }
         };
 
 
@@ -435,16 +465,23 @@ impl Engine {
         // TIME IN FORCE
         // ============================================================
 
-        // Preserve the strategy-requested TIF unless a proven venue execution rule
-        // requires a different canonical representation.
+        // Live and paper execution apply proven venue-specific TIF rules.
         //
-        // Alpaca fractional equity orders require DAY. Whole-share Alpaca orders,
-        // IBKR orders, and Hyperliquid orders preserve the requested TIF here.
-        let time_in_force = self.venue_state.normalize_time_in_force(
-            self.cfg.execution_venue,
-            quantity,
-            intent.time_in_force,
-        );
+        // Simulation and backtest execution preserve the strategy-requested TIF.
+        // Simulated venue-specific TIF behavior can be added later if required.
+        let time_in_force = match self.cfg.execution_mode {
+            ExecutionMode::Live | ExecutionMode::Paper => {
+                self.venue_state.normalize_time_in_force(
+                    self.cfg.execution_venue,
+                    quantity,
+                    intent.time_in_force,
+                )
+            }
+
+            ExecutionMode::Simulation | ExecutionMode::Backtest => {
+                intent.time_in_force
+            }
+        };
 
 
         // ============================================================
