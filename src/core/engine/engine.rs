@@ -110,14 +110,6 @@ pub enum EngineEvent {
     /// time; during backtesting this is historical replay time.
     PriceTick { symbol: String, px: f64, ts_ms: i64 },
 
-    /// Historical market-price update used during backtesting.
-    ///
-    /// Uses the original historical timestamp so risk checks and
-    /// trade behavior remain tied to replay time instead of wall time.
-    PriceTickBacktest { symbol: String, px: f64, ts_ms: i64 },
-
-    // TODO add TradeClosed
-
     /// Backtest synchronization barrier.
     ///
     /// Confirms that all EngineEvents queued before this event
@@ -299,11 +291,7 @@ impl Engine {
                 self.handle_price_tick(symbol, px, ts_ms);
             }
 
-            // TODO: delete this later (all will go through PriceTick)
-            EngineEvent::PriceTickBacktest { symbol, px, ts_ms } => {
-                self.handle_price_tick(symbol, px, ts_ms);
-            }
-
+            // old working already
             EngineEvent::BacktestBarrier { done } => {
                 let _ = done.send(());
             }
@@ -355,6 +343,11 @@ impl Engine {
 
             ExecEvent::Error { order_id, message, ts_ms } => {
                 self.handle_exec_error(order_id, message, ts_ms);
+            }
+
+            // new (adding for backtest and simulation syncing for there adapters)
+            ExecEvent::BacktestBarrier { done } => {
+                let _ = done.send(());
             }
         }
 

@@ -62,6 +62,12 @@ use crate::exchange::{
         api::get_alpaca_account_balances,
     },
 
+    backtest::{
+        adapter::run_backtest_adapter,
+        BacktestMarketState,
+        SharedBacktestMarketState,
+    },
+
     hyperliquid::{
         adapter::run_hyperliquid_adapter,
         api::{close_all_positions, get_hyperliquid_account_balances},
@@ -114,26 +120,26 @@ async fn main() -> Result<()> {
         // Live market data is intentionally independent from execution.
         live_market_data_provider: LiveMarketDataProvider::Alpaca,
 
-        // Used only when enable_backtest_mode = true.
+        // Used only when execution_mode = ExecutionMode::Backtest.
         historical_data_provider: HistoricalDataProvider::Hyperliquid,
 
-        // symbols: vec![
-        //     "BTC".to_string(),
-        //     "ETH".to_string(),
-        //     "SOL".to_string(),
-        //     "HYPE".to_string(),
-        //     "ZEC".to_string(),
-        // ],
+        symbols: vec![
+            "BTC".to_string(),
+            "ETH".to_string(),
+            "SOL".to_string(),
+            "HYPE".to_string(),
+            "NEAR".to_string(),
+        ],
 
         // Example equity configuration:
         //
         // execution_venue: Venue::Alpaca,
         //
-        symbols: vec![
-            "AAPL".to_string(),
-            "MSFT".to_string(),
-            "NVDA".to_string(),
-        ],
+        // symbols: vec![
+        //     "AAPL".to_string(),
+        //     "MSFT".to_string(),
+        //     "NVDA".to_string(),
+        // ],
 
         // symbols: vec![
         //     "FAKEA".to_string(),
@@ -356,6 +362,24 @@ async fn main() -> Result<()> {
         mut rx_exec_evt,
     ) =
         mpsc::unbounded_channel::<ExecEvent>();
+
+
+    // ============================================================
+    // BACKTEST MARKET STATE
+    // ============================================================
+
+    // Shared historical market state used by the historical replay and
+    // backtest execution adapter.
+    //
+    // The replay updates this state before strategies process each historical
+    // market event. The backtest adapter reads it when simulating execution.
+    let backtest_market_state:
+        SharedBacktestMarketState =
+        Arc::new(
+            RwLock::new(
+                BacktestMarketState::new()
+            )
+        );
 
 
     // ============================================================
@@ -688,67 +712,84 @@ async fn main() -> Result<()> {
 
 
     // ============================================================
-    // START HYPERLIQUID EXECUTION ADAPTER
+    // START HYPERLIQUID / BACKTEST EXECUTION ADAPTER
     // ============================================================
 
-    // Engine
-    //     -> tx_exec
-    //     -> ExecutionRouter
-    //     -> tx_hyperliquid_exec
-    //     -> HyperliquidAdapter
-    //     -> Hyperliquid
+    // The execution router continues routing commands by their canonical Venue.
     //
-    // Hyperliquid
-    //     -> HyperliquidAdapter
-    //     -> tx_exec_evt
-    //     -> Engine
+    // In Live mode, Hyperliquid commands are consumed by the real Hyperliquid
+    // adapter.
     //
-    // The live Hyperliquid execution adapter only runs in Live mode.
-    // Simulation and Backtest use internal execution adapters.
-    if cfg.execution_mode == ExecutionMode::Live
-        && cfg.execution_venue == Venue::Hyperliquid
-    {
-        let adapter_cfg =
-            cfg.clone();
-
-        let tx_exec_evt =
-            tx_exec_evt.clone();
-
-
+    // In Backtest mode, the same commands are consumed by the internal backtest
+    // adapter instead. This preserves the Engine -> ExecCommand architecture
+    // without sending historical orders to a real venue.
+    match cfg.execution_mode {
         // ========================================================
-        // HYPERLIQUID META CACHE
+        // LIVE HYPERLIQUID
         // ========================================================
 
-        // Live Hyperliquid execution requires the startup Meta snapshot.
-        //
-        // The adapter receives the same shared cache used by the Meta poller,
-        // avoiding another metadata API request and keeping refreshed Meta
-        // available to Hyperliquid runtime infrastructure.
-        let meta_cache_for_adapter =
-            Arc::clone(
-                hyperliquid_meta_cache
-                    .as_ref()
-                    .expect(
-                        "Hyperliquid Meta cache missing before adapter startup"
+        ExecutionMode::Live
+            if cfg.execution_venue == Venue::Hyperliquid =>
+        {
+            let adapter_cfg =
+                cfg.clone();
+
+            let tx_exec_evt =
+                tx_exec_evt.clone();
+
+            let meta_cache_for_adapter =
+                Arc::clone(
+                    hyperliquid_meta_cache
+                        .as_ref()
+                        .expect(
+                            "Hyperliquid Meta cache missing before adapter startup"
+                        )
+                );
+
+            tokio::spawn(
+                async move {
+                    run_hyperliquid_adapter(
+                        adapter_cfg,
+                        meta_cache_for_adapter,
+                        rx_hyperliquid_exec,
+                        tx_exec_evt,
                     )
+                    .await;
+                }
             );
+        }
 
 
         // ========================================================
-        // START ADAPTER
+        // HYPERLIQUID BACKTEST
         // ========================================================
 
-        tokio::spawn(
-            async move {
-                run_hyperliquid_adapter(
-                    adapter_cfg,
-                    meta_cache_for_adapter,
-                    rx_hyperliquid_exec,
-                    tx_exec_evt,
-                )
-                .await;
-            }
-        );
+        ExecutionMode::Backtest
+            if cfg.execution_venue == Venue::Hyperliquid =>
+        {
+            let market_state =
+                Arc::clone(
+                    &backtest_market_state
+                );
+
+            let tx_exec_evt =
+                tx_exec_evt.clone();
+
+            tokio::spawn(
+                async move {
+                    run_backtest_adapter(
+                        rx_hyperliquid_exec,
+                        tx_exec_evt,
+                        market_state,
+                        true,
+                    )
+                    .await;
+                }
+            );
+        }
+
+
+        _ => {}
     }
 
     // ============================================================
@@ -1130,6 +1171,8 @@ async fn main() -> Result<()> {
                 data::historical::hyperliquid::runner::run_hyperliquid_backtest_feed(
                     &backtest_senders,
                     &tx_engine,
+                    &tx_exec_evt,
+                    &backtest_market_state,
                 )
                 .await
                 .map_err(|error| anyhow::anyhow!(error.to_string()))?;

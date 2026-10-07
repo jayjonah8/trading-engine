@@ -1,3 +1,5 @@
+use tokio::sync::oneshot;
+
 use crate::core::execution::{
     fill::Fill,
     order::OrderId,
@@ -13,7 +15,7 @@ use crate::core::execution::{
 /// contain strategy concepts such as "open trade", "close trade", or
 /// "partial open fill". The engine determines an order's purpose by looking
 /// up the associated `Order`.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub enum ExecEvent {
     /// The venue accepted the submitted order and assigned its own order ID.
     OrderAccepted {
@@ -78,5 +80,18 @@ pub enum ExecEvent {
         order_id: Option<OrderId>,
         message: String,
         ts_ms: i64,
+    },
+
+
+    // ============================================================
+    // BACKTEST SYNCHRONIZATION
+    // ============================================================
+
+    /// Backtest synchronization barrier.
+    ///
+    /// Confirms that all ExecEvents queued before this event have been
+    /// processed by the Engine before historical replay continues.
+    BacktestBarrier {
+        done: oneshot::Sender<()>,
     },
 }

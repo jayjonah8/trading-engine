@@ -9,11 +9,10 @@ use crate::core::{
 };
 
 // ============================================================
-// Backtest Engine Event Mapping
+// BACKTEST ENGINE EVENT MAPPING
 // ============================================================
 
-/// Converts historical market data into a deterministic
-/// backtest price event.
+/// Converts historical market data into a canonical Engine price event.
 ///
 /// Historical trades preserve their original timestamp so risk
 /// calculations remain tied to replay time instead of wall time.
@@ -29,7 +28,7 @@ pub(crate) fn map_app_to_backtest_engine_event(
             }
 
             Some(
-                EngineEvent::PriceTickBacktest {
+                EngineEvent::PriceTick {
                     symbol: env.symbol.clone(),
                     px: trade.price,
                     ts_ms,

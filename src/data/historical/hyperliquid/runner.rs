@@ -16,7 +16,10 @@ use crate::{
     core::{
         engine::engine::EngineEvent,
         events::{AppEvent, AppEventEnvelope, Bar, TapeTrade},
+        execution::ExecEvent,
     },
+
+    exchange::backtest::SharedBacktestMarketState,
 
     data::historical::{
         downsample::downsample_trades,
@@ -45,6 +48,8 @@ use crate::{
 pub async fn run_hyperliquid_backtest_feed(
     tx_backtest_strategies: &[Sender<BacktestStrategyEvent>],
     tx_engine: &UnboundedSender<EngineEvent>,
+    tx_exec_evt: &UnboundedSender<ExecEvent>,
+    market_state: &SharedBacktestMarketState,
 ) -> Result<(), Box<dyn std::error::Error>> {
     // TODO:
     // Move backtest replay settings into the shared Config so every historical
@@ -211,28 +216,73 @@ pub async fn run_hyperliquid_backtest_feed(
             }
         };
 
+
         // ============================================================
-        // 1. PROCESS HISTORICAL PRICE IN ENGINE
+        // 1. UPDATE BACKTEST EXECUTION MARKET STATE
+        // ============================================================
+
+        // The execution simulator must observe the current historical market
+        // state before the Engine or strategies process this event.
+        //
+        // If a strategy generates an order from this event, the backtest
+        // execution adapter can therefore execute against the same historical
+        // market price and timestamp that caused the strategy decision.
+        if let AppEvent::TapeTrade(trade) =
+            &event.event
+        {
+            let mut state =
+                market_state.write().await;
+
+            state.update_price(
+                trade.symbol.clone(),
+                trade.price,
+                trade.timestamp_ms,
+            );
+        }
+
+
+        // ============================================================
+        // 2. PROCESS HISTORICAL PRICE IN ENGINE
         // ============================================================
 
         // Historical trades update engine prices and run deterministic
         // risk checks before strategies process the same market event.
-        if let Some(engine_event) = map_app_to_backtest_engine_event(&event) {
+        if let Some(engine_event) =
+            map_app_to_backtest_engine_event(
+                &event
+            )
+        {
             tx_engine
-                .send(engine_event)
-                .map_err(|_| "Engine event channel closed")?;
+                .send(
+                    engine_event
+                )
+                .map_err(
+                    |_| {
+                        "Engine event channel closed"
+                    }
+                )?;
 
-            wait_for_engine(tx_engine).await?;
+            wait_for_engine(
+                tx_engine
+            )
+            .await?;
         }
 
+
         // ============================================================
-        // 2. SEND EVENT TO ALL BACKTEST STRATEGIES
+        // 3. SEND EVENT TO ALL BACKTEST STRATEGIES
         // ============================================================
 
-        let mut acknowledgements = Vec::with_capacity(tx_backtest_strategies.len());
+        let mut acknowledgements =
+            Vec::with_capacity(
+                tx_backtest_strategies.len()
+            );
 
-        for tx_strategy in tx_backtest_strategies {
-            let (tx_done, rx_done) = oneshot::channel();
+        for tx_strategy in
+            tx_backtest_strategies
+        {
+            let (tx_done, rx_done) =
+                oneshot::channel();
 
             tx_strategy
                 .send(
@@ -242,29 +292,67 @@ pub async fn run_hyperliquid_backtest_feed(
                     }
                 )
                 .await
-                .map_err(|_| "Backtest strategy channel closed")?;
+                .map_err(
+                    |_| {
+                        "Backtest strategy channel closed"
+                    }
+                )?;
 
-            acknowledgements.push(rx_done);
+            acknowledgements.push(
+                rx_done
+            );
         }
 
+
         // ============================================================
-        // 3. WAIT FOR ALL BACKTEST STRATEGIES
+        // 4. WAIT FOR ALL BACKTEST STRATEGIES
         // ============================================================
 
+        // Do not advance until every enabled strategy has completely
+        // processed this historical market event.
         for done in acknowledgements {
             done
                 .await
-                .map_err(|_| "Backtest strategy acknowledgement dropped")?;
+                .map_err(
+                    |_| {
+                        "Backtest strategy acknowledgement dropped"
+                    }
+                )?;
         }
 
+
         // ============================================================
-        // 4. WAIT FOR STRATEGY ENGINE EVENTS
+        // 5. WAIT FOR STRATEGY ENGINE EVENTS
         // ============================================================
 
-        // Strategies may have generated engine events while processing
-        // this market event. Do not advance historical time until those
-        // events have been completely processed.
-        wait_for_engine(tx_engine).await?;
+        // Strategies may have generated EngineEvents while processing this
+        // historical market event.
+        //
+        // Once this barrier completes, those events have been processed and
+        // any resulting ExecCommands have been sent into execution.
+        wait_for_engine(
+            tx_engine
+        )
+        .await?;
+
+
+        // ============================================================
+        // 6. WAIT FOR BACKTEST EXECUTION EVENTS
+        // ============================================================
+
+        // Wait for execution events already emitted by the backtest adapter
+        // to be processed before historical replay advances.
+        //
+        // TODO:
+        // This barrier only synchronizes the ExecEvent -> Engine side.
+        // A separate execution-command synchronization point will be added
+        // so replay also guarantees the BacktestAdapter has consumed every
+        // ExecCommand generated by this historical step before this barrier
+        // is inserted.
+        wait_for_execution(
+            tx_exec_evt
+        )
+        .await?;
     }
 
     println!(
@@ -275,12 +363,17 @@ pub async fn run_hyperliquid_backtest_feed(
 }
 
 
+// ============================================================
+// ENGINE SYNCHRONIZATION
+// ============================================================
+
 /// Waits until the engine has processed every EngineEvent that was
 /// queued before this synchronization point.
 async fn wait_for_engine(
     tx_engine: &UnboundedSender<EngineEvent>,
 ) -> Result<(), String> {
-    let (tx_done, rx_done) = oneshot::channel();
+    let (tx_done, rx_done) =
+        oneshot::channel();
 
     tx_engine
         .send(
@@ -288,11 +381,60 @@ async fn wait_for_engine(
                 done: tx_done,
             }
         )
-        .map_err(|_| "engine event channel closed".to_string())?;
+        .map_err(
+            |_| {
+                "engine event channel closed".to_string()
+            }
+        )?;
 
     rx_done
         .await
-        .map_err(|_| "engine barrier was dropped".to_string())?;
+        .map_err(
+            |_| {
+                "engine barrier was dropped".to_string()
+            }
+        )?;
+
+    Ok(())
+}
+
+
+// ============================================================
+// EXECUTION SYNCHRONIZATION
+// ============================================================
+
+/// Waits until the engine has processed every ExecEvent that was
+/// queued before this synchronization point.
+///
+/// TODO:
+/// Also synchronize the ExecCommand -> BacktestAdapter side so this
+/// barrier cannot overtake execution events that the adapter has not
+/// emitted yet.
+async fn wait_for_execution(
+    tx_exec_evt: &UnboundedSender<ExecEvent>,
+) -> Result<(), String> {
+    let (tx_done, rx_done) =
+        oneshot::channel();
+
+    tx_exec_evt
+        .send(
+            ExecEvent::BacktestBarrier {
+                done: tx_done,
+            }
+        )
+        .map_err(
+            |_| {
+                "execution event channel closed".to_string()
+            }
+        )?;
+
+    rx_done
+        .await
+        .map_err(
+            |_| {
+                "execution barrier was dropped".to_string()
+            }
+        )?;
 
     Ok(())
 }
@@ -310,16 +452,25 @@ enum BacktestReplayEvent {
 }
 
 impl BacktestReplayEvent {
-    fn timestamp(&self) -> DateTime<Utc> {
+    fn timestamp(
+        &self,
+    ) -> DateTime<Utc> {
         match self {
-            Self::Trade(trade) => trade.timestamp,
-            Self::Bar(bar) => bar.end,
+            Self::Trade(trade) => {
+                trade.timestamp
+            }
+
+            Self::Bar(bar) => {
+                bar.end
+            }
         }
     }
 
     // Closed candles are processed before trades when both become
     // available at exactly the same historical timestamp.
-    fn replay_priority(&self) -> u8 {
+    fn replay_priority(
+        &self,
+    ) -> u8 {
         match self {
             Self::Bar(_) => 0,
             Self::Trade(_) => 1,
