@@ -712,61 +712,184 @@ async fn main() -> Result<()> {
 
 
     // ============================================================
-    // START HYPERLIQUID / BACKTEST EXECUTION ADAPTER
+    // START EXECUTION ADAPTERS
     // ============================================================
 
-    // The execution router continues routing commands by their canonical Venue.
+    // The execution router routes canonical ExecCommands by Venue.
     //
-    // In Live mode, Hyperliquid commands are consumed by the real Hyperliquid
-    // adapter.
+    // Live/Paper mode:
+    //   Commands are consumed by their venue-specific execution adapter.
     //
-    // In Backtest mode, the same commands are consumed by the internal backtest
-    // adapter instead. This preserves the Engine -> ExecCommand architecture
-    // without sending historical orders to a real venue.
+    // Backtest mode:
+    //   Commands are consumed by the shared backtest execution adapter
+    //   using the receiver associated with the configured execution venue.
+    //
+    // Historical market data providers are independent of execution venues.
+    // Synthetic historical data can therefore execute simulated orders
+    // through Hyperliquid, Alpaca, or InteractiveBrokers.
+    //
+    // The Engine -> ExecCommand -> ExecutionRouter architecture remains
+    // identical across live, paper, and backtest execution modes.
+
     match cfg.execution_mode {
+
         // ========================================================
-        // LIVE HYPERLIQUID
+        // LIVE / PAPER EXECUTION
         // ========================================================
 
-        ExecutionMode::Live
-            if cfg.execution_venue == Venue::Hyperliquid =>
-        {
-            let adapter_cfg =
-                cfg.clone();
+        ExecutionMode::Live | ExecutionMode::Paper => {
 
-            let tx_exec_evt =
-                tx_exec_evt.clone();
+            match cfg.execution_venue {
 
-            let meta_cache_for_adapter =
-                Arc::clone(
-                    hyperliquid_meta_cache
-                        .as_ref()
-                        .expect(
-                            "Hyperliquid Meta cache missing before adapter startup"
-                        )
-                );
+                // ========================================================
+                // HYPERLIQUID LIVE
+                // ========================================================
 
-            tokio::spawn(
-                async move {
-                    run_hyperliquid_adapter(
-                        adapter_cfg,
-                        meta_cache_for_adapter,
-                        rx_hyperliquid_exec,
-                        tx_exec_evt,
-                    )
-                    .await;
+                Venue::Hyperliquid => {
+                    if cfg.execution_mode == ExecutionMode::Paper {
+                        return Err(anyhow::anyhow!(
+                            "Hyperliquid does not support ExecutionMode::Paper. Use Live or Backtest."
+                        ));
+                    }
+
+                    let adapter_cfg =
+                        cfg.clone();
+
+                    let tx_exec_evt =
+                        tx_exec_evt.clone();
+
+                    let meta_cache_for_adapter =
+                        Arc::clone(
+                            hyperliquid_meta_cache
+                                .as_ref()
+                                .expect(
+                                    "Hyperliquid Meta cache missing before adapter startup"
+                                )
+                        );
+
+                    tokio::spawn(
+                        async move {
+                            run_hyperliquid_adapter(
+                                adapter_cfg,
+                                meta_cache_for_adapter,
+                                rx_hyperliquid_exec,
+                                tx_exec_evt,
+                            )
+                            .await;
+                        }
+                    );
                 }
-            );
+
+
+                // ========================================================
+                // ALPACA LIVE / PAPER
+                // ========================================================
+
+                Venue::Alpaca => {
+                    let adapter_cfg =
+                        cfg.clone();
+
+                    let tx_exec_evt =
+                        tx_exec_evt.clone();
+
+                    tokio::spawn(
+                        async move {
+                            run_alpaca_adapter(
+                                adapter_cfg,
+                                rx_alpaca_exec,
+                                tx_exec_evt,
+                            )
+                            .await;
+                        }
+                    );
+                }
+
+
+                // ========================================================
+                // IBKR LIVE / PAPER
+                // ========================================================
+                //
+                // Engine
+                //     -> tx_exec
+                //     -> ExecutionRouter
+                //     -> tx_ibkr_exec
+                //     -> IBKRAdapter
+                //     -> TWS / IB Gateway
+                //     -> IBKR
+                //
+                // IBKR order updates
+                //     -> IBKRAdapter
+                //     -> tx_exec_evt
+                //     -> Engine
+
+                Venue::InteractiveBrokers => {
+                    let tx_exec_evt =
+                        tx_exec_evt.clone();
+
+                    // Temporary IBKR connection configuration while proving the adapter.
+                    //
+                    // TODO:
+                    // Move IBKR connection settings into Config or .env after the adapter
+                    // lifecycle has been fully tested.
+                    let address = "127.0.0.1:7497".to_string();
+                    let client_id = 200;
+
+                    // Temporary TWS timezone mapping.
+                    // Move into canonical IBKR configuration later.
+                    let timezone_name =
+                        "Hawaii-Aleutian Standard Time".to_string();
+
+                    let timezone_alias =
+                        "Pacific/Honolulu".to_string();
+
+                    tokio::spawn(
+                        async move {
+                            run_ibkr_adapter(
+                                address,
+                                client_id,
+                                timezone_name,
+                                timezone_alias,
+                                rx_ibkr_exec,
+                                tx_exec_evt,
+                                true,
+                            )
+                            .await;
+                        }
+                    );
+                }
+            }
         }
 
 
         // ========================================================
-        // HYPERLIQUID BACKTEST
+        // SHARED BACKTEST EXECUTION
         // ========================================================
 
-        ExecutionMode::Backtest
-            if cfg.execution_venue == Venue::Hyperliquid =>
-        {
+        ExecutionMode::Backtest => {
+
+            // Select the execution receiver corresponding to the
+            // configured execution venue.
+            //
+            // The execution router still routes by canonical Venue,
+            // but all backtest venues use the same execution simulator.
+
+            let rx_backtest_exec =
+                match cfg.execution_venue {
+
+                    Venue::Hyperliquid => {
+                        rx_hyperliquid_exec
+                    }
+
+                    Venue::Alpaca => {
+                        rx_alpaca_exec
+                    }
+
+                    Venue::InteractiveBrokers => {
+                        rx_ibkr_exec
+                    }
+                };
+
+
             let market_state =
                 Arc::clone(
                     &backtest_market_state
@@ -775,10 +898,11 @@ async fn main() -> Result<()> {
             let tx_exec_evt =
                 tx_exec_evt.clone();
 
+
             tokio::spawn(
                 async move {
                     run_backtest_adapter(
-                        rx_hyperliquid_exec,
+                        rx_backtest_exec,
                         tx_exec_evt,
                         market_state,
                         true,
@@ -789,86 +913,18 @@ async fn main() -> Result<()> {
         }
 
 
-        _ => {}
-    }
+        // ========================================================
+        // SIMULATION EXECUTION
+        // ========================================================
 
-    // ============================================================
-    // START ALPACA EXECUTION ADAPTER
-    // ============================================================
+        ExecutionMode::Simulation => {
 
-    if matches!(
-        cfg.execution_mode,
-        ExecutionMode::Live | ExecutionMode::Paper
-    ) && cfg.execution_venue == Venue::Alpaca
-    {
-        let adapter_cfg = cfg.clone();
-        let tx_exec_evt = tx_exec_evt.clone();
-
-        tokio::spawn(
-            async move {
-                run_alpaca_adapter(
-                    adapter_cfg,
-                    rx_alpaca_exec,
-                    tx_exec_evt,
-                )
-                .await;
-            }
-        );
-    }
-
-    // ============================================================
-    // START IBKR EXECUTION ADAPTER
-    // ============================================================
-    //
-    // Engine
-    //     -> tx_exec
-    //     -> ExecutionRouter
-    //     -> tx_ibkr_exec
-    //     -> IBKRAdapter
-    //     -> TWS / IB Gateway
-    //     -> IBKR
-    //
-    // IBKR order updates
-    //     -> IBKRAdapter
-    //     -> tx_exec_evt
-    //     -> Engine
-    //
-    // The IBKR execution adapter runs in Live and Paper modes.
-    // Simulation and Backtest use internal execution adapters.
-    if matches!(
-        cfg.execution_mode,
-        ExecutionMode::Live | ExecutionMode::Paper
-    ) && cfg.execution_venue == Venue::InteractiveBrokers
-    {
-        let tx_exec_evt = tx_exec_evt.clone();
-
-        // Temporary IBKR connection configuration while proving the adapter.
-        //
-        // TODO:
-        // Move IBKR connection settings into Config or .env after the adapter
-        // lifecycle has been fully tested.
-        let address = "127.0.0.1:7497".to_string();
-        let client_id = 200;
-
-        // Temporary TWS timezone mapping.
-        // Move into canonical IBKR configuration later.
-        let timezone_name = "Hawaii-Aleutian Standard Time".to_string();
-        let timezone_alias = "Pacific/Honolulu".to_string();
-
-        tokio::spawn(
-            async move {
-                run_ibkr_adapter(
-                    address,
-                    client_id,
-                    timezone_name,
-                    timezone_alias,
-                    rx_ibkr_exec,
-                    tx_exec_evt,
-                    true,
-                )
-                .await;
-            }
-        );
+            // TODO:
+            // Start the internal simulation execution adapter.
+            //
+            // Simulation uses live market data with simulated orders,
+            // whereas Backtest uses historical market data.
+        }
     }
 
 
