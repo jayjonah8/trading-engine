@@ -118,10 +118,10 @@ async fn main() -> Result<()> {
         execution_venue: Venue::Hyperliquid,
 
         // Live market data is intentionally independent from execution.
-        live_market_data_provider: LiveMarketDataProvider::Alpaca,
+        live_market_data_provider: LiveMarketDataProvider::Hyperliquid,
 
         // Used only when execution_mode = ExecutionMode::Backtest.
-        historical_data_provider: HistoricalDataProvider::Hyperliquid,
+        historical_data_provider: HistoricalDataProvider::Synthetic,
 
         symbols: vec![
             "BTC".to_string(),
@@ -1172,6 +1172,9 @@ async fn main() -> Result<()> {
                 data::historical::alpaca::runner::run_alpaca_backtest_feed(
                     &backtest_senders,
                     &tx_engine,
+                    &tx_exec,
+                    &tx_exec_evt,
+                    &backtest_market_state,
                 )
                 .await
                 .map_err(|error| anyhow::anyhow!(error.to_string()))?;

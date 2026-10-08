@@ -47,23 +47,39 @@ use crate::data::historical::{
     strategy_event::BacktestStrategyEvent,
 };
 
-use crate::core::engine::engine::EngineEvent;
+use crate::core::{
+    engine::engine::EngineEvent,
+
+    execution::{
+        ExecCommand,
+        ExecEvent,
+        Venue,
+    },
+};
+
+use crate::exchange::backtest::SharedBacktestMarketState;
+
 
 // Fetches raw historical trades, builds accurate candles from the full
 // trade stream, downsamples the trades for strategy replay, then merges
 // trades and closed candles into one chronological backtest event stream.
 pub async fn run_alpaca_backtest_feed(
-    tx_backtest_strategies:
-        &[Sender<BacktestStrategyEvent>],
-
-    tx_engine:
-        &UnboundedSender<EngineEvent>,
+    tx_backtest_strategies: &[Sender<BacktestStrategyEvent>],
+    tx_engine: &UnboundedSender<EngineEvent>,
+    tx_exec: &UnboundedSender<ExecCommand>,
+    tx_exec_evt: &UnboundedSender<ExecEvent>,
+    market_state: &SharedBacktestMarketState,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    // TODO:
+    // Move backtest replay settings into the shared Config so every historical
+    // data provider uses the same configurable trade downsampling interval.
+    let min_trade_interval = Duration::from_millis(300);
+
     let fetch_config =
         HistoricalFetchConfig::default();
 
-    // Uses the default candle setting timeframes and prune duration. 
-    // You can change this to a custom config if you want. 
+    // Uses the default candle setting timeframes and prune duration.
+    // You can change this to a custom config if you want.
     let candle_config =
         CandleConfig::default();
 
@@ -177,7 +193,7 @@ pub async fn run_alpaca_backtest_feed(
     let trades =
         downsample_trades(
             raw_trades,
-            fetch_config.min_trade_interval,
+            min_trade_interval,
         );
 
     println!(
@@ -185,7 +201,7 @@ pub async fn run_alpaca_backtest_feed(
         original_trade_count,
         trades.len(),
         original_trade_count - trades.len(),
-        fetch_config.min_trade_interval.as_millis(),
+        min_trade_interval.as_millis(),
     );
 
     // ============================================================
@@ -282,7 +298,6 @@ pub async fn run_alpaca_backtest_feed(
                                         trade.size,
 
                                     timestamp_ms: trade.timestamp.timestamp_millis(),
-                                      
                                 }
                             ),
                     }
@@ -306,14 +321,35 @@ pub async fn run_alpaca_backtest_feed(
         // ============================================================
         // DEBUG: HISTORICAL EVENT START (DELETE LATER)
         // ============================================================
-        // if let AppEvent::Trade(trade) = &event.event {
+        // if let AppEvent::TapeTrade(trade) = &event.event {
         //     println!(
         //         "\n[BACKTEST] EVENT | symbol={} | px={:.4} | time={}",
         //         event.symbol,
         //         trade.price,
-        //         trade.timestamp,
+        //         trade.timestamp_ms,
         //     );
         // }
+
+        // ============================================================
+        // UPDATE BACKTEST EXECUTION MARKET STATE
+        // ============================================================
+
+        // Update the historical execution price before the Engine
+        // and strategies process this market event.
+        //
+        // The backtest adapter uses this state when simulating fills.
+        if let AppEvent::TapeTrade(trade) =
+            &event.event
+        {
+            let mut state =
+                market_state.write().await;
+
+            state.update_price(
+                trade.symbol.clone(),
+                trade.price,
+                trade.timestamp_ms,
+            );
+        }
 
         // ============================================================
         // 1. PROCESS HISTORICAL PRICE IN ENGINE
@@ -417,20 +453,66 @@ pub async fn run_alpaca_backtest_feed(
         // 4. WAIT FOR STRATEGY ENGINE EVENTS
         // ============================================================
 
-        // Strategies may have generated OpenBackTestTrade events while
-        // processing this market event. This barrier guarantees those
-        // engine events are processed before replay advances.
+        // Strategies may have generated order events while processing
+        // this market event. This barrier guarantees those EngineEvents
+        // are processed before execution synchronization begins.
         wait_for_engine(
             tx_engine
         )
         .await?;
 
-        // TEMP DEBUG: (DELETE LATER)
-        // println!(
-        //     "[BACKTEST] ENGINE DECISIONS DONE"
-        // );
+        // ============================================================
+        // 5. WAIT FOR BACKTEST EXECUTION COMMANDS
+        // ============================================================
+
+        // Synchronize the configured execution venue through the
+        // normal Engine -> Execution Router -> Backtest Adapter path.
+        //
+        // The adapter acknowledges this barrier after processing
+        // preceding commands and emitting their execution events.
+        wait_for_execution_commands(
+            tx_exec,
+            Venue::Alpaca,
+        )
+        .await?;
+
+        // ============================================================
+        // 6. WAIT FOR BACKTEST EXECUTION EVENTS
+        // ============================================================
+
+        // Wait until the Engine has applied the execution events
+        // emitted by the backtest adapter before advancing replay.
+        wait_for_execution(
+            tx_exec_evt
+        )
+        .await?;
+
+        // ============================================================
+        // DEBUG: HISTORICAL REPLAY SPEED (DELETE LATER)
+        // ============================================================
+        // Slow down historical replay to inspect the execution sequence.
+        // This only affects wall-clock speed, not historical timestamps.
+        // 100 ms is a good value
+        const DEBUG_REPLAY_DELAY_MS: u64 = 0;
+
+        // ============================================================
+        // DEBUG: HISTORICAL STEP COMPLETE (DELETE LATER)
+        // ============================================================
+        if DEBUG_REPLAY_DELAY_MS > 0 {
+            println!(
+                "[BACKTEST DEBUG] HISTORICAL STEP COMPLETE | symbol={}",
+                event.symbol,
+            );
+        }
+
+        if DEBUG_REPLAY_DELAY_MS > 0 {
+            sleep(
+                Duration::from_millis(DEBUG_REPLAY_DELAY_MS)
+            )
+            .await;
+        }
     }
-    
+
     println!(
         "[BACKTEST] finished publishing historical events"
     );
@@ -438,6 +520,10 @@ pub async fn run_alpaca_backtest_feed(
     Ok(())
 }
 
+
+// ============================================================
+// ENGINE BARRIER
+// ============================================================
 
 /// Waits until the engine has processed every EngineEvent that was
 /// queued before this synchronization point.
@@ -461,6 +547,75 @@ async fn wait_for_engine(
         .await
         .map_err(
             |_| "engine barrier was dropped".to_string()
+        )?;
+
+    Ok(())
+}
+
+
+// ============================================================
+// EXECUTION COMMAND SYNCHRONIZATION
+// ============================================================
+
+/// Waits until the backtest execution adapter has processed every
+/// execution command queued before this synchronization point.
+///
+/// The venue identifies the execution route that should receive
+/// the barrier, allowing the same helper to support all venues.
+async fn wait_for_execution_commands(
+    tx_exec: &UnboundedSender<ExecCommand>,
+    venue: Venue,
+) -> Result<(), String> {
+    let (tx_done, rx_done) =
+        oneshot::channel();
+
+    tx_exec
+        .send(
+            ExecCommand::BacktestBarrier {
+                venue,
+                done: tx_done,
+            }
+        )
+        .map_err(
+            |_| "execution command channel closed".to_string()
+        )?;
+
+    rx_done
+        .await
+        .map_err(
+            |_| "execution command barrier was dropped".to_string()
+        )?;
+
+    Ok(())
+}
+
+
+// ============================================================
+// EXECUTION EVENT SYNCHRONIZATION
+// ============================================================
+
+/// Waits until the Engine has processed every ExecEvent that was
+/// queued before this synchronization point.
+async fn wait_for_execution(
+    tx_exec_evt: &UnboundedSender<ExecEvent>,
+) -> Result<(), String> {
+    let (tx_done, rx_done) =
+        oneshot::channel();
+
+    tx_exec_evt
+        .send(
+            ExecEvent::BacktestBarrier {
+                done: tx_done,
+            }
+        )
+        .map_err(
+            |_| "execution event channel closed".to_string()
+        )?;
+
+    rx_done
+        .await
+        .map_err(
+            |_| "execution barrier was dropped".to_string()
         )?;
 
     Ok(())
@@ -515,4 +670,3 @@ impl BacktestReplayEvent {
         }
     }
 }
-
