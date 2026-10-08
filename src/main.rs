@@ -1157,9 +1157,13 @@ async fn main() -> Result<()> {
                     end,
                     &backtest_senders,
                     &tx_engine,
+                    &tx_exec,
+                    &tx_exec_evt,
+                    &backtest_market_state,
+                    cfg.execution_venue,
                 )
                 .await
-                .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+                .map_err(|error: Box<dyn std::error::Error>| anyhow::anyhow!(error.to_string()))?;
             }
 
 

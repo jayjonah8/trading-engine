@@ -7,22 +7,32 @@ use chrono::{
     Utc,
 };
 
-use tokio::sync::{
-    mpsc::{
-        Sender,
-        UnboundedSender,
+use tokio::{
+    sync::{
+        mpsc::{
+            Sender,
+            UnboundedSender,
+        },
+        oneshot,
     },
-    oneshot,
+    time::sleep,
 };
 
 use crate::{
     core::{
         engine::engine::EngineEvent,
+
         events::{
             AppEvent,
             AppEventEnvelope,
             Bar,
             TapeTrade,
+        },
+
+        execution::{
+            ExecCommand,
+            ExecEvent,
+            Venue,
         },
     },
 
@@ -38,12 +48,13 @@ use crate::{
         live::synthetic::asset::SyntheticAsset,
     },
 
+    exchange::backtest::SharedBacktestMarketState,
+
     market::{
         candle::CandleConfig,
         candle_manager::CandleManager,
     },
 };
-
 
 // ============================================================
 // SYNTHETIC BACKTEST FEED
@@ -70,6 +81,10 @@ pub async fn run_synthetic_backtest_feed(
     end: DateTime<Utc>,
     tx_backtest_strategies: &[Sender<BacktestStrategyEvent>],
     tx_engine: &UnboundedSender<EngineEvent>,
+    tx_exec: &UnboundedSender<ExecCommand>,
+    tx_exec_evt: &UnboundedSender<ExecEvent>,
+    market_state: &SharedBacktestMarketState,
+    execution_venue: Venue,
 ) -> Result<(), Box<dyn std::error::Error>> {
     if assets.is_empty() {
         return Err("Synthetic historical asset list cannot be empty".into());
@@ -112,7 +127,6 @@ pub async fn run_synthetic_backtest_feed(
         end,
     );
 
-
     // ============================================================
     // BUILD CANDLES FROM FULL RAW TAPE
     // ============================================================
@@ -141,12 +155,10 @@ pub async fn run_synthetic_backtest_feed(
         )
     );
 
-
     println!(
         "[SYNTHETIC BACKTEST] built {} historical candles",
         bars.len()
     );
-
 
     // ============================================================
     // DOWNSAMPLE STRATEGY TRADE STREAM
@@ -161,7 +173,6 @@ pub async fn run_synthetic_backtest_feed(
             min_trade_interval,
         );
 
-
     println!(
         "[SYNTHETIC BACKTEST] downsampled | original={} | kept={} | removed={} | interval={}ms",
         original_trade_count,
@@ -169,7 +180,6 @@ pub async fn run_synthetic_backtest_feed(
         original_trade_count - trades.len(),
         min_trade_interval.as_millis(),
     );
-
 
     // ============================================================
     // BUILD REPLAY TIMELINE
@@ -196,7 +206,6 @@ pub async fn run_synthetic_backtest_feed(
         );
     }
 
-
     replay_events.sort_by(
         |a, b| {
             a.timestamp()
@@ -210,12 +219,10 @@ pub async fn run_synthetic_backtest_feed(
         }
     );
 
-
     println!(
         "[SYNTHETIC BACKTEST] replaying {} historical market events",
         replay_events.len()
     );
-
 
     // ============================================================
     // REPLAY
@@ -249,6 +256,27 @@ pub async fn run_synthetic_backtest_feed(
                 }
             };
 
+        // ========================================================
+        // UPDATE BACKTEST EXECUTION MARKET STATE
+        // ========================================================
+
+        // Update the shared historical execution price before
+        // processing the corresponding Engine and strategy events.
+        //
+        // Synthetic is the historical data provider, while the
+        // configured execution venue determines order routing.
+        if let AppEvent::TapeTrade(trade) =
+            &event.event
+        {
+            let mut state =
+                market_state.write().await;
+
+            state.update_price(
+                trade.symbol.clone(),
+                trade.price,
+                trade.timestamp_ms,
+            );
+        }
 
         // ========================================================
         // ENGINE HISTORICAL PRICE
@@ -272,7 +300,6 @@ pub async fn run_synthetic_backtest_feed(
             )
             .await?;
         }
-
 
         // ========================================================
         // STRATEGIES
@@ -304,7 +331,6 @@ pub async fn run_synthetic_backtest_feed(
             );
         }
 
-
         for done in acknowledgements {
             done
                 .await
@@ -313,6 +339,9 @@ pub async fn run_synthetic_backtest_feed(
                 )?;
         }
 
+        // ========================================================
+        // WAIT FOR STRATEGY ENGINE EVENTS
+        // ========================================================
 
         // Process any EngineEvents produced by strategies before
         // advancing historical market time.
@@ -320,8 +349,57 @@ pub async fn run_synthetic_backtest_feed(
             tx_engine
         )
         .await?;
-    }
 
+        // ========================================================
+        // WAIT FOR BACKTEST EXECUTION COMMANDS
+        // ========================================================
+
+        // Wait until the execution router has forwarded preceding
+        // commands and the backtest adapter has processed them.
+        //
+        // The barrier uses the configured execution venue, not the
+        // synthetic historical data provider.
+        wait_for_execution_commands(
+            tx_exec,
+            execution_venue,
+        )
+        .await?;
+
+        // ========================================================
+        // WAIT FOR BACKTEST EXECUTION EVENTS
+        // ========================================================
+
+        // Wait until the Engine has processed the execution events
+        // emitted by the backtest adapter, including market fills.
+        wait_for_execution(
+            tx_exec_evt
+        )
+        .await?;
+
+        // ============================================================
+        // DEBUG: HISTORICAL REPLAY SPEED (DELETE LATER)
+        // ============================================================
+        // Slow down historical replay to inspect the execution sequence.
+        // This only affects wall-clock speed, not historical timestamps.
+        // 100 ms is a good value
+        const DEBUG_REPLAY_DELAY_MS: u64 = 0;
+
+        // ============================================================
+        // DEBUG: HISTORICAL STEP COMPLETE (DELETE LATER)
+        // ============================================================
+        if DEBUG_REPLAY_DELAY_MS > 0 {
+            println!(
+                "[BACKTEST DEBUG] HISTORICAL STEP COMPLETE | symbol={}",
+                event.symbol,
+            );
+        }
+        if DEBUG_REPLAY_DELAY_MS > 0 {
+            sleep(
+                Duration::from_millis(DEBUG_REPLAY_DELAY_MS)
+            )
+            .await;
+        }
+    }
 
     println!(
         "[SYNTHETIC BACKTEST] finished historical replay"
@@ -329,7 +407,6 @@ pub async fn run_synthetic_backtest_feed(
 
     Ok(())
 }
-
 
 // ============================================================
 // ENGINE BARRIER
@@ -360,6 +437,72 @@ async fn wait_for_engine(
     Ok(())
 }
 
+// ============================================================
+// EXECUTION COMMAND SYNCHRONIZATION
+// ============================================================
+
+/// Waits until the backtest execution adapter has processed every
+/// execution command queued before this synchronization point.
+///
+/// The venue identifies the backtest adapter that should receive
+/// the barrier, allowing the same helper to support all venues.
+async fn wait_for_execution_commands(
+    tx_exec: &UnboundedSender<ExecCommand>,
+    venue: Venue,
+) -> Result<(), String> {
+    let (tx_done, rx_done) =
+        oneshot::channel();
+
+    tx_exec
+        .send(
+            ExecCommand::BacktestBarrier {
+                venue,
+                done: tx_done,
+            }
+        )
+        .map_err(
+            |_| "execution command channel closed".to_string()
+        )?;
+
+    rx_done
+        .await
+        .map_err(
+            |_| "execution command barrier was dropped".to_string()
+        )?;
+
+    Ok(())
+}
+
+// ============================================================
+// EXECUTION EVENT SYNCHRONIZATION
+// ============================================================
+
+/// Waits until the Engine has processed every ExecEvent that was
+/// queued before this synchronization point.
+async fn wait_for_execution(
+    tx_exec_evt: &UnboundedSender<ExecEvent>,
+) -> Result<(), String> {
+    let (tx_done, rx_done) =
+        oneshot::channel();
+
+    tx_exec_evt
+        .send(
+            ExecEvent::BacktestBarrier {
+                done: tx_done,
+            }
+        )
+        .map_err(
+            |_| "execution event channel closed".to_string()
+        )?;
+
+    rx_done
+        .await
+        .map_err(
+            |_| "execution barrier was dropped".to_string()
+        )?;
+
+    Ok(())
+}
 
 // ============================================================
 // BACKTEST REPLAY EVENT
@@ -370,7 +513,6 @@ enum BacktestReplayEvent {
     Bar(Bar),
 }
 
-
 impl BacktestReplayEvent {
     fn timestamp(
         &self,
@@ -380,7 +522,6 @@ impl BacktestReplayEvent {
             Self::Bar(bar) => bar.end,
         }
     }
-
 
     fn replay_priority(
         &self,
