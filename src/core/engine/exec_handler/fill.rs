@@ -2,7 +2,10 @@
 
 use crate::{
     core::{
-        engine::engine::Engine,
+        engine::{
+            engine::Engine,
+            state::ExecutionMode,
+        },
 
         execution::{
             Fill,
@@ -24,30 +27,69 @@ use crate::{
 // HANDLE FILL
 // ============================================================
 
+
 impl Engine {
     /// Applies one confirmed execution to authoritative engine state.
     ///
     /// Fill
-    ///     -> validate against Order
-    ///     -> validate associated Trade
+    ///     -> validate Fill price and quantity
+    ///     -> validate against Order and remaining quantity
+    ///     -> validate associated Trade and lifecycle state
+    ///     -> validate exit quantity and confirmed entry VWAP
     ///     -> deduplicate through FillLedger
-    ///     -> update Order execution state
+    ///     -> update Order execution state and VWAP
     ///     -> reduce RiskReservation
     ///     -> update Position
-    ///     -> update associated Trade
+    ///     -> update Trade quantity, VWAP, and lifecycle
+    ///     -> calculate realized PnL for exit fills
+    ///     -> update General accounting and closed-trade counters
     ///
     /// A Fill is an authoritative execution fact that changes actual exposure.
     ///
     /// Submitting, accepting, working, canceling, or replacing an Order does
     /// not itself change Position or Trade quantity. Confirmed fills do.
     ///
-    /// Trade timing is based on canonical event timestamps:
+    /// Realized PnL is calculated on each confirmed exit fill, supporting
+    /// long/short positions, partial exits, and multiple exit executions.
+    ///
+    /// Accounting is separated by execution mode:
+    ///
+    /// - Live/Paper/Backtest: realized_pnl, live_closed_trades
+    /// - Simulation: sim_realized_pnl, sim_closed_trades
+    ///
+    /// Closed-trade counters increment only when a logical Trade is fully
+    /// closed. Realized PnL accumulates across all confirmed exit fills.
+    ///
+    /// Trade timing uses canonical event timestamps:
     ///
     ///     trade.opened_ts_ms = first confirmed entry fill timestamp
+    ///     trade.closed_ts_ms = final confirmed exit fill timestamp
     ///
-    /// Risk logic later compares market-event `ts_ms` against `opened_ts_ms`.
-    /// This keeps timing deterministic across:
+    /// Risk logic compares market-event `ts_ms` against `opened_ts_ms`.
+    /// This preserves deterministic timing across live trading, simulation,
+    /// and historical backtesting.
     ///
+    /// 
+    /// TODO:
+    /// Incorporate venue execution fees and funding payments into net PnL.
+    ///
+    /// TODO:
+    /// Implement live execution reconciliation for unexpected confirmed
+    /// fills. A venue execution cannot be undone simply because validation
+    /// fails. Preserve the execution fact, reconcile actual venue exposure,
+    /// correct inconsistent engine state, and notify via Slack/Discord.
+    /// 
+    /// In live trading, unexpected executions must eventually trigger
+    /// reconciliation to:
+    /// 
+    /// - Preserve the confirmed execution fact.
+    /// - Query actual venue Orders and Positions.
+    /// - Correct inconsistent engine exposure and accounting.
+    /// - Notify the operator through Slack/Discord.
+    ///
+    /// Until reconciliation is implemented, rejected live Fills
+    /// may leave engine state inconsistent with actual venue exposure.
+    /// 
     /// - live trading
     /// - simulation
     /// - historical backtesting
@@ -177,8 +219,24 @@ impl Engine {
         // VALIDATE ASSOCIATED TRADE
         // ============================================================
 
+        // Validate the logical Trade BEFORE recording the execution
+        // or modifying Order, Position, RiskReservation, or PnL.
+        //
+        // An Order can have sufficient remaining quantity while its
+        // associated Trade has already been partially or fully closed.
+        //
+        // These checks protect canonical accounting from inconsistent
+        // execution events.
+        //
+        // IMPORTANT:
+        // A confirmed live venue execution cannot simply be undone.
+        // Rejected fills indicating actual venue exposure must eventually
+        // trigger reconciliation rather than being silently discarded.
+
         if let Some(trade_id) = trade_id {
-            if self.state.trades.get(trade_id).is_none() {
+            let Some(trade) =
+                self.state.trades.get(trade_id)
+            else {
                 print_log(
                     self.debug_mode,
                     true,
@@ -190,11 +248,247 @@ impl Engine {
                 );
 
                 // TODO:
-                // Send a remote Slack/Discord critical error notification in
-                // live trading. An Order associated with a missing Trade
-                // indicates inconsistent engine state.
+                // Send a critical Slack/Discord notification in live trading.
+                // A confirmed execution referencing a missing Trade indicates
+                // inconsistent engine state and requires reconciliation.
 
                 return;
+            };
+
+
+            match order_purpose {
+                // ====================================================
+                // ENTRY FILL VALIDATION
+                // ====================================================
+
+                OrderPurpose::Entry => {
+                    // A directional Trade must not accept new entry fills
+                    // after it has completely closed.
+                    //
+                    // Otherwise, a delayed execution could reopen a
+                    // previously completed logical Trade and corrupt
+                    // its quantity, entry VWAP, and PnL accounting.
+                    if trade.state == TradeState::Closed {
+                        print_log(
+                            self.debug_mode,
+                            true,
+                            format!(
+                                "[ENGINE] ENTRY FILL FOR CLOSED TRADE | trade_id={} | order_id={} | symbol={}",
+                                trade.id,
+                                fill.order_id,
+                                fill.symbol,
+                            ),
+                        );
+
+                        // TODO:
+                        // Send a critical Slack/Discord notification.
+                        //
+                        // Reconcile the actual venue position because
+                        // this entry execution may have established
+                        // new exposure after the logical Trade closed.
+
+                        return;
+                    }
+
+
+                    // TODO (POTENTIAL EXTRA CHECK):
+                    //
+                    // Detect entry fills arriving after a Trade has
+                    // started exiting (TradeState::Closing).
+                    //
+                    // A partially filled entry Order may continue
+                    // receiving fills while cancellation is pending.
+                    //
+                    // Simply rejecting these confirmed executions is
+                    // insufficient in live trading because the venue
+                    // may have already increased actual exposure.
+                    //
+                    // Future handling should:
+                    //
+                    // 1. Detect outstanding entry Orders when exiting.
+                    // 2. Request cancellation when appropriate.
+                    // 3. Reconcile late entry fills against actual exposure.
+                    // 4. Maintain correct cumulative entry cost basis.
+                    //
+                    // TODO:
+                    // Send a critical Slack/Discord notification if
+                    // unexpected late entry executions are detected.
+                }
+
+
+                // ====================================================
+                // EXIT FILL VALIDATION
+                // ====================================================
+
+                OrderPurpose::Exit
+                | OrderPurpose::StopLoss
+                | OrderPurpose::TakeProfit
+                | OrderPurpose::EmergencyExit => {
+                    // ====================================================
+                    // VALIDATE TRADE LIFECYCLE
+                    // ====================================================
+
+                    // A completed Trade must never be closed again.
+                    //
+                    // FillLedger prevents duplicate execution IDs,
+                    // but different execution IDs could still reference
+                    // multiple exit Orders for the same Trade.
+                    if trade.state == TradeState::Closed {
+                        print_log(
+                            self.debug_mode,
+                            true,
+                            format!(
+                                "[ENGINE] EXIT FILL FOR CLOSED TRADE | trade_id={} | order_id={} | symbol={}",
+                                trade.id,
+                                fill.order_id,
+                                fill.symbol,
+                            ),
+                        );
+
+                        // TODO:
+                        // Send a critical Slack/Discord notification.
+                        //
+                        // Reconcile the actual venue position because
+                        // an additional exit execution may have caused
+                        // unintended exposure or a position reversal.
+
+                        return;
+                    }
+
+
+                    // ====================================================
+                    // VALIDATE REMAINING TRADE QUANTITY
+                    // ====================================================
+
+                    // Order.remaining_quantity() was validated earlier.
+                    //
+                    // Also validate against the actual remaining Trade
+                    // quantity because multiple exit Orders could
+                    // individually pass the Order-level overfill guard.
+                    //
+                    // This prevents:
+                    //
+                    // - exiting more quantity than the Trade owns
+                    // - incorrect cumulative exited quantity
+                    // - incorrect realized PnL
+                    // - accidental duplicate Trade closures
+                    if !trade.quantity.is_finite()
+                        || trade.quantity <= 0.0
+                        || fill.quantity > trade.quantity + f64::EPSILON
+                    {
+                        print_log(
+                            self.debug_mode,
+                            true,
+                            format!(
+                                "[ENGINE] TRADE EXIT OVERFILL REJECTED | trade_id={} | order_id={} | symbol={} | fill_qty={} | trade_remaining_qty={}",
+                                trade.id,
+                                fill.order_id,
+                                fill.symbol,
+                                fill.quantity,
+                                trade.quantity,
+                            ),
+                        );
+
+                        // TODO:
+                        // Send a critical Slack/Discord notification.
+                        //
+                        // A confirmed venue execution exceeding the
+                        // remaining logical Trade quantity requires
+                        // reconciliation against actual venue exposure.
+
+                        return;
+                    }
+
+
+                    // ====================================================
+                    // VALIDATE CONFIRMED ENTRY PRICE
+                    // ====================================================
+
+                    // Realized PnL requires the confirmed entry VWAP.
+                    //
+                    // Reject missing, non-finite, or non-positive
+                    // entry prices before modifying canonical state.
+                    let valid_entry_px =
+                        trade.avg_entry_px
+                            .map(|px| px.is_finite() && px > 0.0)
+                            .unwrap_or(false);
+
+                    if !valid_entry_px {
+                        print_log(
+                            self.debug_mode,
+                            true,
+                            format!(
+                                "[ENGINE] EXIT FILL INVALID ENTRY PRICE | trade_id={} | order_id={} | symbol={} | avg_entry_px={:?}",
+                                trade.id,
+                                fill.order_id,
+                                fill.symbol,
+                                trade.avg_entry_px,
+                            ),
+                        );
+
+                        // TODO:
+                        // Send a critical Slack/Discord notification.
+                        //
+                        // Missing or invalid entry VWAP prevents
+                        // reliable realized PnL calculation and
+                        // indicates inconsistent Trade accounting.
+
+                        return;
+                    }
+
+
+                    // ====================================================
+                    // VALIDATE EXIT STATE
+                    // ====================================================
+
+                    // Exit executions are expected only for Trades
+                    // that have established exposure.
+                    //
+                    // Open:
+                    //     An exit may have been submitted and filled
+                    //     before the Trade transitioned to Closing.
+                    //
+                    // Closing:
+                    //     An exit is already in progress.
+                    //
+                    // Other states should not receive exit fills.
+                    if trade.state != TradeState::Open
+                        && trade.state != TradeState::Closing
+                    {
+                        print_log(
+                            self.debug_mode,
+                            true,
+                            format!(
+                                "[ENGINE] EXIT FILL INVALID TRADE STATE | trade_id={} | order_id={} | symbol={} | state={:?}",
+                                trade.id,
+                                fill.order_id,
+                                fill.symbol,
+                                trade.state,
+                            ),
+                        );
+
+                        // TODO:
+                        // Send a critical Slack/Discord notification.
+                        //
+                        // Investigate unexpected Trade lifecycle
+                        // transitions and reconcile venue exposure.
+
+                        return;
+                    }
+                }
+
+
+                // ====================================================
+                // NON-DIRECTIONAL ORDERS
+                // ====================================================
+
+                OrderPurpose::Quote
+                | OrderPurpose::Hedge => {
+                    // Quote/Hedge executions may not follow the
+                    // directional Trade lifecycle.
+                    //
+                    // Position accounting remains authoritative.
+                }
             }
         }
 
@@ -475,12 +769,103 @@ impl Engine {
                 | OrderPurpose::StopLoss
                 | OrderPurpose::TakeProfit
                 | OrderPurpose::EmergencyExit => {
+                    // ====================================================
+                    // CALCULATE REALIZED PNL
+                    // ====================================================
+
+                    // Every confirmed exit fill realizes PnL immediately.
+                    //
+                    // LONG:
+                    //     (exit_price - entry_price) * exit_quantity
+                    //
+                    // SHORT:
+                    //     (entry_price - exit_price) * exit_quantity
+                    //
+                    // Calculating PnL per fill correctly handles partial exits
+                    // and multiple exit executions at different prices.
+                    //
+                    // TODO:
+                    // Incorporate venue execution fees and funding payments
+                    // into net realized PnL.
+
+
+                    // Entry VWAP was validated before applying the Fill.
+                    //
+                    // This additional check prevents a missing entry price
+                    // from causing a panic in the authoritative engine.
+                    let Some(entry_px) =
+                        trade.avg_entry_px
+                    else {
+                        print_log(
+                            self.debug_mode,
+                            true,
+                            format!(
+                                "[ENGINE] CRITICAL MISSING ENTRY PRICE | trade_id={} | order_id={}",
+                                trade.id,
+                                fill.order_id,
+                            ),
+                        );
+
+                        // TODO:
+                        // Send a critical Slack/Discord notification.
+                        // Reconcile authoritative engine state before continuing.
+                        //
+                        // WARNING:
+                        // This condition occurs after earlier state mutations.
+                        // The engine must not treat this as a safely rejected Fill.
+
+                        return;
+                    };
+
+
+                    let realized_pnl =
+                        match fill.side {
+                            // Selling closes a long Trade.
+                            Side::Sell => {
+                                (fill.price - entry_px)
+                                    * fill.quantity
+                            }
+
+                            // Buying closes a short Trade.
+                            Side::Buy => {
+                                (entry_px - fill.price)
+                                    * fill.quantity
+                            }
+                        };
+
+
+                    // ====================================================
+                    // UPDATE GENERAL REALIZED PNL
+                    // ====================================================
+
+                    // Live, Paper, and Backtest share the primary PnL fields.
+                    //
+                    // Simulation maintains separate simulated accounting.
+                    //
+                    // Both paths use the same canonical Fill lifecycle.
+                    match self.execution_mode {
+                        ExecutionMode::Live
+                        | ExecutionMode::Paper
+                        | ExecutionMode::Backtest => {
+                            self.general.realized_pnl += realized_pnl;
+                        }
+
+                        ExecutionMode::Simulation => {
+                            self.general.sim_realized_pnl += realized_pnl;
+                        }
+                    }
+
+
+                    // ====================================================
+                    // UPDATE TRADE EXIT VWAP
+                    // ====================================================
+
                     let old_exited_quantity =
                         trade.exited_quantity;
 
 
-                    // Calculate true exit VWAP across partial fills and
-                    // multiple exit executions.
+                    // Calculate the cumulative exit VWAP across all
+                    // confirmed exit fills for this logical Trade.
                     trade.avg_exit_px =
                         Some(
                             weighted_average(
@@ -492,16 +877,20 @@ impl Engine {
                         );
 
 
-                    // exited_quantity is cumulative historical exit quantity.
+                    // Total quantity exited throughout the Trade lifecycle.
                     trade.exited_quantity +=
                         fill.quantity;
 
 
-                    // quantity represents CURRENTLY OPEN trade quantity.
+                    // Remaining currently open Trade quantity.
                     trade.quantity =
                         (trade.quantity - fill.quantity)
                             .max(0.0);
 
+
+                    // ====================================================
+                    // HANDLE FULL TRADE CLOSURE
+                    // ====================================================
 
                     if trade.quantity <= f64::EPSILON {
                         trade.quantity = 0.0;
@@ -512,21 +901,76 @@ impl Engine {
                         trade.closed_ts_ms =
                             Some(fill.ts_ms);
 
+
+                        // ====================================================
+                        // UPDATE CLOSED TRADE COUNTERS
+                        // ====================================================
+
+                        // Count each completed logical Trade once.
+                        //
+                        // Partial exit fills realize PnL immediately but
+                        // do not increment the closed-trade counter.
+                        //
+                        // Live/Paper/Backtest share live_closed_trades.
+                        // Simulation uses sim_closed_trades.
+                        match self.execution_mode {
+                            ExecutionMode::Live
+                            | ExecutionMode::Paper
+                            | ExecutionMode::Backtest => {
+                                self.general.live_closed_trades += 1;
+                            }
+
+                            ExecutionMode::Simulation => {
+                                self.general.sim_closed_trades += 1;
+                            }
+                        }
+
+
+                        // ====================================================
+                        // CALCULATE TOTAL TRADE PNL
+                        // ====================================================
+
+                        // Entry and exit VWAPs represent the confirmed
+                        // executions associated with this logical Trade.
+                        //
+                        // This is gross realized PnL before fees and funding.
+                        let avg_exit_px =
+                            trade.avg_exit_px.unwrap_or(fill.price);
+
+                        let total_trade_pnl =
+                            match fill.side {
+                                Side::Sell => {
+                                    (avg_exit_px - entry_px)
+                                        * trade.exited_quantity
+                                }
+
+                                Side::Buy => {
+                                    (entry_px - avg_exit_px)
+                                        * trade.exited_quantity
+                                }
+                            };
+
+
+                        // ====================================================
+                        // LOG CLOSED TRADE
+                        // ====================================================
+
                         print_log(
                             self.debug_mode,
                             true,
                             format!(
-                                "[ENGINE] TRADE CLOSED | trade_id={} | symbol={} | exited_qty={} | avg_entry_px={:?} | avg_exit_px={:?} | ts_ms={}",
+                                "[ENGINE] TRADE CLOSED | trade_id={} | symbol={} | exited_qty={} | entry_px={:.6} | exit_px={:.6} | pnl=${:.4} | ts_ms={}",
                                 trade.id,
                                 trade.symbol,
                                 trade.exited_quantity,
-                                trade.avg_entry_px,
-                                trade.avg_exit_px,
+                                entry_px,
+                                avg_exit_px,
+                                total_trade_pnl,
                                 fill.ts_ms,
                             ),
                         );
                     } else {
-                        // Some exposure still remains after this fill.
+                        // Some exposure remains after this confirmed exit.
                         trade.state =
                             TradeState::Closing;
                     }
