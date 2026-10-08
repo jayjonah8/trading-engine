@@ -54,6 +54,7 @@ pub async fn run_hyperliquid_backtest_feed(
     tx_exec: &UnboundedSender<ExecCommand>,
     tx_exec_evt: &UnboundedSender<ExecEvent>,
     market_state: &SharedBacktestMarketState,
+    execution_venue: Venue,
 ) -> Result<(), Box<dyn std::error::Error>> {
     // TODO:
     // Move backtest replay settings into the shared Config so every historical
@@ -351,7 +352,7 @@ pub async fn run_hyperliquid_backtest_feed(
         // corresponding ExecEvents, including order fills.
         wait_for_execution_commands(
             tx_exec,
-            Venue::Hyperliquid,
+            execution_venue,
         )
         .await?;
 

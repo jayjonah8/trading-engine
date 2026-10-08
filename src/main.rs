@@ -121,7 +121,7 @@ async fn main() -> Result<()> {
         live_market_data_provider: LiveMarketDataProvider::Hyperliquid,
 
         // Used only when execution_mode = ExecutionMode::Backtest.
-        historical_data_provider: HistoricalDataProvider::Synthetic,
+        historical_data_provider: HistoricalDataProvider::Alpaca,
 
         symbols: vec![
             "BTC".to_string(),
@@ -1177,6 +1177,7 @@ async fn main() -> Result<()> {
                     &tx_exec,
                     &tx_exec_evt,
                     &backtest_market_state,
+                    cfg.execution_venue,
                 )
                 .await
                 .map_err(|error| anyhow::anyhow!(error.to_string()))?;
@@ -1239,6 +1240,7 @@ async fn main() -> Result<()> {
                     &tx_exec,       // NEW: Engine -> Execution Router
                     &tx_exec_evt,
                     &backtest_market_state,
+                    cfg.execution_venue,
                 )
                 .await
                 .map_err(|error| anyhow::anyhow!(error.to_string()))?;
