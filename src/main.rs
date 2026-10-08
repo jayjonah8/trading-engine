@@ -508,6 +508,7 @@ async fn main() -> Result<()> {
             tx_exec.clone(),
         );
 
+    let debug_mode = engine.debug_mode;
 
     // ============================================================
     // APPLY INITIAL VENUE STATE
@@ -706,7 +707,7 @@ async fn main() -> Result<()> {
         run_execution_router(
             rx_exec_router,
             execution_routes,
-            true,
+            debug_mode,
         )
     );
 
@@ -774,6 +775,7 @@ async fn main() -> Result<()> {
                                 meta_cache_for_adapter,
                                 rx_hyperliquid_exec,
                                 tx_exec_evt,
+                                debug_mode,
                             )
                             .await;
                         }
@@ -798,6 +800,7 @@ async fn main() -> Result<()> {
                                 adapter_cfg,
                                 rx_alpaca_exec,
                                 tx_exec_evt,
+                                debug_mode,
                             )
                             .await;
                         }
@@ -851,7 +854,7 @@ async fn main() -> Result<()> {
                                 timezone_alias,
                                 rx_ibkr_exec,
                                 tx_exec_evt,
-                                true,
+                                debug_mode,
                             )
                             .await;
                         }
@@ -898,14 +901,13 @@ async fn main() -> Result<()> {
             let tx_exec_evt =
                 tx_exec_evt.clone();
 
-
             tokio::spawn(
                 async move {
                     run_backtest_adapter(
                         rx_backtest_exec,
                         tx_exec_evt,
                         market_state,
-                        true,
+                        debug_mode,
                     )
                     .await;
                 }

@@ -104,11 +104,8 @@ pub async fn run_hyperliquid_adapter(
     meta_cache: Arc<RwLock<Meta>>,
     mut rx_cmd: UnboundedReceiver<ExecCommand>,
     tx_evt: UnboundedSender<ExecEvent>,
+    debug_mode: bool,
 ) {
-    let debug_mode =
-        true;
-
-
     // ============================================================
     // WALLET
     // ============================================================
