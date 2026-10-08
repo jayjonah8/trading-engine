@@ -333,6 +333,7 @@ async fn test_hyperliquid_market_order_production_pipeline() {
                 meta_cache,
                 rx_hyperliquid,
                 tx_evt,
+                true,
             )
         );
 

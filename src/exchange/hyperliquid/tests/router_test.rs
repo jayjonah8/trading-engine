@@ -212,6 +212,7 @@ async fn test_hyperliquid_router_to_adapter() {
             meta_cache,
             rx_hyperliquid,
             tx_evt,
+            true
         )
     );
 

@@ -183,6 +183,7 @@ async fn test_open_trade_routes_to_hyperliquid_adapter() {
                 meta_cache,
                 rx_hyperliquid_exec,
                 tx_exec_evt,
+                true
             )
         );
 
