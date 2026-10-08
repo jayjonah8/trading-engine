@@ -41,6 +41,10 @@ use crate::{
 /// Limit orders, stop orders, partial fills, slippage, fees, cancellation,
 /// and replacement behavior can be added without changing the Engine's
 /// canonical execution interface.
+///
+/// Backtest synchronization uses `ExecCommand::BacktestBarrier` to ensure
+/// previously queued execution commands have been processed before the
+/// historical replay advances to the next market event.
 pub async fn run_backtest_adapter(
     mut rx_cmd: UnboundedReceiver<ExecCommand>,
     tx_exec_evt: UnboundedSender<ExecEvent>,
@@ -225,6 +229,25 @@ pub async fn run_backtest_adapter(
                         order_id,
                     ),
                 );
+            }
+
+
+            // ========================================================
+            // BACKTEST SYNCHRONIZATION
+            // ========================================================
+
+            ExecCommand::BacktestBarrier {
+                venue: _,
+                done,
+            } => {
+                // Commands are processed sequentially by this adapter.
+                //
+                // Acknowledge only after all preceding execution commands
+                // have been processed and their ExecEvents have been emitted.
+                //
+                // The historical runner must subsequently wait for its
+                // ExecEvent barrier to ensure the Engine has applied fills.
+                let _ = done.send(());
             }
         }
     }

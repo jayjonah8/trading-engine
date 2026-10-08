@@ -55,6 +55,7 @@ use crate::{
     shared::utils::{
         get_bot_name,
         get_local_timestamp,
+        print_log,
     },
 };
 
@@ -507,6 +508,29 @@ fn handle_engine_command(
                 )
                 .await;
             });
+        }
+
+
+        // ================================================
+        // BACKTEST SYNCHRONIZATION (LIVE ADAPTER)
+        // ================================================
+
+        ExecCommand::BacktestBarrier {
+            venue: _,
+            done,
+        } => {
+            // Backtest barriers should never reach live adapters.
+            // Drop the acknowledgment sender without signaling completion.
+            //
+            // This ensures an incorrectly routed barrier fails
+            // instead of falsely reporting successful synchronization.
+            drop(done);
+
+            print_log(
+                debug_mode,
+                true,
+                "[ALPACA ADAPTER] unexpected backtest barrier received",
+            );
         }
     }
 }

@@ -81,6 +81,9 @@ impl ExecutionRoutes {
 ///
 /// The router intentionally contains no trading state and no venue-specific
 /// execution logic. Its only responsibility is command delivery.
+///
+/// Backtest synchronization commands follow the same venue-based routing
+/// as normal execution commands.
 pub async fn run_execution_router(
     mut rx_cmd: UnboundedReceiver<ExecCommand>,
     routes: ExecutionRoutes,
@@ -95,8 +98,21 @@ pub async fn run_execution_router(
     while let Some(command) =
         rx_cmd.recv().await
     {
-        let venue =
-            command.venue();
+        // ========================================================
+        // RESOLVE EXECUTION VENUE
+        // ========================================================
+
+        let Some(venue) =
+            command.venue()
+        else {
+            print_log(
+                debug_mode,
+                true,
+                "[EXECUTION ROUTER] command has no execution venue",
+            );
+
+            continue;
+        };
 
         // Keep disabled during normal operation.
         // Can be enabled when debugging execution routing.

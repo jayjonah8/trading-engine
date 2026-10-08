@@ -1,5 +1,7 @@
 #![allow(dead_code)]
 
+use tokio::sync::oneshot;
+
 use crate::core::execution::{
     order::{
         Order,
@@ -14,6 +16,7 @@ use crate::core::execution::{
 // - SubmitOrder
 // - CancelOrder
 // - ReplaceOrder
+// - BacktestBarrier (internal synchronization)
 //
 // Order-specific execution details such as market/limit, buy/sell,
 // time-in-force, reduce-only, and post-only live on `Order`.
@@ -31,7 +34,7 @@ use crate::core::execution::{
 ///
 /// The engine owns authoritative order state. Adapters execute commands and
 /// report resulting lifecycle changes back through canonical `ExecEvent`s.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub enum ExecCommand {
     /// Submit a new order to its configured execution venue.
     ///
@@ -67,32 +70,57 @@ pub enum ExecCommand {
         order_id: OrderId,
         changes: OrderChanges,
     },
+
+    // ========================================================
+    // BACKTEST SYNCHRONIZATION
+    // ========================================================
+
+    /// Synchronizes historical execution-command processing.
+    ///
+    /// This is an internal backtest-only command.
+    /// The backtest adapter acknowledges it after processing all
+    /// previously queued execution commands.
+    ///
+    /// `venue` identifies which registered backtest adapter should
+    /// receive the synchronization command.
+    ///
+    /// This supports historical backtesting across all venues.
+    BacktestBarrier {
+        venue: Venue,
+        done: oneshot::Sender<()>,
+    },
 }
 
 impl ExecCommand {
     /// Returns the execution venue responsible for this command.
     ///
     /// This gives the execution router a single venue-independent way to
-    /// route SubmitOrder, CancelOrder, and ReplaceOrder commands.
+    /// route SubmitOrder, CancelOrder, ReplaceOrder, and BacktestBarrier.
     ///
     /// For new orders the venue comes from the canonical `Order`.
-    /// Cancel and replace commands carry the venue directly because they
-    /// contain only the internal `OrderId`, not the complete `Order`.
-    pub const fn venue(&self) -> Venue {
+    /// Cancel, replace, and backtest synchronization commands carry
+    /// the venue directly.
+    ///
+    /// Returns `Some(Venue)` for venue-routed commands.
+    /// `None` is reserved for future internal commands that do not
+    /// require a specific execution venue.
+    pub const fn venue(&self) -> Option<Venue> {
         match self {
             Self::SubmitOrder { order } => {
-                order.venue
+                Some(order.venue)
             }
 
             Self::CancelOrder { venue, .. } => {
-                *venue
+                Some(*venue)
             }
 
             Self::ReplaceOrder { venue, .. } => {
-                *venue
+                Some(*venue)
+            }
+
+            Self::BacktestBarrier { venue, .. } => {
+                Some(*venue)
             }
         }
     }
 }
-
-

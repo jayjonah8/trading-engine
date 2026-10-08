@@ -125,10 +125,10 @@ async fn main() -> Result<()> {
 
         symbols: vec![
             "BTC".to_string(),
-            "ETH".to_string(),
-            "SOL".to_string(),
-            "HYPE".to_string(),
-            "NEAR".to_string(),
+            // "ETH".to_string(),
+            // "SOL".to_string(),
+            // "HYPE".to_string(),
+            // "NEAR".to_string(),
         ],
 
         // Example equity configuration:
@@ -149,7 +149,7 @@ async fn main() -> Result<()> {
 
         // ============================================================
         // RISK LIMITS
-        // =========================================================20
+        // ============================================================
         max_active_trades: Some(20),
         max_active_assets: Some(20),
         max_active_trades_per_symbol: Some(20),
@@ -1171,6 +1171,7 @@ async fn main() -> Result<()> {
                 data::historical::hyperliquid::runner::run_hyperliquid_backtest_feed(
                     &backtest_senders,
                     &tx_engine,
+                    &tx_exec,       // NEW: Engine -> Execution Router
                     &tx_exec_evt,
                     &backtest_market_state,
                 )

@@ -134,17 +134,17 @@ impl Strategy for BaseBacktestStrategy {
             AppEvent::TapeTrade(trade) => {
                 self.total_trade_events += 1;
 
-            //     print_log(
-            //     self.debug_mode,
-            //     true,
-            //     format!(
-            //         "[BASE BACKTEST TAPE TRADE][{}] price=${:.4} | size={} | timestamp_ms={}",
-            //         ev.symbol,
-            //         trade.price,
-            //         trade.size,
-            //         trade.timestamp_ms,
-            //     ),
-            // );
+                print_log(
+                self.debug_mode,
+                true,
+                format!(
+                    "[BASE BACKTEST TAPE TRADE][{}] price=${:.4} | size={} | timestamp_ms={}",
+                    ev.symbol,
+                    trade.price,
+                    trade.size,
+                    trade.timestamp_ms,
+                ),
+            );
 
    
                 // Backtest entry flow:

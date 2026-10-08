@@ -601,6 +601,29 @@ pub async fn run_hyperliquid_adapter(
                             }
                         );
                     }
+
+                    
+                    // ================================================
+                    // BACKTEST SYNCHRONIZATION (LIVE ADAPTER)
+                    // ================================================
+
+                    ExecCommand::BacktestBarrier {
+                        venue: _,
+                        done,
+                    } => {
+                        // Backtest barriers should never reach live adapters.
+                        // Drop the acknowledgment sender without signaling completion.
+                        //
+                        // This ensures an incorrectly routed barrier fails
+                        // instead of falsely reporting successful synchronization.
+                        drop(done);
+
+                        print_log(
+                            debug_mode,
+                            true,
+                            "[HYPERLIQUID ADAPTER] unexpected backtest barrier received",
+                        );
+                    }
                 }
             }
 
