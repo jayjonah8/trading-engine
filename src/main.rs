@@ -68,6 +68,12 @@ use crate::exchange::{
         SharedBacktestMarketState,
     },
 
+    simulation::{
+        adapter::run_simulation_adapter,
+        SimulationMarketState,
+        SharedSimulationMarketState,
+    },
+
     hyperliquid::{
         adapter::run_hyperliquid_adapter,
         api::{close_all_positions, get_hyperliquid_account_balances},
@@ -121,7 +127,7 @@ async fn main() -> Result<()> {
         live_market_data_provider: LiveMarketDataProvider::Hyperliquid,
 
         // Used only when execution_mode = ExecutionMode::Backtest.
-        historical_data_provider: HistoricalDataProvider::Hyperliquid,
+        historical_data_provider: HistoricalDataProvider::Alpaca,
 
         symbols: vec![
             "BTC".to_string(),
@@ -304,24 +310,25 @@ async fn main() -> Result<()> {
         );
 
 
-    {
-        let tx_bus =
-            tx_bus.clone();
+    // The was move to the below section:   MASTER -> BROADCAST BUS DISPATCHER
+    // {
+    //     let tx_bus =
+    //         tx_bus.clone();
 
 
-        tokio::spawn(
-            async move {
-                while let Some(ev) =
-                    rx_master.recv().await
-                {
-                    let _ =
-                        tx_bus.send(
-                            ev
-                        );
-                }
-            }
-        );
-    }
+    //     tokio::spawn(
+    //         async move {
+    //             while let Some(ev) =
+    //                 rx_master.recv().await
+    //             {
+    //                 let _ =
+    //                     tx_bus.send(
+    //                         ev
+    //                     );
+    //             }
+    //         }
+    //     );
+    // }
 
 
     // ============================================================
@@ -380,6 +387,73 @@ async fn main() -> Result<()> {
                 BacktestMarketState::new()
             )
         );
+    
+
+    // ============================================================
+    // SIMULATION MARKET STATE
+    // ============================================================
+
+    // Shared live market state used by the simulation execution adapter.
+    //
+    // The master market-data dispatcher updates this state before
+    // broadcasting live events to the Engine and strategies.
+    let simulation_market_state:
+        SharedSimulationMarketState =
+        Arc::new(
+            RwLock::new(
+                SimulationMarketState::new()
+            )
+        );
+
+
+    // ============================================================
+    // MASTER -> BROADCAST BUS DISPATCHER
+    // ============================================================
+
+    // In Simulation mode, update shared market state before
+    // broadcasting events to the Engine and strategies.
+    {
+        let tx_bus =
+            tx_bus.clone();
+
+        let simulation_market_state =
+            Arc::clone(
+                &simulation_market_state
+            );
+
+        let execution_mode =
+            cfg.execution_mode;
+
+        tokio::spawn(
+            async move {
+                while let Some(ev) =
+                    rx_master.recv().await
+                {
+                    // ====================================================
+                    // UPDATE SIMULATION MARKET STATE
+                    // ====================================================
+
+                    if execution_mode == ExecutionMode::Simulation {
+                        let mut state =
+                            simulation_market_state.write().await;
+
+                        state.update_event(
+                            &ev
+                        );
+                    }
+
+                    // ====================================================
+                    // BROADCAST MARKET EVENT
+                    // ====================================================
+
+                    let _ =
+                        tx_bus.send(
+                            ev
+                        );
+                }
+            }
+        );
+    }
 
 
     // ============================================================
@@ -730,7 +804,16 @@ async fn main() -> Result<()> {
     // through Hyperliquid, Alpaca, or InteractiveBrokers.
     //
     // The Engine -> ExecCommand -> ExecutionRouter architecture remains
-    // identical across live, paper, and backtest execution modes.
+    // identical across Live, Paper, Backtest, and Simulation modes.
+    //
+    // Live/Paper:
+    //   Venue-specific execution adapters.
+    //
+    // Backtest:
+    //   Shared backtest adapter using historical market data.
+    //
+    // Simulation:
+    //   Shared simulation adapter using live market data.
 
     match cfg.execution_mode {
 
@@ -916,16 +999,84 @@ async fn main() -> Result<()> {
 
 
         // ========================================================
-        // SIMULATION EXECUTION
+        // SHARED SIMULATION EXECUTION
         // ========================================================
 
         ExecutionMode::Simulation => {
 
-            // TODO:
-            // Start the internal simulation execution adapter.
+            // Select the execution receiver corresponding to the
+            // configured execution venue.
             //
-            // Simulation uses live market data with simulated orders,
-            // whereas Backtest uses historical market data.
+            // The execution router continues routing commands by Venue.
+            //
+            // All simulation venues use the shared simulation adapter
+            // instead of submitting orders to real exchanges.
+            //
+            // Live market-data providers update SharedSimulationMarketState
+            // independently through the master market-data dispatcher.
+            //
+            // The simulation adapter reads the latest bid/ask quotes
+            // when executing simulated market orders.
+
+            let rx_simulation_exec =
+                match cfg.execution_venue {
+
+                    Venue::Hyperliquid => {
+                        rx_hyperliquid_exec
+                    }
+
+                    Venue::Alpaca => {
+                        rx_alpaca_exec
+                    }
+
+                    Venue::InteractiveBrokers => {
+                        rx_ibkr_exec
+                    }
+                };
+
+
+            // ========================================================
+            // SHARED LIVE SIMULATION MARKET STATE
+            // ========================================================
+
+            let market_state =
+                Arc::clone(
+                    &simulation_market_state
+                );
+
+
+            // ========================================================
+            // EXECUTION EVENT CHANNEL
+            // ========================================================
+
+            let tx_exec_evt =
+                tx_exec_evt.clone();
+
+
+            // ========================================================
+            // CONFIGURED EXECUTION VENUE
+            // ========================================================
+
+            let execution_venue =
+                cfg.execution_venue;
+
+
+            // ========================================================
+            // START SIMULATION ADAPTER
+            // ========================================================
+
+            tokio::spawn(
+                async move {
+                    run_simulation_adapter(
+                        rx_simulation_exec,
+                        tx_exec_evt,
+                        market_state,
+                        execution_venue,
+                        debug_mode,
+                    )
+                    .await;
+                }
+            );
         }
     }
 
