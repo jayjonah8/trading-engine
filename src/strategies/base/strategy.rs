@@ -70,13 +70,13 @@ impl BaseStrategy {
             window_prices: HashMap::new(),
             entry_window_secs: 1500,
             trade_amount_usd: 100.0,
-            entry_percent: 21111.0,
+            entry_percent: 0.005,
             exit_profit_percent: 2.0,
             exit_loss_percent: 2.0,
             emergency_exit_percent: 5.0,
             min_sl_delay: 30,
             enable_trade_duration: true,
-            trade_duration_secs: Some(3600),
+            trade_duration_secs: Some(10), // 3600
             track_price_window_while_in_trade: false,
             candle_history: CandleHistory::new(candle_config.history_retention),
             market_open_delay_minutes: 15,
@@ -213,127 +213,127 @@ impl Strategy for BaseStrategy {
                 };
 
 
-                // ====================================================
-                // REGULAR MARKET SESSION
-                // ====================================================
+                // // ====================================================
+                // // REGULAR MARKET SESSION
+                // // ====================================================
 
-                let Some((session_start, session_end)) =
-                    regular_market_session(timestamp)
-                else {
-                    return;
-                };
+                // let Some((session_start, session_end)) =
+                //     regular_market_session(timestamp)
+                // else {
+                //     return;
+                // };
 
-                // Ignore all premarket and after-hours quotes.
-                if timestamp < session_start || timestamp >= session_end {
-                    return;
-                }
-
-
-                // ====================================================
-                // NEW SESSION RESET
-                // ====================================================
-
-                let previous_session =
-                    self.current_session_start_by_symbol
-                        .get(&ev.symbol)
-                        .copied();
-
-                if previous_session != Some(session_start) {
-                    self.window_prices.remove(&ev.symbol);
-
-                    self.current_session_start_by_symbol.insert(
-                        ev.symbol.clone(),
-                        session_start,
-                    );
-
-                    print_log(
-                        self.debug_mode,
-                        true,
-                        format!(
-                            "[BASE LIVE SESSION RESET][{}] session_start={}",
-                            ev.symbol,
-                            session_start,
-                        ),
-                    );
-                }
+                // // Ignore all premarket and after-hours quotes.
+                // if timestamp < session_start || timestamp >= session_end {
+                //     return;
+                // }
 
 
-                // ====================================================
-                // STRATEGY TRADING WINDOW
-                // ====================================================
+                // // ====================================================
+                // // NEW SESSION RESET
+                // // ====================================================
 
-                let Some((trading_start, trading_end)) =
-                    strategy_trading_window(
-                        timestamp,
-                        self.market_open_delay_minutes,
-                        self.market_close_buffer_minutes,
-                    )
-                else {
-                    return;
-                };
+                // let previous_session =
+                //     self.current_session_start_by_symbol
+                //         .get(&ev.symbol)
+                //         .copied();
 
+                // if previous_session != Some(session_start) {
+                //     self.window_prices.remove(&ev.symbol);
 
-                // ====================================================
-                // END-OF-SESSION FORCE CLOSE
-                // ====================================================
+                //     self.current_session_start_by_symbol.insert(
+                //         ev.symbol.clone(),
+                //         session_start,
+                //     );
 
-                // market_close_buffer_minutes:
-                // Stops NEW entries before market close.
-                //
-                // close_all_before_market_close_minutes:
-                // Requests closure of all remaining engine trades.
-                let close_all_time =
-                    session_end
-                        - chrono::Duration::minutes(
-                            self.close_all_before_market_close_minutes
-                        );
-
-                if timestamp >= close_all_time {
-                    if self.close_all_sent_for_session != Some(session_start) {
-                        self.close_all_sent_for_session =
-                            Some(session_start);
-
-                        print_log(
-                            self.debug_mode,
-                            true,
-                            format!(
-                                "[BASE LIVE FORCE CLOSE ALL] \
-                                now={} | \
-                                close_all_time={} | \
-                                session_end={} | \
-                                close_before_market_close={}min",
-                                timestamp,
-                                close_all_time,
-                                session_end,
-                                self.close_all_before_market_close_minutes,
-                            ),
-                        );
-
-                        let _ =
-                            self.tx_engine.send(
-                                EngineEvent::CloseAllTrades {
-                                    reason: format!(
-                                        "Forced close {} minutes before market close",
-                                        self.close_all_before_market_close_minutes,
-                                    ),
-                                    ts_ms: quote.timestamp_ms,
-                                }
-                            );
-                    }
-
-                    return;
-                }
+                //     print_log(
+                //         self.debug_mode,
+                //         true,
+                //         format!(
+                //             "[BASE LIVE SESSION RESET][{}] session_start={}",
+                //             ev.symbol,
+                //             session_start,
+                //         ),
+                //     );
+                // }
 
 
-                // ====================================================
-                // OPENING DELAY PRICE TRACKING
-                // ====================================================
+                // // ====================================================
+                // // STRATEGY TRADING WINDOW
+                // // ====================================================
 
-                if !self.track_prices_during_open_delay
-                    && timestamp < trading_start
-                {
-                    return;
-                }
+                // let Some((trading_start, trading_end)) =
+                //     strategy_trading_window(
+                //         timestamp,
+                //         self.market_open_delay_minutes,
+                //         self.market_close_buffer_minutes,
+                //     )
+                // else {
+                //     return;
+                // };
+
+
+                // // ====================================================
+                // // END-OF-SESSION FORCE CLOSE
+                // // ====================================================
+
+                // // market_close_buffer_minutes:
+                // // Stops NEW entries before market close.
+                // //
+                // // close_all_before_market_close_minutes:
+                // // Requests closure of all remaining engine trades.
+                // // let close_all_time =
+                // //     session_end
+                // //         - chrono::Duration::minutes(
+                // //             self.close_all_before_market_close_minutes
+                // //         );
+
+                // if timestamp >= close_all_time {
+                //     if self.close_all_sent_for_session != Some(session_start) {
+                //         self.close_all_sent_for_session =
+                //             Some(session_start);
+
+                //         print_log(
+                //             self.debug_mode,
+                //             true,
+                //             format!(
+                //                 "[BASE LIVE FORCE CLOSE ALL] \
+                //                 now={} | \
+                //                 close_all_time={} | \
+                //                 session_end={} | \
+                //                 close_before_market_close={}min",
+                //                 timestamp,
+                //                 close_all_time,
+                //                 session_end,
+                //                 self.close_all_before_market_close_minutes,
+                //             ),
+                //         );
+
+                //         let _ =
+                //             self.tx_engine.send(
+                //                 EngineEvent::CloseAllTrades {
+                //                     reason: format!(
+                //                         "Forced close {} minutes before market close",
+                //                         self.close_all_before_market_close_minutes,
+                //                     ),
+                //                     ts_ms: quote.timestamp_ms,
+                //                 }
+                //             );
+                //     }
+
+                //     return;
+                // }
+
+
+                // // ====================================================
+                // // OPENING DELAY PRICE TRACKING
+                // // ====================================================
+
+                // if !self.track_prices_during_open_delay
+                //     && timestamp < trading_start
+                // {
+                //     return;
+                // }
 
 
                 // ====================================================
@@ -406,17 +406,17 @@ impl Strategy for BaseStrategy {
                     );
 
 
-                    // ====================================================
-                    // ENTRY TIME GATE
-                    // ====================================================
+                    // // ====================================================
+                    // // ENTRY TIME GATE
+                    // // ====================================================
 
-                    if timestamp < trading_start {
-                        return;
-                    }
+                    // if timestamp < trading_start {
+                    //     return;
+                    // }
 
-                    if timestamp >= trading_end {
-                        return;
-                    }
+                    // if timestamp >= trading_end {
+                    //     return;
+                    // }
 
 
                     // ====================================================
@@ -428,20 +428,20 @@ impl Strategy for BaseStrategy {
                     }
 
 
-                    print_log(
-                        self.debug_mode,
-                        true,
-                        format!(
-                            "[BASE LIVE TRADING WINDOW][{}] \
-                            now={} | \
-                            trading_start={} | \
-                            trading_end={}",
-                            ev.symbol,
-                            timestamp,
-                            trading_start,
-                            trading_end,
-                        ),
-                    );
+                    // print_log(
+                    //     self.debug_mode,
+                    //     true,
+                    //     format!(
+                    //         "[BASE LIVE TRADING WINDOW][{}] \
+                    //         now={} | \
+                    //         trading_start={} | \
+                    //         trading_end={}",
+                    //         ev.symbol,
+                    //         timestamp,
+                    //         trading_start,
+                    //         trading_end,
+                    //     ),
+                    // );
 
 
                     // ====================================================

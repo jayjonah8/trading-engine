@@ -127,14 +127,14 @@ async fn main() -> Result<()> {
         live_market_data_provider: LiveMarketDataProvider::Hyperliquid,
 
         // Used only when execution_mode = ExecutionMode::Backtest.
-        historical_data_provider: HistoricalDataProvider::Alpaca,
+        historical_data_provider: HistoricalDataProvider::Hyperliquid,
 
         symbols: vec![
             "BTC".to_string(),
-            // "ETH".to_string(),
-            // "SOL".to_string(),
-            // "HYPE".to_string(),
-            // "NEAR".to_string(),
+            "ETH".to_string(),
+            "SOL".to_string(),
+            "HYPE".to_string(),
+            "NEAR".to_string(),
         ],
 
         // Example equity configuration:
