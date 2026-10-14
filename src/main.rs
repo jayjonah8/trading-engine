@@ -6,6 +6,7 @@ mod market;
 mod shared;
 mod notifications;
 mod data;
+mod fees;
 
 use std::sync::Arc;
 use anyhow::Result;
