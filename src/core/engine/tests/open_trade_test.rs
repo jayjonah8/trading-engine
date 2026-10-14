@@ -76,7 +76,7 @@ async fn test_handle_open_trade_creates_state_and_command() {
 
     cfg.min_trade_age_before_exit_secs = 1;
 
-    cfg.backtest_starting_balance = 100_000.0;
+    cfg.custom_starting_balance = 100_000.0;
 
     cfg.close_trades_on_startup = false;
 

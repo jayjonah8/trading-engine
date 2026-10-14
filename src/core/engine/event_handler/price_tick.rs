@@ -1,5 +1,7 @@
 #![allow(dead_code)]
 
+use chrono::{DateTime, Utc};
+
 use crate::{
     core::{
         engine::{
@@ -7,7 +9,10 @@ use crate::{
                 Engine,
                 EngineEvent,
             },
-            state::LastPrice,
+            state::{
+                LastPrice, 
+                ExecutionMode
+            },
         },
 
         execution::ExitOrderRequest,
@@ -119,6 +124,19 @@ impl Engine {
             );
 
             return;
+        }
+
+
+        // ============================================================
+        // INITIALIZE BACKTEST START DATE
+        // ============================================================
+
+        if self.execution_mode == ExecutionMode::Backtest
+            && self.general.starting_date.timestamp_millis() == 0
+        {
+            self.general.starting_date =
+                DateTime::<Utc>::from_timestamp_millis(ts_ms)
+                    .expect("Invalid backtest timestamp");
         }
 
 

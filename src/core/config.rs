@@ -115,8 +115,8 @@ pub struct Config {
     /// Minimum number of seconds a trade must remain open before it can be exited.
     pub min_trade_age_before_exit_secs: u64,
 
-    /// Starting account balance used when running a historical backtest.
-    pub backtest_starting_balance: f64,
+    /// Starting account balance used when running simulation or backtests.
+    pub custom_starting_balance: f64,
 
     /// Enable/disable Discord remote notifications.
     pub enable_discord_notifications: bool,

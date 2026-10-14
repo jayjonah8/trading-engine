@@ -32,7 +32,7 @@ pub fn default_test_config() -> Config {
         max_gross_notional: Some(150_000.0),
         max_symbol_notional: Some(150_000.0),
         min_trade_age_before_exit_secs: 1,
-        backtest_starting_balance: 100_000.0,
+        custom_starting_balance: 100_000.0,
         close_trades_on_startup: false,
         enable_discord_notifications: false,
         enable_slack_notifications: false,

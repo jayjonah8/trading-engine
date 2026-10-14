@@ -92,7 +92,7 @@ async fn test_open_trade_routes_to_hyperliquid_adapter() {
 
     cfg.min_trade_age_before_exit_secs = 1;
 
-    cfg.backtest_starting_balance = 100_000.0;
+    cfg.custom_starting_balance = 100_000.0;
 
     cfg.close_trades_on_startup = false;
 
