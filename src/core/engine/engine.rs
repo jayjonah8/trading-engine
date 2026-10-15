@@ -14,6 +14,7 @@ use tokio::sync::{
 use crate::core::{
     config::Config,
     venue::VenueState,
+    metrics::Metrics,
     engine::{
         shared::{
             verify_engine_config,
@@ -160,6 +161,9 @@ pub struct Engine {
     /// Current high-level engine phase.
     pub trading_phase: TradingPhase,
 
+    /// Aggregated trading fees and performance metrics.
+    pub metrics: Metrics,
+
     pub debug_mode: bool,
 }
 
@@ -175,6 +179,7 @@ impl Engine {
     pub fn new(
         cfg: Config,
         general: General,
+        metrics: Metrics,
         tx_view: watch::Sender<Arc<EngineView>>,
         tx_engine: UnboundedSender<EngineEvent>,
         tx_exec: UnboundedSender<ExecCommand>,
@@ -222,6 +227,7 @@ impl Engine {
         let engine = Self {
             cfg,
             general,
+            metrics,
             state: EngineState::new(risk_limits),
             venue_state: VenueState::new(),
             last_px: HashMap::new(),

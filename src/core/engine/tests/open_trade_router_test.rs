@@ -21,6 +21,7 @@ use crate::{
     core::{
         engine::engine::Engine,
         general::General,
+        metrics::Metrics,
         engine_view::EngineView,
         execution::{
             ExecCommand,
@@ -204,10 +205,6 @@ async fn test_open_trade_routes_to_hyperliquid_adapter() {
     // ENGINE
     // ============================================================
 
-    // ============================================================
-    // ENGINE
-    // ============================================================
-
     let general = General {
         realized_pnl: 0.0,
         sim_realized_pnl: 0.0,
@@ -217,10 +214,13 @@ async fn test_open_trade_routes_to_hyperliquid_adapter() {
         sim_closed_trades: 0,
     };
 
+    let metrics = Metrics::new();
+
     let mut engine =
         Engine::new(
             cfg,
             general,
+            metrics,
             tx_view,
             tx_engine,
             tx_exec,

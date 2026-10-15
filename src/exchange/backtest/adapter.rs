@@ -14,6 +14,8 @@ use crate::{
         OrderType,
     },
 
+    fees::calculate_execution_fee,
+
     exchange::backtest::SharedBacktestMarketState,
 
     shared::print_log,
@@ -138,6 +140,26 @@ pub async fn run_backtest_adapter(
 
 
                 // ====================================================
+                // CALCULATE BACKTEST EXECUTION FEE
+                // ====================================================
+
+                // Estimate maker/taker classification from OrderType.
+                let is_maker = order.order_type.is_maker();
+
+                // Calculate venue-specific estimated execution fee.
+                //
+                // The fee is calculated using the actual simulated
+                // execution quantity and price.
+                let execution_fee =
+                    calculate_execution_fee(
+                        order.venue,
+                        order.quantity,
+                        market_price.px,
+                        is_maker,
+                    );
+
+
+                // ====================================================
                 // FILL
                 // ====================================================
 
@@ -146,7 +168,6 @@ pub async fn run_backtest_adapter(
                 // - fill the entire requested quantity immediately
                 // - use the latest historical market price
                 // - preserve historical market time
-                // - no fees yet
                 //
                 // More realistic slippage, spread, liquidity, and partial-fill
                 // behavior can be introduced later inside the simulator.
@@ -159,7 +180,7 @@ pub async fn run_backtest_adapter(
                     side: order.side,
                     quantity: order.quantity,
                     price: market_price.px,
-                    fee: None,
+                    fee: Some(execution_fee),
                     ts_ms: market_price.ts_ms,
                 };
 

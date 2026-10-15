@@ -25,6 +25,7 @@ use tokio::sync::{
 use crate::core::{
     config::Config,
     general::General,
+    metrics::Metrics,
 
     engine::engine::{
         Engine,
@@ -570,14 +571,17 @@ async fn main() -> Result<()> {
 
     // `tx_exec` points to the execution router rather than directly to a
     // venue adapter.
-    let mut engine =
-        Engine::new(
-            cfg.clone(),
-            general,
-            tx_view.clone(),
-            tx_engine.clone(),
-            tx_exec.clone(),
-        );
+    
+    let metrics = Metrics::new();
+
+    let mut engine = Engine::new(
+        cfg.clone(),
+        general,
+        metrics,
+        tx_view.clone(),
+        tx_engine.clone(),
+        tx_exec.clone(),
+    );
 
     let debug_mode = engine.debug_mode;
 

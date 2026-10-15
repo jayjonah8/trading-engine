@@ -9,3 +9,4 @@ pub mod risk;
 pub mod trade_intent;
 pub mod trades;
 pub mod venue;
+pub mod metrics;

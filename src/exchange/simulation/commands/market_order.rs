@@ -17,6 +17,8 @@ use crate::{
         OrderType,
     },
 
+    fees::calculate_execution_fee,
+
     exchange::simulation::SharedSimulationMarketState,
 
     shared::print_log,
@@ -267,6 +269,27 @@ pub async fn execute_market_order(
         return;
     }
 
+    // ============================================================
+    // CALCULATE SIMULATION EXECUTION FEE
+    // ============================================================
+
+    // Estimate maker/taker classification using OrderType.
+    let is_maker = order.order_type.is_maker();
+
+
+    // Calculate the estimated fee using the simulated
+    // execution price.
+    //
+    // BUY executes at ask.
+    // SELL executes at bid.
+    let execution_fee =
+        calculate_execution_fee(
+            order.venue,
+            order.quantity,
+            fill_price,
+            is_maker,
+        );
+
 
     // ============================================================
     // SIMULATED FULL FILL
@@ -292,7 +315,7 @@ pub async fn execute_market_order(
         side: order.side,
         quantity: order.quantity,
         price: fill_price,
-        fee: None,
+        fee: Some(execution_fee),
         ts_ms: quote.timestamp_ms,
     };
 

@@ -494,6 +494,27 @@ impl Engine {
 
 
         // ============================================================
+        // EXECUTION FEE
+        // ============================================================
+
+        // Backtest / Simulation:
+        //     Fee calculated by the execution adapter.
+        //
+        // Live / Paper:
+        //     Venue-reported fee when available.
+        //
+        // V1: Missing fees default to zero.
+        //
+        // TODO:
+        // Reconcile missing or delayed live venue fees.
+       
+        let execution_fee =
+            fill.fee
+                .filter(|fee| fee.is_finite())
+                .unwrap_or(0.0);
+
+
+        // ============================================================
         // DEDUPLICATE FILL
         // ============================================================
 
@@ -713,8 +734,11 @@ impl Engine {
                 // ====================================================
 
                 OrderPurpose::Entry => {
-                    let old_quantity =
-                        trade.quantity;
+                    let old_quantity = trade.quantity;
+
+                    // Record entry execution fee
+                    trade.entry_fees += execution_fee;
+                    self.metrics.entry_fees += execution_fee;
 
 
                     // Calculate entry VWAP from all confirmed entry fills.
@@ -769,26 +793,7 @@ impl Engine {
                 | OrderPurpose::StopLoss
                 | OrderPurpose::TakeProfit
                 | OrderPurpose::EmergencyExit => {
-                    // ====================================================
-                    // CALCULATE REALIZED PNL
-                    // ====================================================
-
-                    // Every confirmed exit fill realizes PnL immediately.
-                    //
-                    // LONG:
-                    //     (exit_price - entry_price) * exit_quantity
-                    //
-                    // SHORT:
-                    //     (entry_price - exit_price) * exit_quantity
-                    //
-                    // Calculating PnL per fill correctly handles partial exits
-                    // and multiple exit executions at different prices.
-                    //
-                    // TODO:
-                    // Incorporate venue execution fees and funding payments
-                    // into net realized PnL.
-
-
+              
                     // Entry VWAP was validated before applying the Fill.
                     //
                     // This additional check prevents a missing entry price
@@ -818,20 +823,92 @@ impl Engine {
                     };
 
 
-                    let realized_pnl =
+                    // ====================================================
+                    // CALCULATE GROSS REALIZED PNL
+                    // ====================================================
+
+                    // Each exit fill realizes PnL independently.
+                    //
+                    // LONG:
+                    //     (exit_px - entry_px) * exit_qty
+                    //
+                    // SHORT:
+                    //     (entry_px - exit_px) * exit_qty
+
+                    let gross_realized_pnl =
                         match fill.side {
-                            // Selling closes a long Trade.
                             Side::Sell => {
                                 (fill.price - entry_px)
                                     * fill.quantity
                             }
 
-                            // Buying closes a short Trade.
                             Side::Buy => {
                                 (entry_px - fill.price)
                                     * fill.quantity
                             }
                         };
+
+
+                    // ====================================================
+                    // ALLOCATE ENTRY FEES
+                    // ====================================================
+
+                    // Allocate entry fees proportionally to the quantity
+                    // being closed.
+                    //
+                    // Example:
+                    //
+                    // Entry quantity: 10
+                    // Entry fees: $1.00
+                    //
+                    // Exit quantity: 5
+                    // Allocated entry fee: $0.50
+                    //
+                    // Remaining entry fees are allocated to future exits.
+
+                    let remaining_entry_fees =
+                        trade.entry_fees
+                            - trade.allocated_entry_fees;
+
+                    let allocated_entry_fee =
+                        if fill.quantity >= trade.quantity - f64::EPSILON {
+                            // Final exit receives all remaining entry fees.
+                            remaining_entry_fees
+                        } else {
+                            remaining_entry_fees
+                                * (fill.quantity / trade.quantity)
+                        };
+
+                    trade.allocated_entry_fees += allocated_entry_fee;
+
+                    // ====================================================
+                    // RECORD EXIT EXECUTION FEE
+                    // ====================================================
+        
+                    trade.exit_fees += execution_fee;
+                    self.metrics.exit_fees += execution_fee;
+
+
+                    // ====================================================
+                    // CALCULATE NET REALIZED PNL
+                    // ====================================================
+
+                    // Net realized PnL:
+                    //
+                    // Gross PnL
+                    //     - allocated entry fee
+                    //     - current exit fee
+                    //
+                    // Supports:
+                    // - partial exits
+                    // - multiple exit fills
+                    // - different execution prices
+                    // - maker rebates (negative fees)
+
+                    let realized_pnl =
+                        gross_realized_pnl
+                            - allocated_entry_fee
+                            - execution_fee;
 
 
                     // ====================================================
@@ -930,6 +1007,7 @@ impl Engine {
                         // CALCULATE TOTAL TRADE PNL
                         // ====================================================
 
+
                         // Entry and exit VWAPs represent the confirmed
                         // executions associated with this logical Trade.
                         //
@@ -937,7 +1015,12 @@ impl Engine {
                         let avg_exit_px =
                             trade.avg_exit_px.unwrap_or(fill.price);
 
-                        let total_trade_pnl =
+
+                        // ====================================================
+                        // CALCULATE TOTAL TRADE PNL
+                        // ====================================================
+
+                        let gross_trade_pnl =
                             match fill.side {
                                 Side::Sell => {
                                     (avg_exit_px - entry_px)
@@ -952,6 +1035,24 @@ impl Engine {
 
 
                         // ====================================================
+                        // CALCULATE TOTAL NET TRADE PNL
+                        // ====================================================
+
+                        // Subtract all accumulated entry and exit fees.
+                        //
+                        // Entry fees have already been allocated incrementally
+                        // to realized PnL during partial exits.
+                        //
+                        // This calculation is for the completed Trade's total
+                        // net result and must NOT be added to General PnL again.
+
+                        let total_trade_pnl =
+                            gross_trade_pnl
+                                - trade.entry_fees
+                                - trade.exit_fees;
+
+
+                        // ====================================================
                         // LOG CLOSED TRADE
                         // ====================================================
 
@@ -959,12 +1060,14 @@ impl Engine {
                             self.debug_mode,
                             true,
                             format!(
-                                "[ENGINE] TRADE CLOSED | trade_id={} | symbol={} | exited_qty={} | entry_px={:.6} | exit_px={:.6} | pnl=${:.4} | ts_ms={}",
+                                "[ENGINE] TRADE CLOSED | trade_id={} | symbol={} | exited_qty={} | entry_px={:.6} | exit_px={:.6} | entry_fees=${:.6} | exit_fees=${:.6} | net_pnl=${:.4} | ts_ms={}",
                                 trade.id,
                                 trade.symbol,
                                 trade.exited_quantity,
                                 entry_px,
                                 avg_exit_px,
+                                trade.entry_fees,
+                                trade.exit_fees,
                                 total_trade_pnl,
                                 fill.ts_ms,
                             ),

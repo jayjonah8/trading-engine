@@ -128,6 +128,22 @@ pub struct Trade {
     /// `None` means no duration-based exit is configured.
     pub max_duration_secs: Option<u64>,
 
+    /// Total fees accumulated across confirmed entry fills.
+    /// Includes all partial entry executions.
+    /// Negative values are permitted for maker rebates.
+    pub entry_fees: f64,
+
+    /// Total fees accumulated across confirmed exit fills.
+    /// Includes all partial exit executions.
+    /// Negative values are permitted for maker rebates.
+    pub exit_fees: f64,
+
+    /// Entry fees already allocated to realized PnL.
+    /// Entry fees are allocated proportionally as quantities exit.
+    /// This prevents double-counting entry fees across
+    /// multiple partial exits.
+    pub allocated_entry_fees: f64,
+
     /// Serializable timestamp when the trade was created.
     pub created_ts_ms: i64,
 

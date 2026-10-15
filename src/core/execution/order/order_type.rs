@@ -21,3 +21,41 @@ pub enum OrderType {
     /// Becomes a limit order once the stop price is triggered.
     StopLimit,
 }
+
+impl OrderType {
+    // ============================================================
+    // ESTIMATE MAKER / TAKER (BACKTEST / SIMULATION)
+    // ============================================================
+
+    /// Estimates maker/taker classification based on OrderType.
+    ///
+    /// Intended for simplified Backtest and Simulation fee models.
+    ///
+    /// Market      -> Taker
+    /// Limit       -> Maker (assumed)
+    /// StopMarket  -> Taker
+    /// StopLimit   -> Maker (assumed)
+    ///
+    /// NOTE:
+    /// Limit orders can execute as takers when crossing the spread.
+    /// This simplified model assumes limit orders provide liquidity.
+    ///
+    /// Live/Paper adapters should use venue-reported execution fees.
+    ///
+    /// This implementation is equivalent to:
+    ///
+    /// match order_type {
+    ///     OrderType::Market => false,
+    ///     OrderType::Limit => true,
+    ///     OrderType::StopMarket => false,
+    ///     OrderType::StopLimit => true,
+    /// }
+    ///
+    /// `matches!` provides a shorter implementation with identical behavior.
+    pub const fn is_maker(&self) -> bool {
+        matches!(
+            self,
+            Self::Limit | Self::StopLimit
+        )
+    }
+}

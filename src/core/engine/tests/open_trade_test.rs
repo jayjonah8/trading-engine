@@ -10,6 +10,7 @@ use crate::{
     core::{
         engine::engine::Engine,
         general::General,
+        metrics::Metrics,
         engine_view::EngineView,
 
         execution::{
@@ -120,10 +121,13 @@ async fn test_handle_open_trade_creates_state_and_command() {
         sim_closed_trades: 0,
     };
 
+    let metrics = Metrics::new();
+
     let mut engine =
         Engine::new(
             cfg,
             general,
+            metrics,
             tx_view,
             tx_engine,
             tx_exec,
