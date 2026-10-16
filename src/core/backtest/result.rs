@@ -7,6 +7,8 @@ use crate::core::{
     execution::Venue,
 };
 
+use crate::data::historical::provider::HistoricalDataProvider;
+
 
 // TODO: 
 // Note: The 525_600.0 Sharpe annualization factor is specific to one-minute sampling 
@@ -43,6 +45,9 @@ pub struct BacktestResult {
 
     /// Execution venue used during the backtest.
     pub execution_venue: Venue,
+
+    /// Historical market data provider used during the backtest.
+    pub historical_data_provider: HistoricalDataProvider,
 
     /// Number of configured symbols.
     pub total_symbols: usize,
@@ -246,6 +251,7 @@ impl Engine {
 
             // Configuration.
             execution_venue: self.cfg.execution_venue,
+            historical_data_provider: self.cfg.historical_data_provider,
             total_symbols: self.cfg.symbols.len(),
 
             // Historical period.

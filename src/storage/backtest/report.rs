@@ -99,6 +99,7 @@ pub fn save_backtest_report(
 
 Bot Name:              {}
 Execution Venue:       {:?}
+Data Provider:         {:?}
 Total Symbols:         {}
 
 ------------------------------------------------------------
@@ -161,6 +162,7 @@ Active Trades:         {}
 
         bot_name,
         result.execution_venue,
+        result.historical_data_provider,
         fmt_int(result.total_symbols),
 
 

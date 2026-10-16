@@ -4,8 +4,9 @@
                      BACKTEST RESULTS
 ============================================================
 
-Bot Name:              alpaca-bot-1
+Bot Name:              test-bot-1
 Execution Venue:       Hyperliquid
+Data Provider:         Hyperliquid
 Total Symbols:         3
 
 ------------------------------------------------------------
@@ -21,14 +22,14 @@ ACCOUNT PERFORMANCE
 ------------------------------------------------------------
 
 Starting Balance:      $250,000.0000
-Ending Balance:        $249,998.5452
-Ending Equity:         $249,998.7206
+Ending Balance:        $249,996.4089
+Ending Equity:         $249,996.8475
 
-Realized PnL:          $-1.4548
-Unrealized PnL:        $+0.2654
-Net Unrealized PnL:    $+0.1754
+Realized PnL:          $-3.5911
+Unrealized PnL:        $+0.6636
+Net Unrealized PnL:    $+0.4386
 
-Total Return:          -0.0005%
+Total Return:          -0.0013%
 
 ------------------------------------------------------------
 PERFORMANCE METRICS
@@ -36,21 +37,21 @@ PERFORMANCE METRICS
 
 Sharpe Ratio:          0.0000
 Profit Factor:         0.0000
-Expected Value:        $-0.7274
-Expected Value (%):    -0.7274%
+Expected Value:        $-1.7955
+Expected Value (%):    -0.7182%
 
 Win Rate:              0.0000%
 Loss Rate:             100.0000%
 
-Max Drawdown:          0.0007%
+Max Drawdown:          0.0018%
 
 ------------------------------------------------------------
 EXECUTION FEES
 ------------------------------------------------------------
 
-Entry Fees:            $0.1350
-Exit Fees:             $0.0906
-Total Fees:            $0.2256
+Entry Fees:            $0.3375
+Exit Fees:             $0.2264
+Total Fees:            $0.5639
 
 ------------------------------------------------------------
 TRADING ACTIVITY
