@@ -7,6 +7,7 @@ mod shared;
 mod notifications;
 mod data;
 mod fees;
+mod storage;
 
 use std::sync::Arc;
 use anyhow::Result;
@@ -90,6 +91,8 @@ use crate::exchange::{
 
     router::{run_execution_router, ExecutionRoutes},
 };
+
+use crate::storage::backtest::save_backtest_report;
 
 use crate::strategies::{
     make_backtest_strategy,
@@ -1436,6 +1439,36 @@ async fn main() -> Result<()> {
         println!(
             "[BACKTEST] all strategies finished processing historical events"
         );
+
+        // ============================================================
+        // SAVE FINAL BACKTEST RESULTS
+        // ============================================================
+
+        // IMPORTANT:
+        // All historical events, execution commands, and execution
+        // fills must be fully processed before requesting results.
+        //
+        // Waiting for strategies to finish does NOT guarantee that
+        // all execution events have been processed by the Engine
+
+        let (reply_tx, reply_rx) =
+            tokio::sync::oneshot::channel();
+
+        // Request results from authoritative Engine state.
+        tx_engine.send(
+            EngineEvent::GetBacktestResult {
+                reply: reply_tx,
+            }
+        )?;
+
+        // Wait for Engine to return the final results.
+        let result =
+            reply_rx.await?;
+
+        // Print and save the results.
+        save_backtest_report(
+            &result
+        )?;
 
     } else {
 

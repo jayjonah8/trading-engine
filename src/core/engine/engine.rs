@@ -43,6 +43,8 @@ use crate::core::{
 
 use crate::notifications::env_helpers::validate_notification_env;
 
+use crate::core::backtest::BacktestResult;
+
 
 /// Events entering the authoritative engine loop.
 ///
@@ -116,6 +118,15 @@ pub enum EngineEvent {
     /// Confirms that all EngineEvents queued before this event
     /// have been processed before the backtest continues.
     BacktestBarrier { done: oneshot::Sender<()> },
+
+    /// Requests the final backtest results from authoritative
+    /// Engine state.
+    ///
+    /// Only used after the historical execution pipeline
+    /// has fully completed.
+    GetBacktestResult {
+        reply: oneshot::Sender<BacktestResult>,
+    },
 }
 
 /// Main authoritative trading engine.
@@ -299,6 +310,12 @@ impl Engine {
 
             EngineEvent::BacktestBarrier { done } => {
                 let _ = done.send(());
+            }
+
+            EngineEvent::GetBacktestResult { reply } => {
+                let _ = reply.send(
+                    self.get_backtest_result()
+                );
             }
         }
 

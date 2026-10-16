@@ -21,6 +21,15 @@ use crate::{
     shared::print_log,
 };
 
+// TODO:
+// Your fee calculations are working, but your backtest currently fills market orders using the historical trade price.
+// In actual trading:
+// * Market buys generally execute at the ask.
+// * Market sells generally execute at the bid.
+// * Additional slippage may occur.
+// * See the simulation adaptor for house the ask / bid logic works
+// Therefore, your fee accounting is correct, but your backtest execution model may still produce optimistic results until you incorporate bid/ask spreads and slippage.
+
 
 // ============================================================
 // BACKTEST EXECUTION ADAPTER

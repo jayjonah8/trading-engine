@@ -35,15 +35,18 @@ impl Trades {
         }
     }
 
+
     /// Inserts a new trade or replaces an existing trade with the same ID.
     pub fn insert(&mut self, trade: Trade) -> Option<Trade> {
         self.trades.insert(trade.id, trade)
     }
 
+
     /// Returns a trade by its internal engine trade ID.
     pub fn get(&self, trade_id: TradeId) -> Option<&Trade> {
         self.trades.get(&trade_id)
     }
+
 
     /// Returns mutable access to a trade.
     ///
@@ -51,6 +54,7 @@ impl Trades {
     pub fn get_mut(&mut self, trade_id: TradeId) -> Option<&mut Trade> {
         self.trades.get_mut(&trade_id)
     }
+
 
     /// Returns true if an active trade exists for the given symbol.
     ///
@@ -60,6 +64,7 @@ impl Trades {
             .values()
             .any(|trade| trade.symbol == symbol && trade.state.is_active())
     }
+
 
    /// Returns true if the given strategy already has an active logical trade
     /// for the specified symbol.
@@ -81,6 +86,7 @@ impl Trades {
                 && trade.state.is_active()
         })
     }
+
 
     /// Returns the active TradeId owned by a specific strategy for a symbol.
     ///
@@ -104,6 +110,7 @@ impl Trades {
             .map(|trade| trade.id)
     }
 
+
     /// Returns the number of active strategy trades.
     ///
     /// Active trades include trades that are `Opening`, `Open`, or `Closing`.
@@ -114,12 +121,26 @@ impl Trades {
         self.trades.values().filter(|trade| trade.state.is_active()).count()
     }
 
+
     /// Returns the number of fully open strategy trades.
     ///
     /// Unlike `count_active()`, this only counts trades in the `Open` state.
     /// Trades that are still `Opening`, already `Closing`, or `Closed` are excluded.
     pub fn count_open(&self) -> usize {
         self.trades.values().filter(|trade| trade.state == TradeState::Open).count()
+    }
+
+
+    /// Returns the number of logical trades with remaining
+    /// executed quantity.
+    ///
+    /// Includes partially filled Opening trades and partially
+    /// exited Closing trades.
+    ///
+    /// Unlike count_open(), this measures remaining trade
+    /// exposure rather than lifecycle state.
+    pub fn count_with_open_quantity(&self) -> usize {
+        self.iter_with_open_quantity().count()
     }
 
     /// Marks a trade as closed.
@@ -145,20 +166,24 @@ impl Trades {
         self.trades.remove(&trade_id)
     }
 
+
     /// Returns the total number of trade records, including closed trades.
     pub fn len(&self) -> usize {
         self.trades.len()
     }
+
 
     /// Returns true when no trade records exist.
     pub fn is_empty(&self) -> bool {
         self.trades.is_empty()
     }
 
+
     /// Iterates over all trades.
     pub fn iter(&self) -> impl Iterator<Item = (&TradeId, &Trade)> {
         self.trades.iter()
     }
+
 
     /// Iterates over all active trades.
     ///
@@ -180,5 +205,21 @@ impl Trades {
             .filter(
                 |trade| trade.state.is_active()
             )
+    }
+
+  
+    /// Iterates over trades that still have remaining
+    /// executed quantity.
+    ///
+    /// Includes Opening, Open, and Closing trades when
+    /// their remaining quantity is positive.
+    pub fn iter_with_open_quantity(
+        &self,
+    ) -> impl Iterator<Item = &Trade> {
+        self.trades
+            .values()
+            .filter(|trade| {
+                trade.quantity > f64::EPSILON
+            })
     }
 }

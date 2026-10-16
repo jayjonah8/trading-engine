@@ -10,3 +10,7 @@ pub mod trade_intent;
 pub mod trades;
 pub mod venue;
 pub mod metrics;
+pub mod status;
+pub mod backtest;
+
+use crate::core::backtest::BacktestResult;

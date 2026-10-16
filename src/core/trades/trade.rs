@@ -154,3 +154,39 @@ pub struct Trade {
     pub closed_ts_ms: Option<i64>,
 }
 
+
+impl Trade {
+    // ============================================================
+    // CALCULATE UNREALIZED PNL
+    // ============================================================
+
+    /// Calculates a single trades gross unrealized PnL using the 
+    /// latest market price.
+    ///
+    /// Supports:
+    /// - Long trades
+    /// - Short trades
+    /// - Partial fills
+    /// - Partial exits
+    /// - Multiple trades on the same symbol
+    ///
+    /// Uses remaining open quantity.
+    ///
+    /// Does not deduct execution fees or estimated closing costs.
+    pub fn unrealized_pnl(&self, current_px: f64) -> f64 {
+        let Some(entry_px) = self.avg_entry_px else {
+            return 0.0;
+        };
+
+        match self.direction {
+            Direction::Long => {
+                (current_px - entry_px) * self.quantity
+            }
+
+            Direction::Short => {
+                (entry_px - current_px) * self.quantity
+            }
+        }
+    }
+}
+
