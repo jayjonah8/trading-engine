@@ -136,22 +136,22 @@ Total Fees:            ${}
 
         result.starting_date,
         result.ending_date,
-        fmt_decimal(result.total_trading_days, 1),
+        fmt_decimal(result.total_trading_days, 4),
 
 
         // ====================================================
         // ACCOUNT PERFORMANCE
         // ====================================================
 
-        fmt_decimal(result.starting_balance, 2),
-        fmt_decimal(result.ending_balance, 2),
-        fmt_decimal(result.ending_equity, 2),
+        fmt_decimal(result.starting_balance, 4),
+        fmt_decimal(result.ending_balance, 4),
+        fmt_decimal(result.ending_equity, 4),
 
         fmt_signed(result.realized_pnl, 4),
         fmt_signed(result.unrealized_pnl, 4),
         fmt_signed(result.net_unrealized_pnl, 4),
 
-        fmt_signed(result.total_return_pct, 2),
+        fmt_signed(result.total_return_pct, 4),
 
 
         // ====================================================

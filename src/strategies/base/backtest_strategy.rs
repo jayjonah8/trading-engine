@@ -73,13 +73,13 @@ impl BaseBacktestStrategy {
             window_prices: HashMap::new(),
             entry_window_secs: 10_800,
             trade_amount_usd: 100.0,
-            entry_percent: 0.05,
+            entry_percent: 1.0,
             exit_profit_percent: 1.00,
-            exit_loss_percent: 1.05,
+            exit_loss_percent: 2.1,
             emergency_exit_percent: 3.0,
             min_sl_delay: 7200,
             enable_trade_duration: true,
-            trade_duration_secs: Some(600), // 14_400
+            trade_duration_secs: Some(900), // 900 = 15mins
             track_price_window_while_in_trade: false,
             candle_history: CandleHistory::new(candle_config.history_retention),
             market_open_delay_minutes: 15,

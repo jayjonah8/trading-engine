@@ -171,7 +171,7 @@ impl Engine {
 
         // Gross mark-to-market equity.
         let ending_equity =
-            ending_balance + unrealized_pnl;
+            ending_balance + net_unrealized_pnl;
 
 
         // ====================================================
