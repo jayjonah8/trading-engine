@@ -14,6 +14,7 @@ use crate::shared::utils::{
     fmt_int,
     fmt_decimal,
     fmt_signed,
+    get_bot_name,
 };
 
 
@@ -78,6 +79,15 @@ pub fn save_backtest_report(
 
 
     // ========================================================
+    // BOT NAME
+    // ========================================================
+
+    // Retrieve the configured bot name from BOT_NAME.
+    let bot_name =
+        get_bot_name();
+
+
+    // ========================================================
     // FORMAT REPORT
     // ========================================================
 
@@ -87,6 +97,7 @@ pub fn save_backtest_report(
                      BACKTEST RESULTS
 ============================================================
 
+Bot Name:              {}
 Execution Venue:       {:?}
 Total Symbols:         {}
 
@@ -117,7 +128,9 @@ PERFORMANCE METRICS
 ------------------------------------------------------------
 
 Sharpe Ratio:          {}
+Profit Factor:         {}
 Expected Value:        ${}
+Expected Value (%):    {}%
 
 Win Rate:              {}%
 Loss Rate:             {}%
@@ -146,6 +159,7 @@ Active Trades:         {}
         // CONFIGURATION
         // ====================================================
 
+        bot_name,
         result.execution_venue,
         fmt_int(result.total_symbols),
 
@@ -179,7 +193,9 @@ Active Trades:         {}
         // ====================================================
 
         fmt_decimal(result.sharpe_ratio, DECIMAL_PRECISION),
+        fmt_decimal(result.profit_factor, DECIMAL_PRECISION),
         fmt_signed(result.expected_value, DECIMAL_PRECISION),
+        fmt_signed(result.expected_value_pct, DECIMAL_PRECISION),
 
         fmt_decimal(result.win_rate_pct, DECIMAL_PRECISION),
         fmt_decimal(result.loss_rate_pct, DECIMAL_PRECISION),

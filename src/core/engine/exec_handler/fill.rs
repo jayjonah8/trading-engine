@@ -1053,14 +1053,35 @@ impl Engine {
 
                                 
                         // ====================================================
+                        // CALCULATE ENTRY NOTIONAL
+                        // ====================================================
+
+                        // Calculate the total executed entry value using
+                        // the confirmed entry VWAP and total exited quantity.
+                        //
+                        // At full closure, exited_quantity represents the
+                        // entire quantity executed during entry, including
+                        // partial entry fills.
+                        let entry_notional =
+                            entry_px * trade.exited_quantity;
+
+
+                        // ====================================================
                         // RECORD COMPLETED TRADE METRICS
                         // ====================================================
 
                         // Record final net PnL exactly once when the logical
                         // Trade transitions to Closed.
                         //
-                        // This updates win rate, loss rate, and expected value.
-                        self.metrics.record_closed_trade(total_trade_pnl);
+                        // This updates win rate, loss rate, expected value,
+                        // and expected value percentage.
+                        //
+                        // Entry notional represents the total executed
+                        // entry value, including all partial entry fills.
+                        self.metrics.record_closed_trade(
+                            total_trade_pnl,
+                            entry_notional,
+                        );
 
 
                         // ====================================================

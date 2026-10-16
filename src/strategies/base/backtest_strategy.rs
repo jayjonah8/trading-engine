@@ -72,7 +72,7 @@ impl BaseBacktestStrategy {
             total_trade_events: 0,
             window_prices: HashMap::new(),
             entry_window_secs: 10_800,
-            trade_amount_usd: 100.0,
+            trade_amount_usd: 250.0,
             entry_percent: 1.0,
             exit_profit_percent: 1.00,
             exit_loss_percent: 2.1,

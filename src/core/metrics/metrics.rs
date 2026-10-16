@@ -34,6 +34,9 @@ pub struct Metrics {
     /// Absolute sum of negative net PnL from completed trades.
     pub gross_loss: f64,
 
+    /// Sum of completed trade returns expressed as percentages.
+    pub total_trade_return_pct: f64,
+
     // ========================================================
     // EQUITY STATISTICS
     // ========================================================
@@ -66,10 +69,12 @@ impl Metrics {
         Self::default()
     }
 
+
     /// Returns the total accumulated trading fees.
     pub fn total_fees(&self) -> f64 {
         self.entry_fees + self.exit_fees
     }
+
 
     // ========================================================
     // COMPLETED TRADE METRICS
@@ -77,8 +82,20 @@ impl Metrics {
 
     /// Records the final NET PnL of one completed trade.
     ///
+    /// Also records the trade's percentage return using its
+    /// executed entry notional for Expected Value (%).
+    ///
     /// Call exactly once when a logical Trade becomes Closed.
-    pub fn record_closed_trade(&mut self, net_pnl: f64) {
+    ///
+    /// net_pnl must include all applicable execution fees.
+    ///
+    /// entry_notional is the total executed entry value
+    /// of the trade, including partial entry fills.
+    pub fn record_closed_trade(
+        &mut self,
+        net_pnl: f64,
+        entry_notional: f64,
+    ) {
         if !net_pnl.is_finite() {
             return;
         }
@@ -92,13 +109,21 @@ impl Metrics {
         } else {
             self.breakeven_trades += 1;
         }
+
+        // Record the completed trade's net percentage return.
+        if entry_notional.is_finite() && entry_notional > 0.0 {
+            self.total_trade_return_pct +=
+                (net_pnl / entry_notional) * 100.0;
+        }
     }
+
 
     pub fn total_completed_trades(&self) -> u64 {
         self.winning_trades
             + self.losing_trades
             + self.breakeven_trades
     }
+
 
     pub fn win_rate_pct(&self) -> f64 {
         let total = self.total_completed_trades();
@@ -110,6 +135,7 @@ impl Metrics {
         self.winning_trades as f64 / total as f64 * 100.0
     }
 
+
     pub fn loss_rate_pct(&self) -> f64 {
         let total = self.total_completed_trades();
 
@@ -119,6 +145,7 @@ impl Metrics {
 
         self.losing_trades as f64 / total as f64 * 100.0
     }
+
 
     /// Expected NET USD profit/loss per completed trade.
     pub fn expected_value(&self) -> f64 {
@@ -130,6 +157,19 @@ impl Metrics {
 
         (self.gross_profit - self.gross_loss) / total as f64
     }
+
+
+    /// Returns the average net percentage return per completed trade.
+    pub fn expected_value_pct(&self) -> f64 {
+        let total = self.total_completed_trades();
+
+        if total == 0 {
+            return 0.0;
+        }
+
+        self.total_trade_return_pct / total as f64
+    }
+
 
     // ========================================================
     // EQUITY METRICS
@@ -180,6 +220,7 @@ impl Metrics {
         self.previous_equity = Some(equity);
     }
 
+
     /// Calculates the annualized Sharpe ratio, assuming a zero risk-free rate.
     ///
     /// Requires at least 24 hours of one-minute equity return samples.
@@ -221,5 +262,30 @@ impl Metrics {
         let std_dev = variance.sqrt();
 
         self.mean_return / std_dev * periods_per_year.sqrt()
+    }
+
+    
+    // ============================================================
+    // PROFIT FACTOR
+    // ============================================================
+
+    /// Calculates the ratio of gross profits to gross losses.
+    ///
+    /// Profit Factor > 1.0: Profitable completed trades overall.
+    /// Profit Factor = 1.0: Break-even completed trades overall.
+    /// Profit Factor < 1.0: Unprofitable completed trades overall.
+    ///
+    /// Returns 0.0 when gross losses are zero.
+    ///
+    /// TODO:
+    /// Consider representing zero-loss profitability separately
+    /// because a profitable strategy with no losses has an
+    /// mathematically infinite Profit Factor.
+    pub fn profit_factor(&self) -> f64 {
+        if self.gross_loss <= 0.0 {
+            return 0.0;
+        }
+
+        self.gross_profit / self.gross_loss
     }
 }

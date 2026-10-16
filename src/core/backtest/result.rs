@@ -103,6 +103,9 @@ pub struct BacktestResult {
     /// Expected net profit or loss per completed trade.
     pub expected_value: f64,
 
+    /// Average net percentage return per completed trade.
+    pub expected_value_pct: f64,
+
     /// Percentage of completed trades that were profitable.
     pub win_rate_pct: f64,
 
@@ -111,6 +114,9 @@ pub struct BacktestResult {
 
     /// Maximum observed peak-to-trough equity drawdown.
     pub max_drawdown_pct: f64,
+
+    /// Ratio of gross profits to gross losses from completed trades.
+    pub profit_factor: f64,
 
 
     // ========================================================
@@ -264,6 +270,9 @@ impl Engine {
             expected_value:
                 self.metrics.expected_value(),
 
+            expected_value_pct:
+                self.metrics.expected_value_pct(),
+
             win_rate_pct:
                 self.metrics.win_rate_pct(),
 
@@ -272,6 +281,9 @@ impl Engine {
 
             max_drawdown_pct:
                 self.metrics.max_drawdown_pct,
+
+            profit_factor:
+                self.metrics.profit_factor(),
 
             // Trading activity.
             closed_trades: self.general.live_closed_trades,
