@@ -8,6 +8,12 @@ use crate::core::{
 };
 
 
+// TODO: 
+// Note: The 525_600.0 Sharpe annualization factor is specific to one-minute sampling 
+// in a 24/7 market. When you expand reporting to traditional equities, we’ll want to 
+// make that configurable.
+
+
 // ============================================================
 // BACKTEST RESULT
 // ============================================================
@@ -20,15 +26,14 @@ use crate::core::{
 ///
 /// - Config: Execution venue and symbols.
 /// - General: Account balances, realized PnL, trade counts.
-/// - Metrics: Execution fees and future performance metrics.
+/// - Metrics: Execution fees and performance metrics.
 /// - Trades: Remaining positions and unrealized PnL.
 /// - Engine: Shared PnL and performance calculation methods.
 ///
 /// BacktestResult is independent of EngineStatus.
 ///
 /// TODO:
-/// Add Sharpe ratio, maximum drawdown, profit factor,
-/// win rate, expected value, and other performance metrics.
+/// Add profit factor and other advanced performance metrics.
 #[derive(Debug, Clone)]
 pub struct BacktestResult {
 
@@ -86,6 +91,26 @@ pub struct BacktestResult {
 
     /// Total percentage return relative to starting balance.
     pub total_return_pct: f64,
+
+
+    // ========================================================
+    // PERFORMANCE METRICS
+    // ========================================================
+
+    /// Annualized Sharpe ratio calculated from equity returns.
+    pub sharpe_ratio: f64,
+
+    /// Expected net profit or loss per completed trade.
+    pub expected_value: f64,
+
+    /// Percentage of completed trades that were profitable.
+    pub win_rate_pct: f64,
+
+    /// Percentage of completed trades that were unprofitable.
+    pub loss_rate_pct: f64,
+
+    /// Maximum observed peak-to-trough equity drawdown.
+    pub max_drawdown_pct: f64,
 
 
     // ========================================================
@@ -231,6 +256,22 @@ impl Engine {
             unrealized_pnl,
             net_unrealized_pnl,
             total_return_pct,
+
+            // Performance metrics.
+            sharpe_ratio:
+                self.metrics.sharpe_ratio(525_600.0),
+
+            expected_value:
+                self.metrics.expected_value(),
+
+            win_rate_pct:
+                self.metrics.win_rate_pct(),
+
+            loss_rate_pct:
+                self.metrics.loss_rate_pct(),
+
+            max_drawdown_pct:
+                self.metrics.max_drawdown_pct,
 
             // Trading activity.
             closed_trades: self.general.live_closed_trades,

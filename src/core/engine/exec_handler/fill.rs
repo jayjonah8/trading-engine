@@ -1051,6 +1051,17 @@ impl Engine {
                                 - trade.entry_fees
                                 - trade.exit_fees;
 
+                                
+                        // ====================================================
+                        // RECORD COMPLETED TRADE METRICS
+                        // ====================================================
+
+                        // Record final net PnL exactly once when the logical
+                        // Trade transitions to Closed.
+                        //
+                        // This updates win rate, loss rate, and expected value.
+                        self.metrics.record_closed_trade(total_trade_pnl);
+
 
                         // ====================================================
                         // LOG CLOSED TRADE

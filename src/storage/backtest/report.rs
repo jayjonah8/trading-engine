@@ -18,6 +18,14 @@ use crate::shared::utils::{
 
 
 // ============================================================
+// REPORT CONFIGURATION
+// ============================================================
+
+/// Number of decimal places displayed in backtest reports.
+const DECIMAL_PRECISION: usize = 4;
+
+
+// ============================================================
 // BACKTEST REPORT
 // ============================================================
 
@@ -105,12 +113,16 @@ Net Unrealized PnL:    ${}
 Total Return:          {}%
 
 ------------------------------------------------------------
-TRADING ACTIVITY
+PERFORMANCE METRICS
 ------------------------------------------------------------
 
-Closed Trades:         {}
-Open Trades:           {}
-Active Trades:         {}
+Sharpe Ratio:          {}
+Expected Value:        ${}
+
+Win Rate:              {}%
+Loss Rate:             {}%
+
+Max Drawdown:          {}%
 
 ------------------------------------------------------------
 EXECUTION FEES
@@ -119,6 +131,14 @@ EXECUTION FEES
 Entry Fees:            ${}
 Exit Fees:             ${}
 Total Fees:            ${}
+
+------------------------------------------------------------
+TRADING ACTIVITY
+------------------------------------------------------------
+
+Closed Trades:         {}
+Open Trades:           {}
+Active Trades:         {}
 
 ============================================================
 ",
@@ -136,22 +156,44 @@ Total Fees:            ${}
 
         result.starting_date,
         result.ending_date,
-        fmt_decimal(result.total_trading_days, 4),
+        fmt_decimal(result.total_trading_days, DECIMAL_PRECISION),
 
 
         // ====================================================
         // ACCOUNT PERFORMANCE
         // ====================================================
 
-        fmt_decimal(result.starting_balance, 4),
-        fmt_decimal(result.ending_balance, 4),
-        fmt_decimal(result.ending_equity, 4),
+        fmt_decimal(result.starting_balance, DECIMAL_PRECISION),
+        fmt_decimal(result.ending_balance, DECIMAL_PRECISION),
+        fmt_decimal(result.ending_equity, DECIMAL_PRECISION),
 
-        fmt_signed(result.realized_pnl, 4),
-        fmt_signed(result.unrealized_pnl, 4),
-        fmt_signed(result.net_unrealized_pnl, 4),
+        fmt_signed(result.realized_pnl, DECIMAL_PRECISION),
+        fmt_signed(result.unrealized_pnl, DECIMAL_PRECISION),
+        fmt_signed(result.net_unrealized_pnl, DECIMAL_PRECISION),
 
-        fmt_signed(result.total_return_pct, 4),
+        fmt_signed(result.total_return_pct, DECIMAL_PRECISION),
+
+
+        // ====================================================
+        // PERFORMANCE METRICS
+        // ====================================================
+
+        fmt_decimal(result.sharpe_ratio, DECIMAL_PRECISION),
+        fmt_signed(result.expected_value, DECIMAL_PRECISION),
+
+        fmt_decimal(result.win_rate_pct, DECIMAL_PRECISION),
+        fmt_decimal(result.loss_rate_pct, DECIMAL_PRECISION),
+
+        fmt_decimal(result.max_drawdown_pct, DECIMAL_PRECISION),
+
+
+        // ====================================================
+        // EXECUTION FEES
+        // ====================================================
+
+        fmt_decimal(result.entry_fees, DECIMAL_PRECISION),
+        fmt_decimal(result.exit_fees, DECIMAL_PRECISION),
+        fmt_decimal(result.total_fees, DECIMAL_PRECISION),
 
 
         // ====================================================
@@ -161,15 +203,6 @@ Total Fees:            ${}
         fmt_int(result.closed_trades),
         fmt_int(result.open_trades),
         fmt_int(result.active_trades),
-
-
-        // ====================================================
-        // EXECUTION FEES
-        // ====================================================
-
-        fmt_decimal(result.entry_fees, 4),
-        fmt_decimal(result.exit_fees, 4),
-        fmt_decimal(result.total_fees, 4),
     );
 
 

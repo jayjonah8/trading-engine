@@ -152,6 +152,14 @@ impl Engine {
             },
         );
 
+        
+        // ========================================================
+        // PERIODIC EQUITY SAMPLING
+        // ========================================================
+
+        // Record equity metrics for the current execution mode.
+        self.sample_equity(ts_ms);
+
 
         // ============================================================
         // COLLECT CLOSE REQUESTS
