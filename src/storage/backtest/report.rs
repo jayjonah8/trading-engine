@@ -10,6 +10,12 @@ use chrono::Utc;
 
 use crate::core::backtest::BacktestResult;
 
+use crate::shared::utils::{
+    fmt_int,
+    fmt_decimal,
+    fmt_signed,
+};
+
 
 // ============================================================
 // BACKTEST REPORT
@@ -68,78 +74,102 @@ pub fn save_backtest_report(
     // ========================================================
 
     let report = format!(
-        "\
+        "\n\n\
 ============================================================
                      BACKTEST RESULTS
 ============================================================
 
-Execution Venue:      {:?}
-Total Symbols:        {}
+Execution Venue:       {:?}
+Total Symbols:         {}
 
 ------------------------------------------------------------
 BACKTEST PERIOD
 ------------------------------------------------------------
 
-Starting Date:        {}
-Ending Date:          {}
+Starting Date:         {}
+Ending Date:           {}
 Elapsed Calendar Days: {}
 
 ------------------------------------------------------------
 ACCOUNT PERFORMANCE
 ------------------------------------------------------------
 
-Starting Balance:     ${:.2}
-Ending Balance:       ${:.2}
-Ending Equity:        ${:.2}
+Starting Balance:      ${}
+Ending Balance:        ${}
+Ending Equity:         ${}
 
-Realized PnL:         ${:+.4}
-Unrealized PnL:       ${:+.4}
-Net Unrealized PnL:   ${:+.4}
+Realized PnL:          ${}
+Unrealized PnL:        ${}
+Net Unrealized PnL:    ${}
 
-Total Return:         {:+.2}%
+Total Return:          {}%
 
 ------------------------------------------------------------
 TRADING ACTIVITY
 ------------------------------------------------------------
 
-Closed Trades:        {}
-Open Trades:          {}
-Active Trades:        {}
+Closed Trades:         {}
+Open Trades:           {}
+Active Trades:         {}
 
 ------------------------------------------------------------
 EXECUTION FEES
 ------------------------------------------------------------
 
-Entry Fees:           ${:.4}
-Exit Fees:            ${:.4}
-Total Fees:           ${:.4}
+Entry Fees:            ${}
+Exit Fees:             ${}
+Total Fees:            ${}
 
 ============================================================
 ",
+        // ====================================================
+        // CONFIGURATION
+        // ====================================================
+
         result.execution_venue,
-        result.total_symbols,
+        fmt_int(result.total_symbols),
+
+
+        // ====================================================
+        // BACKTEST PERIOD
+        // ====================================================
 
         result.starting_date,
         result.ending_date,
-        result.total_trading_days,
+        fmt_decimal(result.total_trading_days, 1),
 
-        result.starting_balance,
-        result.ending_balance,
-        result.ending_equity,
 
-        result.realized_pnl,
-        result.unrealized_pnl,
-        result.net_unrealized_pnl,
+        // ====================================================
+        // ACCOUNT PERFORMANCE
+        // ====================================================
 
-        result.total_return_pct,
+        fmt_decimal(result.starting_balance, 2),
+        fmt_decimal(result.ending_balance, 2),
+        fmt_decimal(result.ending_equity, 2),
 
-        result.closed_trades,
-        result.open_trades,
-        result.active_trades,
+        fmt_signed(result.realized_pnl, 4),
+        fmt_signed(result.unrealized_pnl, 4),
+        fmt_signed(result.net_unrealized_pnl, 4),
 
-        result.entry_fees,
-        result.exit_fees,
-        result.total_fees,
+        fmt_signed(result.total_return_pct, 2),
+
+
+        // ====================================================
+        // TRADING ACTIVITY
+        // ====================================================
+
+        fmt_int(result.closed_trades),
+        fmt_int(result.open_trades),
+        fmt_int(result.active_trades),
+
+
+        // ====================================================
+        // EXECUTION FEES
+        // ====================================================
+
+        fmt_decimal(result.entry_fees, 4),
+        fmt_decimal(result.exit_fees, 4),
+        fmt_decimal(result.total_fees, 4),
     );
 
 

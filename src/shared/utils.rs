@@ -108,3 +108,77 @@ pub fn format_backtest_trade_duration(
         format!("{:.1} sec", seconds)
     }
 }
+
+
+// ============================================================
+// NUMBER FORMATTING
+// ============================================================
+
+/// Adds thousands separators to a formatted number.
+///
+/// Examples:
+/// 1000000       -> 1,000,000
+/// 1234567.89    -> 1,234,567.89
+/// -1234567.89   -> -1,234,567.89
+/// +1234567.89   -> +1,234,567.89
+pub fn add_commas(value: &str) -> String {
+    let (sign, unsigned) = if let Some(rest) = value.strip_prefix('-') {
+        ("-", rest)
+    } else if let Some(rest) = value.strip_prefix('+') {
+        ("+", rest)
+    } else {
+        ("", value)
+    };
+
+    let (integer, decimal) = match unsigned.split_once('.') {
+        Some((integer, decimal)) => (integer, Some(decimal)),
+        None => (unsigned, None),
+    };
+
+    let mut formatted = String::new();
+
+    for (index, ch) in integer.chars().enumerate() {
+        if index > 0 && (integer.len() - index) % 3 == 0 {
+            formatted.push(',');
+        }
+
+        formatted.push(ch);
+    }
+
+    let mut result = format!("{sign}{formatted}");
+
+    if let Some(decimal) = decimal {
+        result.push('.');
+        result.push_str(decimal);
+    }
+
+    result
+}
+
+
+/// Formats an integer with thousands separators.
+///
+/// Example:
+/// 1234567 -> 1,234,567
+pub fn fmt_int(value: impl std::fmt::Display) -> String {
+    add_commas(&value.to_string())
+}
+
+
+/// Formats a floating-point number with commas.
+///
+/// Example:
+/// 1234567.89123 -> 1,234,567.89
+pub fn fmt_decimal(value: f64, precision: usize) -> String {
+    add_commas(&format!("{value:.precision$}"))
+}
+
+
+/// Formats a floating-point number with an explicit sign.
+///
+/// Examples:
+/// 1234567.89123  -> +1,234,567.89
+/// -1234567.89123 -> -1,234,567.89
+pub fn fmt_signed(value: f64, precision: usize) -> String {
+    add_commas(&format!("{value:+.precision$}"))
+}

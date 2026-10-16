@@ -54,7 +54,7 @@ pub struct BacktestResult {
     pub ending_date: DateTime<Utc>,
 
     /// Number of elapsed calendar days.
-    pub total_trading_days: u64,
+    pub total_trading_days: f64,
 
 
     // ========================================================
@@ -202,8 +202,9 @@ impl Engine {
         let total_trading_days =
             ending_date
                 .signed_duration_since(starting_date)
-                .num_days()
-                .max(0) as u64;
+                .num_milliseconds()
+                .max(0) as f64
+                / 86_400_000.0;
 
 
         // ====================================================
