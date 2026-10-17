@@ -1,6 +1,7 @@
 mod core;
 mod exchange;
 mod strategies;
+mod toolbox;
 mod indicators;
 mod market;
 mod shared;
@@ -1154,8 +1155,9 @@ async fn main() -> Result<()> {
     // The same StrategyKind identifies a strategy family while the factory
     // chooses the live or historical implementation.
     let enabled = vec![
+        StrategyKind::ResearchV1,
         // StrategyKind::Base,
-        StrategyKind::Indicator,
+        // StrategyKind::Indicator,
         // StrategyKind::MeanReversion,
         // StrategyKind::MarketOrder,
         // StrategyKind::LimitOrder,

@@ -162,16 +162,16 @@ impl IndicatorBacktestStrategy {
 
             // Use ONE_MINUTE for testing
             indicator_timeframe:
-                Timeframe::FIFTEEN_MINUTES,
+                Timeframe::ONE_MINUTE,
 
             // Use ONE_MINUTE for testing
             market_indicator_timeframe:
-                Timeframe::FIFTEEN_MINUTES,
+                Timeframe::ONE_MINUTE,
 
             // Use 30 for short time period testing and 
             // change can_trade to a ONE_MINUTE timeframe
             // using >= 30. Normal is 1440
-            market_stats_period: 1440, 
+            market_stats_period: 30, 
 
             min_volume_usd: 10_000.0,
         }
@@ -983,18 +983,18 @@ impl Strategy for IndicatorBacktestStrategy {
                         // TRADING REQUIREMENTS
                         // ====================================================
 
-                        let can_trade =
-                            self.candle_history.len(
-                                &ev.symbol,
-                                Timeframe::ONE_HOUR,
-                            ) >= 24;
-
-                        // Short 30 minute version for testing
                         // let can_trade =
                         //     self.candle_history.len(
                         //         &ev.symbol,
-                        //         Timeframe::ONE_MINUTE,
-                        //     ) >= 30;
+                        //         Timeframe::ONE_HOUR,
+                        //     ) >= 24;
+
+                        // Short 30 minute version for testing
+                        let can_trade =
+                            self.candle_history.len(
+                                &ev.symbol,
+                                Timeframe::ONE_MINUTE,
+                            ) >= 30;
 
                         let has_enough_volume =
                             volume_usd_24h.is_some_and(

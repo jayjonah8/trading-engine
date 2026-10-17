@@ -73,7 +73,7 @@ impl BaseBacktestStrategy {
             window_prices: HashMap::new(),
             entry_window_secs: 10_800,
             trade_amount_usd: 250.0,
-            entry_percent: 1.0,
+            entry_percent: 0.05,
             exit_profit_percent: 1.00,
             exit_loss_percent: 2.1,
             emergency_exit_percent: 3.0,
