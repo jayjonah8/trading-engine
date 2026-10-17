@@ -7,4 +7,5 @@ pub mod correlation;
 pub mod meta;
 pub mod api;
 pub mod types;
-pub mod tests;
+#[cfg(test)]
+mod tests;

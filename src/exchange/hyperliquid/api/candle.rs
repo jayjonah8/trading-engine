@@ -1,1 +1,0 @@
-// grab candle data from the past when needed if the bot has not already generated it
