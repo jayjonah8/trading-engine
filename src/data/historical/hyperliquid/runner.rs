@@ -69,9 +69,13 @@ pub async fn run_hyperliquid_backtest_feed(
     // BACKTEST TIME RANGE
     // ============================================================
 
+    // let symbols = ["BTC", "ETH", "SOL", "HYPE", "NEAR"];
+    // let start = "2025-07-27T10:00:00Z";
+    // let end = "2025-07-27T11:00:00Z";
+
     let symbols = ["BTC", "ETH", "SOL", "HYPE", "NEAR"];
-    let start = "2025-07-27T10:00:00Z";
-    let end = "2025-07-27T11:00:00Z";
+    let start = "2026-10-15T10:00:00Z";
+    let end = "2026-10-15T11:00:00Z";
 
     // ============================================================
     // FETCH RAW HISTORICAL TRADES

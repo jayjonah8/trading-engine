@@ -124,12 +124,12 @@ async fn test_fetch_hyperliquid_candles_range() -> Result<()> {
     // ========================================================
 
     let start_ms = chrono::DateTime::parse_from_rfc3339(
-        "2026-10-15T10:25:00Z",
+    "2026-10-15T10:30:00Z",
     )?
     .timestamp_millis();
 
     let end_ms = chrono::DateTime::parse_from_rfc3339(
-        "2026-10-15T10:55:00Z",
+        "2026-10-15T11:00:00Z",
     )?
     .timestamp_millis();
 

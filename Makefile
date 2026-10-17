@@ -23,13 +23,13 @@ hyperliquid-list-history:
 #         ↓
 # ~/trading-data/hyperliquid/
 hyperliquid-download-test-hour:
-	mkdir -p ~/trading-data/hyperliquid/node_fills_by_block/hourly/20250727
+	mkdir -p ~/trading-data/hyperliquid/node_fills_by_block/hourly/20261015
 	aws s3api get-object \
 		--bucket hl-mainnet-node-data \
-		--key node_fills_by_block/hourly/20250727/10.lz4 \
+		--key node_fills_by_block/hourly/20261015/10.lz4 \
 		--request-payer requester \
 		--profile admin \
-		~/trading-data/hyperliquid/node_fills_by_block/hourly/20250727/10.lz4
+		~/trading-data/hyperliquid/node_fills_by_block/hourly/20261015/10.lz4
 
 # Deletes all locally cached Hyperliquid historical archive data.
 # This does not affect the remote Hyperliquid S3 archive.

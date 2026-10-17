@@ -160,15 +160,17 @@ impl IndicatorBacktestStrategy {
                     candle_config.history_retention,
                 ),
 
+            // Use ONE_MINUTE for testing
             indicator_timeframe:
-                Timeframe::ONE_MINUTE,
+                Timeframe::FIFTEEN_MINUTES,
 
+            // Use ONE_MINUTE for testing
             market_indicator_timeframe:
-                Timeframe::ONE_MINUTE,
+                Timeframe::FIFTEEN_MINUTES,
 
             // Use 30 for short time period testing and 
             // change can_trade to a ONE_MINUTE timeframe
-            // using >= 30 
+            // using >= 30. Normal is 1440
             market_stats_period: 1440, 
 
             min_volume_usd: 10_000.0,
@@ -980,8 +982,6 @@ impl Strategy for IndicatorBacktestStrategy {
                         // ====================================================
                         // TRADING REQUIREMENTS
                         // ====================================================
-
-                        // Testing only. No trading decisions are made.
 
                         let can_trade =
                             self.candle_history.len(
