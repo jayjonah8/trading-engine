@@ -134,23 +134,23 @@ async fn main() -> Result<()> {
         // Used only when execution_mode = ExecutionMode::Backtest.
         historical_data_provider: HistoricalDataProvider::Hyperliquid,
 
-        // symbols: vec![
-        //     "BTC".to_string(),
-        //     "ETH".to_string(),
-        //     "SOL".to_string(),
-        //     "HYPE".to_string(),
-        //     "NEAR".to_string(),
-        // ],
+        symbols: vec![
+            "BTC".to_string(),
+            "ETH".to_string(),
+            "SOL".to_string(),
+            "HYPE".to_string(),
+            "NEAR".to_string(),
+        ],
 
         // Example equity configuration:
         //
         // execution_venue: Venue::Alpaca,
         //
-        symbols: vec![
-            "AAPL".to_string(),
-            "MSFT".to_string(),
-            "NVDA".to_string(),
-        ],
+        // symbols: vec![
+        //     "AAPL".to_string(),
+        //     "MSFT".to_string(),
+        //     "NVDA".to_string(),
+        // ],
 
         // symbols: vec![
         //     "FAKEA".to_string(),
@@ -1154,7 +1154,8 @@ async fn main() -> Result<()> {
     // The same StrategyKind identifies a strategy family while the factory
     // chooses the live or historical implementation.
     let enabled = vec![
-        StrategyKind::Base,
+        // StrategyKind::Base,
+        StrategyKind::Indicator,
         // StrategyKind::MeanReversion,
         // StrategyKind::MarketOrder,
         // StrategyKind::LimitOrder,

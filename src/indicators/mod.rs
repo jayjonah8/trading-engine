@@ -24,6 +24,11 @@ pub mod market_volume_expansion;
 pub mod market_volume_acceleration;
 pub mod market_breadth;
 
+pub mod price_pct_change;
+pub mod volume_asset;
+pub mod volume_usd;
+
+
 pub use sma::sma;
 pub use ema::ema;
 pub use atr::atr;
@@ -107,3 +112,7 @@ pub use market_volume_expansion::{
     market_volume_expansion,
     MarketVolumeExpansion,
 };
+
+pub use price_pct_change::price_pct_change;
+pub use volume_asset::volume_asset;
+pub use volume_usd::volume_usd;

@@ -5,3 +5,4 @@ pub mod candle_history;
 pub mod candle_manager;
 pub mod timeframe;
 pub mod session;
+pub mod utils;

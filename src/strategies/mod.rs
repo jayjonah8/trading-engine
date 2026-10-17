@@ -1,6 +1,7 @@
 #![allow(dead_code)]
 
 mod base;
+mod indicators;
 mod limit_order;
 mod limit_order_advanced;
 mod market_order;
@@ -28,6 +29,7 @@ use crate::core::{
 #[derive(Clone, Debug)]
 pub enum StrategyKind {
     Base,
+    Indicator,
     MeanReversion,
     MarketOrder,
     LimitOrder,
@@ -62,6 +64,13 @@ pub fn make_strategy(
                     tx_engine,
                     rx_view,
                 )
+            )
+        }
+
+        StrategyKind::Indicator => {
+            indicators::make_indicator_strategy(
+                tx_engine,
+                rx_view,
             )
         }
 
@@ -114,6 +123,13 @@ pub fn make_backtest_strategy(
     match kind {
         StrategyKind::Base => {
             base::make_base_backtest(
+                tx_engine,
+                rx_view,
+            )
+        }
+
+        StrategyKind::Indicator => {
+            indicators::make_indicator_backtest(
                 tx_engine,
                 rx_view,
             )

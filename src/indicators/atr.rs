@@ -1,5 +1,11 @@
 use crate::core::events::Bar;
 
+
+// WARNING: ATR has special historical candle requirements (typically period + 1).
+// The shared valid_candle_window() function must account for these requirements
+// before integration. Leave ATR and ATR% validation unchanged until then.
+
+
 /// AVERAGE TRUE RANGE (ATR)
 ///
 /// ATR measures price volatility: how much the market has been moving,

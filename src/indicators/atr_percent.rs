@@ -3,6 +3,11 @@ use crate::{
     indicators::atr,
 };
 
+// WARNING: ATR_PERCENT has special historical candle requirements (typically period + 1).
+// The shared valid_candle_window() function must account for these requirements
+// before integration. Leave ATR and ATR% validation unchanged until then.
+
+
 /// ATR PERCENT
 ///
 /// Converts Average True Range from raw price units into
