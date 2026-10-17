@@ -161,14 +161,17 @@ impl IndicatorStrategy {
                 ),
 
             indicator_timeframe:
-                Timeframe::FIVE_MINUTES,
+                Timeframe::ONE_MINUTE,
 
             market_indicator_timeframe:
-                Timeframe::FIVE_MINUTES,
+                Timeframe::ONE_MINUTE,
 
+            // Use 30 for short time period testing and 
+            // change can_trade to a ONE_MINUTE timeframe
+            // using >= 30
             market_stats_period: 1440,
 
-            min_volume_usd: 10_000_000.0,
+            min_volume_usd: 10_000.0,
         }
     }
 }
@@ -218,7 +221,7 @@ impl Strategy for IndicatorStrategy {
             AppEvent::TapeTrade(trade) => {
                 print_log(
                     self.debug_mode,
-                    true,
+                    false,
                     format!(
                         "[INDICATOR STRAT TRADE][{}] \
                          price=${:.4} | size={} | timestamp_ms={}",
@@ -244,7 +247,7 @@ impl Strategy for IndicatorStrategy {
 
                 print_log(
                     self.debug_mode,
-                    true,
+                    false,
                     format!(
                         "[INDICATOR STRAT QUOTE][{}] \
                          bid=${:.4} | ask=${:.4} | \
@@ -1006,6 +1009,13 @@ impl Strategy for IndicatorStrategy {
                                 &ev.symbol,
                                 Timeframe::ONE_HOUR,
                             ) >= 24;
+
+                        // Short 30 minute version for testing
+                        // let can_trade =
+                        //     self.candle_history.len(
+                        //         &ev.symbol,
+                        //         Timeframe::ONE_MINUTE,
+                        //     ) >= 30;
 
                         let has_enough_volume =
                             volume_usd_24h.is_some_and(

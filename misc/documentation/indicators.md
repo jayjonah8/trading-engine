@@ -103,6 +103,25 @@ increasing or decreasing.
 weighted by volume. The system can use session VWAP to show where the
 average unit of volume traded during the current market session.
 
+### Price Percent Change --- `price_pct_change.rs`
+
+Measures the percentage change in an asset's price over a specified
+historical period, such as the previous 24 hours. Useful for tracking
+recent price performance and identifying upward or downward movement.
+
+### Asset Volume --- `volume_asset.rs`
+
+Calculates the total quantity of an asset traded over a specified
+historical period, such as the previous 24 hours. Measures trading
+activity in the asset's native units rather than its dollar value.
+
+### USD Volume --- `volume_usd.rs`
+
+Calculates total trading volume expressed in USD over a specified
+historical period, such as the previous 24 hours. Useful for comparing
+trading activity across assets and filtering markets based on minimum
+dollar-volume requirements.
+
 ## Cross-Asset / Market-Wide Indicators
 
 ### Market Breadth --- `market_breadth.rs`
@@ -138,28 +157,33 @@ percentage of tracked assets required for a synchronized market
 snapshot. This allows the system to tolerate some stale or missing
 assets without requiring every symbol to update.
 
-------------------------------------------------------------------------
+---
 
 ## Quick Reference
 
-  Indicator                    Primary Purpose
-  ---------------------------- ---------------------------------------
-  SMA                          Smoothed price trend
-  EMA                          Faster-reacting price trend
-  Linear Regression            Trend direction and quality
-  Rate of Change               Price momentum / net move
-  RSI                          Momentum strength
-  MACD                         Trend and momentum
-  Rolling High / Low           Recent price range
-  ATR                          Absolute volatility
-  ATR Percent                  Price-normalized volatility
-  Realized Volatility          Historical return variability
-  Noise Ratio                  Trend cleanliness vs. chop
-  Bollinger Bands              Volatility and price dispersion
-  Candle Strength              Candle structure and conviction
-  Relative Volume              Current volume vs. normal volume
-  Volume Moving Average        Volume baseline and trend
-  VWAP                         Volume-weighted average price
-  Market Breadth               Cross-asset directional participation
-  Market Volume Expansion      Cross-asset volume participation
-  Market Volume Acceleration   Speed of market-wide volume change
+Indicator Primary Purpose
+
+---
+
+SMA Smoothed price trend
+EMA Faster-reacting price trend
+Linear Regression Trend direction and quality
+Rate of Change Price momentum / net move
+RSI Momentum strength
+MACD Trend and momentum
+Rolling High / Low Recent price range
+ATR Absolute volatility
+ATR Percent Price-normalized volatility
+Realized Volatility Historical return variability
+Noise Ratio Trend cleanliness vs. chop
+Bollinger Bands Volatility and price dispersion
+Candle Strength Candle structure and conviction
+Relative Volume Current volume vs. normal volume
+Volume Moving Average Volume baseline and trend
+VWAP Volume-weighted average price
+Price Percent Change Price change over a specified period
+Asset Volume Total traded quantity over a period
+USD Volume Dollar-denominated trading volume
+Market Breadth Cross-asset directional participation
+Market Volume Expansion Cross-asset volume participation
+Market Volume Acceleration Speed of market-wide volume change
