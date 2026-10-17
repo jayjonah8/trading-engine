@@ -14,4 +14,7 @@ pub use market_assets::get_market_assets;
 pub use market_asset::get_market_asset;
 pub use update_leverage::update_leverage;
 pub use close_all_positions::close_all_positions;
-pub use candles::fetch_hyperliquid_candles;
+pub use candles::{
+    fetch_hyperliquid_candles,
+    fetch_hyperliquid_candles_range,
+};

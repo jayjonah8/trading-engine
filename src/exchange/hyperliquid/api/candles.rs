@@ -129,3 +129,125 @@ pub async fn fetch_hyperliquid_candles(
 
     Ok(candles)
 }
+
+
+
+// ============================================================
+// FETCH HISTORICAL CANDLES BY TIME RANGE
+// ============================================================
+
+// Important: Hyperliquid's candle endpoint has a limited historical
+// retention window (approximately 5,000 candles per interval).
+// Older historical data may no longer be available.
+// Large time ranges may require pagination.
+
+/// Fetches historical candles within a specified UTC time range.
+///
+/// Arguments:
+/// - `symbol`: Trading symbol (BTC, ETH, SOL, etc.).
+/// - `timeframe`: Candle timeframe.
+/// - `start_ms`: Start timestamp in Unix milliseconds (inclusive).
+/// - `end_ms`: End timestamp in Unix milliseconds (exclusive).
+
+pub async fn fetch_hyperliquid_candles_range(
+    symbol: &str,
+    timeframe: Timeframe,
+    start_ms: i64,
+    end_ms: i64,
+) -> Result<Vec<CandlesSnapshotResponse>> {
+    // ========================================================
+    // VALIDATE TIMEFRAME
+    // ========================================================
+
+    let interval = match timeframe.as_secs() {
+        60 => "1m",
+        180 => "3m",
+        300 => "5m",
+        900 => "15m",
+        1800 => "30m",
+        3600 => "1h",
+        7200 => "2h",
+        14400 => "4h",
+        28800 => "8h",
+        43200 => "12h",
+        86400 => "1d",
+
+        seconds => {
+            bail!(
+                "Unsupported Hyperliquid timeframe: {} seconds",
+                seconds
+            );
+        }
+    };
+
+    // ========================================================
+    // VALIDATE TIME RANGE
+    // ========================================================
+
+    if start_ms < 0 || end_ms < 0 {
+        bail!("Timestamps cannot be negative");
+    }
+
+    if start_ms >= end_ms {
+        bail!("Start timestamp must be before end timestamp");
+    }
+
+    // Convert chrono i64 timestamps to SDK-compatible u64.
+    let start_ms_u64 = start_ms as u64;
+    let end_ms_u64 = end_ms as u64;
+
+    // ========================================================
+    // BUILD REQUEST
+    // ========================================================
+
+    let body = json!({
+        "type": "candleSnapshot",
+        "req": {
+            "coin": symbol,
+            "interval": interval,
+            "startTime": start_ms_u64,
+            "endTime": end_ms_u64
+        }
+    });
+
+    // ========================================================
+    // SEND REQUEST
+    // ========================================================
+
+    let client = Client::new();
+
+    let response = client
+        .post(HYPERLIQUID_INFO_URL)
+        .json(&body)
+        .send()
+        .await
+        .context("Hyperliquid historical candle request failed")?
+        .error_for_status()
+        .context("Hyperliquid historical candle API returned an error")?;
+
+    // ========================================================
+    // PARSE RESPONSE
+    // ========================================================
+
+    let mut candles: Vec<CandlesSnapshotResponse> = response
+        .json()
+        .await
+        .context("Failed to deserialize historical candles")?;
+
+    // ========================================================
+    // FILTER REQUESTED TIME RANGE
+    // ========================================================
+
+    candles.retain(|candle| {
+        candle.time_open >= start_ms_u64
+            && candle.time_close < end_ms_u64
+    });
+
+    // ========================================================
+    // SORT CANDLES CHRONOLOGICALLY
+    // ========================================================
+
+    candles.sort_by_key(|candle| candle.time_open);
+
+    Ok(candles)
+}
