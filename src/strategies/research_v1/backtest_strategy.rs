@@ -29,29 +29,12 @@ use crate::{
     shared::print_log,
 };
 
+use super::backtest_state::ResearchV1BacktestStrategy;
 
-// ============================================================
-// RESEARCH V1 BACKTEST STRATEGY
-// ============================================================
+// Todo:
+// * Add min_volume_usd to the state.
+// * Set up the can_trade requirements for volume.
 
-pub struct ResearchV1BacktestStrategy {
-    tx_engine: UnboundedSender<EngineEvent>,
-    rx_view: watch::Receiver<Arc<EngineView>>,
-
-    pub enable_strategy: bool,
-    pub debug_mode: bool,
-
-    pub total_trade_events: u64,
-
-    // Historical timestamp-based rolling price window.
-    pub price_window: PriceWindowTs,
-
-    // Entry threshold percentage.
-    pub entry_percent: f64,
-
-    // Closed multi-timeframe candle history.
-    pub candle_history: CandleHistory,
-}
 
 
 // ============================================================
@@ -66,23 +49,29 @@ impl ResearchV1BacktestStrategy {
         let candle_config = CandleConfig::default();
 
         Self {
-            tx_engine,
-            rx_view,
             enable_strategy: true,
             debug_mode: true,
-            total_trade_events: 0,
+            tx_engine,
+            rx_view,
+            entry_percent: 0.3,
+            exit_profit_percent: 2.0,
+            exit_loss_percent: 2.0,
+            emergency_exit_percent: 5.0,
+            min_sl_delay: 1800,
+            enable_trade_duration: true,
+            min_volume_usd: 450_000.0, 
+            trade_duration_secs: Some(3_600), // 1 hours
+            track_price_window_while_in_trade: false,
             price_window: PriceWindowTs::new(
-                10_800, // 3-hour historical rolling window
+                10_800, // 3-hour rolling window
                 false,
             ),
-            entry_percent: 0.3,
             candle_history: CandleHistory::new(
                 candle_config.history_retention,
             ),
         }
     }
 }
-
 
 // ============================================================
 // FACTORY
@@ -126,8 +115,7 @@ impl Strategy for ResearchV1BacktestStrategy {
             // ====================================================
 
             AppEvent::TapeTrade(trade) => {
-                self.total_trade_events += 1;
-
+         
                 // ====================================================
                 // TRADE DEBUG
                 // ====================================================
@@ -136,10 +124,9 @@ impl Strategy for ResearchV1BacktestStrategy {
                     print_log(
                         self.debug_mode,
                         true,
-                        format!(
-                            "[RESEARCH V1 BACKTEST TRADE #{}][{}] \
-                             price=${:.4} | size={} | timestamp_ms={}",
-                            self.total_trade_events,
+                        format_args!(
+                            "[RESEARCH V1 BACKTEST TRADE][{}] \
+                            price=${:.4} | size={} | timestamp_ms={}",
                             ev.symbol,
                             trade.price,
                             trade.size,

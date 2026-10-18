@@ -30,10 +30,6 @@ use crate::{
 use super::state::ResearchV1Strategy;
 
 
-// ============================================================
-// CONSTRUCTOR
-// ============================================================
-
 impl ResearchV1Strategy {
     pub fn new(
         tx_engine: UnboundedSender<EngineEvent>,
@@ -46,12 +42,19 @@ impl ResearchV1Strategy {
             debug_mode: true,
             tx_engine,
             rx_view,
-            total_trade_events: 0,
+            entry_percent: 0.3,
+            exit_profit_percent: 2.0,
+            exit_loss_percent: 2.0,
+            emergency_exit_percent: 5.0,
+            min_sl_delay: 1800,
+            enable_trade_duration: true,
+            trade_duration_secs: Some(3_600), // 6 hours
+            min_volume_usd: 450_000.0, 
+            track_price_window_while_in_trade: false,
             price_window: PriceWindowTs::new(
                 10_800, // 3-hour rolling window
                 false,
             ),
-            entry_percent: 0.3,
             candle_history: CandleHistory::new(
                 candle_config.history_retention,
             ),
@@ -102,8 +105,6 @@ impl Strategy for ResearchV1Strategy {
             // ====================================================
 
             AppEvent::TapeTrade(trade) => {
-                self.total_trade_events += 1;
-
                 // ====================================================
                 // TRADE DEBUG
                 // ====================================================
@@ -112,10 +113,9 @@ impl Strategy for ResearchV1Strategy {
                     print_log(
                         self.debug_mode,
                         true,
-                        format!(
-                            "[RESEARCH V1 LIVE TRADE #{}][{}] \
-                             price=${:.4} | size={} | timestamp_ms={}",
-                            self.total_trade_events,
+                        format_args!(
+                            "[RESEARCH V1 LIVE TRADE][{}] \
+                            price=${:.4} | size={} | timestamp_ms={}",
                             ev.symbol,
                             trade.price,
                             trade.size,

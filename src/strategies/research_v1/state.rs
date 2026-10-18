@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use std::sync::Arc;
 
 use tokio::sync::{
@@ -18,25 +20,53 @@ use crate::{
 
 
 // ============================================================
-// RESEARCH V1 STRATEGY STATE
+// RESEARCH V1 LIVE STRATEGY
 // ============================================================
 
-#[allow(dead_code)]
 pub struct ResearchV1Strategy {
-    pub(crate) enable_strategy: bool,
-    pub(crate) debug_mode: bool,
+    // Channel used to send strategy events and trade requests to the engine.
+    pub(crate) tx_engine: UnboundedSender<EngineEvent>,
 
-    pub tx_engine: UnboundedSender<EngineEvent>,
-    pub rx_view: watch::Receiver<Arc<EngineView>>,
+    // Receiver providing the latest shared engine state.
+    pub(crate) rx_view: watch::Receiver<Arc<EngineView>>,
 
-    // Total market trade events processed.
-    pub total_trade_events: u64,
+    // Master switch to enable or disable the strategy.
+    pub enable_strategy: bool,
+
+    // Master switch to enable or disable strategy debug logging.
+    pub debug_mode: bool,
+
+    // Minimum percentage price movement required to trigger a trade entry.
+    pub entry_percent: f64,
+
+    // Profit percentage at which the position should be closed (e.g. 3.0 = 3%).
+    pub exit_profit_percent: f64,
+
+    // Loss percentage at which the position should be closed.
+    pub exit_loss_percent: f64,
+
+    // Emergency stop-loss.
+    pub emergency_exit_percent: f64,
+
+    // Duration in seconds to delay hard stop-loss.
+    pub min_sl_delay: u64,
+
+    // Mode to limit how long a trade can be open.
+    pub enable_trade_duration: bool,
+
+    // Time limit in seconds until an open trade is auto closed.
+    pub trade_duration_secs: Option<u64>,
+
+    // Minimum USD trading volume required to allow a trade entry.
+    // For a rolling-volume filter, accumulate this value over a defined time window rather than indefinitely.
+    pub min_volume_usd: f64,    
+
+    // true  = keep tracking the symbol's rolling price window while a trade is open.
+    // false = clear that symbol's rolling window and stop tracking it until the trade is closed.
+    pub track_price_window_while_in_trade: bool,
 
     // Timestamp-based rolling price window.
     pub price_window: PriceWindowTs,
-
-    // Entry threshold percentage.
-    pub entry_percent: f64,
 
     // Closed multi-timeframe candle history.
     pub candle_history: CandleHistory,

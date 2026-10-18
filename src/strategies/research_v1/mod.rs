@@ -1,4 +1,5 @@
 mod state;
+mod backtest_state;
 mod strategy;
 mod backtest_strategy;
 
