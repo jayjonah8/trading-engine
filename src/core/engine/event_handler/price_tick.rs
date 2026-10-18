@@ -415,10 +415,10 @@ impl Engine {
             // MAXIMUM TRADE DURATION
             // ========================================================
 
-            if let Some(max_duration_secs) =
-                trade.max_duration_secs
+            if let Some(trade_duration_secs) =
+                trade.trade_duration_secs
             {
-                if age_secs >= max_duration_secs {
+                if age_secs >= trade_duration_secs {
                     trades_to_close.push(
                         (
                             *trade_id,

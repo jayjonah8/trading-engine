@@ -126,7 +126,7 @@ pub struct Trade {
     /// Optional maximum lifetime of the trade.
     ///
     /// `None` means no duration-based exit is configured.
-    pub max_duration_secs: Option<u64>,
+    pub trade_duration_secs: Option<u64>,
 
     /// Total fees accumulated across confirmed entry fills.
     /// Includes all partial entry executions.

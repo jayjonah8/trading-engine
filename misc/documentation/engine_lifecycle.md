@@ -10,18 +10,18 @@ change.
 
 The core separation is:
 
--   **TradeIntent** --- what exposure a strategy wants and how the
-    initial entry should be executed.
--   **Trade** --- the logical strategy-level lifecycle and risk plan.
--   **Order** --- an execution request created by the engine.
--   **Fill** --- a confirmed execution fact reported by a venue or
-    simulator.
--   **Position** --- the engine's view of actual venue/account exposure.
--   **RiskReservation / RiskState** --- reserved and established risk
-    capacity.
--   **EngineView** --- read-only state published back to strategies.
+- **TradeIntent** --- what exposure a strategy wants and how the
+  initial entry should be executed.
+- **Trade** --- the logical strategy-level lifecycle and risk plan.
+- **Order** --- an execution request created by the engine.
+- **Fill** --- a confirmed execution fact reported by a venue or
+  simulator.
+- **Position** --- the engine's view of actual venue/account exposure.
+- **RiskReservation / RiskState** --- reserved and established risk
+  capacity.
+- **EngineView** --- read-only state published back to strategies.
 
-``` text
+```text
 Market Data
     |
     v
@@ -62,7 +62,7 @@ EngineView
 Strategies
 ```
 
-------------------------------------------------------------------------
+---
 
 ## 1. Market Data Enters the Application
 
@@ -71,7 +71,7 @@ venue-specific messages into canonical application events.
 
 Examples include:
 
-``` text
+```text
 TapeTrade
 Quote
 BarClosed
@@ -80,7 +80,7 @@ BarClosed
 These are wrapped in an `AppEventEnvelope` and published to the
 application event bus.
 
-``` text
+```text
 Alpaca / Hyperliquid / Future Provider
                 |
                 v
@@ -99,7 +99,7 @@ Alpaca / Hyperliquid / Future Provider
 The strategy should not need to know whether a quote came from Alpaca,
 Hyperliquid, or another provider.
 
-------------------------------------------------------------------------
+---
 
 ## 2. Strategy Receives Market Events
 
@@ -108,7 +108,7 @@ decisions using market data plus the latest `EngineView`.
 
 For example:
 
-``` text
+```text
 Quote
   |
   +--> calculate midpoint
@@ -124,13 +124,13 @@ Trading signal?
 Before creating another directional trade for a symbol, a strategy can
 check:
 
-``` rust
+```rust
 view.trades.has_active_trade_for_symbol(&ev.symbol)
 ```
 
 An active trade includes:
 
-``` text
+```text
 Opening
 Open
 Closing
@@ -138,7 +138,7 @@ Closing
 
 A `Closed` trade is terminal and no longer blocks a new trade.
 
-------------------------------------------------------------------------
+---
 
 ## 3. TradeIntent
 
@@ -148,7 +148,7 @@ A `TradeIntent` describes the desired trade, not an exchange order.
 
 It contains information such as:
 
-``` text
+```text
 strategy_id
 symbol
 direction
@@ -165,20 +165,20 @@ take_profit_percent
 stop_loss_percent
 emergency_stop_percent
 stop_loss_delay_secs
-max_duration_secs
+trade_duration_secs
 
 ts_ms
 ```
 
 The strategy then sends:
 
-``` text
+```text
 EngineEvent::OpenTrade(TradeIntent)
 ```
 
 Conceptually:
 
-``` text
+```text
 Strategy Signal
       |
       v
@@ -191,7 +191,7 @@ Strategy Signal
     Engine
 ```
 
-------------------------------------------------------------------------
+---
 
 ## 4. Engine Validates the Intent
 
@@ -199,7 +199,7 @@ The engine receives the intent through its authoritative event loop.
 
 Before execution, the intent should be validated:
 
-``` text
+```text
 TradeIntent
     |
     +--> valid strategy ID?
@@ -218,7 +218,7 @@ Accepted / Rejected
 Malformed strategy requests should never create authoritative trade or
 order state.
 
-------------------------------------------------------------------------
+---
 
 ## 5. Trade Creation
 
@@ -226,7 +226,7 @@ Once accepted, the engine creates a logical `Trade`.
 
 The trade begins in:
 
-``` text
+```text
 TradeState::Opening
 ```
 
@@ -234,7 +234,7 @@ This is important: `Opening` means the strategy trade lifecycle already
 exists even though its intended exposure may not yet be fully
 established.
 
-``` text
+```text
 TradeIntent accepted
         |
         v
@@ -246,7 +246,7 @@ TradeState::Opening
 
 The `Trade` owns strategy-level information such as:
 
-``` text
+```text
 TradeId
 strategy_id
 symbol
@@ -262,13 +262,13 @@ TradeState
 
 It does **not** own the exchange order lifecycle.
 
-------------------------------------------------------------------------
+---
 
 ## 6. TradeState Lifecycle
 
 The logical trade lifecycle is:
 
-``` text
+```text
               entry begins
                    |
                    v
@@ -318,7 +318,7 @@ No exposure remains for the trade. This is the terminal state.
 
 `TradeState::is_active()` therefore returns true for:
 
-``` text
+```text
 Opening
 Open
 Closing
@@ -326,11 +326,11 @@ Closing
 
 and false for:
 
-``` text
+```text
 Closed
 ```
 
-------------------------------------------------------------------------
+---
 
 ## 7. Risk Check and Reservation
 
@@ -339,7 +339,7 @@ checks authoritative risk state.
 
 This is separate from simply counting trades.
 
-``` text
+```text
 Trade
   |
   v
@@ -363,7 +363,7 @@ account for reserved exposure from working orders.
 This prevents asynchronous execution from accidentally overcommitting
 capital.
 
-------------------------------------------------------------------------
+---
 
 ## 8. Engine Creates an Order
 
@@ -372,7 +372,7 @@ After the trade and risk checks are accepted, the engine creates an
 
 The order is execution state and remains separate from the trade.
 
-``` text
+```text
 Trade
   |
   +--> Entry Order #1
@@ -389,7 +389,7 @@ lifetime.
 
 An order contains execution concepts such as:
 
-``` text
+```text
 OrderId
 TradeId
 symbol
@@ -407,7 +407,7 @@ venue order ID
 This separation is essential for limit orders, partial fills,
 cancel/replace flows, and future market-making support.
 
-------------------------------------------------------------------------
+---
 
 ## 9. ExecCommand Leaves the Engine
 
@@ -416,7 +416,7 @@ exchange API.
 
 Instead it emits a venue-independent `ExecCommand`.
 
-``` text
+```text
 Engine
   |
   | ExecCommand
@@ -426,7 +426,7 @@ Execution Adapter
 
 Examples conceptually include:
 
-``` text
+```text
 SubmitOrder
 CancelOrder
 ReplaceOrder
@@ -435,7 +435,7 @@ ReplaceOrder
 The configured execution adapter translates the canonical command into
 whatever API format the venue requires.
 
-``` text
+```text
                      +--> Alpaca
                      |
 Engine -> ExecCommand +--> IBKR
@@ -447,7 +447,7 @@ Engine -> ExecCommand +--> IBKR
 
 The engine remains venue-independent.
 
-------------------------------------------------------------------------
+---
 
 ## 10. Execution Adapter
 
@@ -455,7 +455,7 @@ The execution adapter owns communication with the venue.
 
 Its responsibilities include:
 
-``` text
+```text
 REST / WebSocket / broker API communication
 order submission
 cancel requests
@@ -470,7 +470,7 @@ It does **not** authoritatively mutate engine trade state.
 
 For example:
 
-``` text
+```text
 Engine
    |
    | SubmitOrder
@@ -490,7 +490,7 @@ Alpaca Adapter
 Engine
 ```
 
-------------------------------------------------------------------------
+---
 
 ## 11. ExecEvent Returns to the Engine
 
@@ -498,7 +498,7 @@ Execution adapters report execution facts using canonical `ExecEvent`s.
 
 The engine currently models events such as:
 
-``` text
+```text
 OrderAccepted
 OrderWorking
 Fill
@@ -511,7 +511,7 @@ Error
 
 The critical distinction is:
 
-``` text
+```text
 ExecCommand = request
 
 ExecEvent = confirmed execution fact
@@ -519,7 +519,7 @@ ExecEvent = confirmed execution fact
 
 Sending an order does not mean it filled.
 
-------------------------------------------------------------------------
+---
 
 ## 12. Partial Fill Lifecycle
 
@@ -527,7 +527,7 @@ Partial fills are first-class execution events.
 
 Example:
 
-``` text
+```text
 TradeState::Opening
 
 Entry Order
@@ -547,7 +547,7 @@ Each fill updates authoritative state.
 
 Conceptually:
 
-``` text
+```text
 ExecEvent::Fill
        |
        +--> FillLedger
@@ -567,13 +567,13 @@ the logical trade transitions appropriately from `Opening` toward
 The exact transition policy should be defined centrally by the execution
 handlers rather than by the strategy.
 
-------------------------------------------------------------------------
+---
 
 ## 13. Position State
 
 `Position` and `Trade` answer different questions.
 
-``` text
+```text
 Trade
 "What strategy lifecycle does this exposure belong to?"
 
@@ -583,7 +583,7 @@ Position
 
 For example:
 
-``` text
+```text
 Strategy A Trade
     +100 AAPL
 
@@ -598,14 +598,14 @@ Venue Position
 This separation becomes increasingly important with multiple strategies
 and multiple venues.
 
-------------------------------------------------------------------------
+---
 
 ## 14. EngineView
 
 After authoritative state changes, the engine publishes a read-only
 `EngineView`.
 
-``` text
+```text
 Engine State
     |
     v
@@ -623,20 +623,20 @@ Strategies inspect the view but do not directly mutate engine state.
 
 This maintains the rule:
 
-``` text
+```text
 Strategies request.
 Adapters report.
 Engine decides and mutates.
 EngineView exposes.
 ```
 
-------------------------------------------------------------------------
+---
 
 ## 15. Closing a Trade
 
 A close request does not immediately mean the trade is closed.
 
-``` text
+```text
 TradeState::Open
        |
        | exit condition
@@ -669,13 +669,13 @@ Venue
 `Closing` remains an active trade state because exposure still exists
 until confirmed execution removes it.
 
-------------------------------------------------------------------------
+---
 
 ## 16. Cancel and Replace
 
 Orders can be canceled or modified independently of the logical trade.
 
-``` text
+```text
 Trade
   |
   v
@@ -692,7 +692,7 @@ Working Limit Order
 
 The engine should not assume success when sending these requests.
 
-``` text
+```text
 Engine request
      |
      v
@@ -710,7 +710,7 @@ Authoritative state transition
 
 This asynchronous model is necessary for real venues.
 
-------------------------------------------------------------------------
+---
 
 ## 17. Backtesting Uses the Same Core Lifecycle
 
@@ -719,7 +719,7 @@ trading engine.
 
 Instead:
 
-``` text
+```text
 LIVE
 
 Strategy
@@ -741,7 +741,7 @@ Engine
 
 and:
 
-``` text
+```text
 BACKTEST
 
 Strategy
@@ -765,7 +765,7 @@ Only the execution implementation changes.
 
 This gives much stronger live/backtest parity for:
 
-``` text
+```text
 market orders
 limit orders
 partial fills
@@ -777,7 +777,7 @@ execution timing
 risk accounting
 ```
 
-------------------------------------------------------------------------
+---
 
 ## 18. Engine Operating State
 
@@ -790,7 +790,7 @@ The execution mode determines which execution environment is active.
 
 Conceptually:
 
-``` text
+```text
 Live
 Simulation
 Backtest
@@ -805,13 +805,13 @@ these modes.
 
 Currently:
 
-``` text
+```text
 TradingPhase::Normal
 ```
 
 It can later expand to support states such as:
 
-``` text
+```text
 Starting
 Reconciling
 Normal
@@ -823,14 +823,14 @@ Recovering
 without mixing engine-wide operating state with `TradeState` or
 `OrderState`.
 
-------------------------------------------------------------------------
+---
 
 ## 19. State Ownership
 
 The most important architectural rule is that each state model has one
 clear responsibility.
 
-``` text
+```text
 +------------------------------------------------------+
 | ENGINE                                               |
 |                                                      |
@@ -862,13 +862,13 @@ clear responsibility.
 External systems should never bypass these boundaries and directly
 modify authoritative state.
 
-------------------------------------------------------------------------
+---
 
 ## 20. Complete Trade Lifecycle
 
 Putting everything together:
 
-``` text
+```text
 MARKET DATA
     |
     v
@@ -977,13 +977,13 @@ TradeState::Closed
 EngineView published
 ```
 
-------------------------------------------------------------------------
+---
 
 ## Core Principle
 
 The architecture can be summarized as:
 
-``` text
+```text
 Strategy decides WHAT it wants.
 
 Engine decides WHETHER it is allowed

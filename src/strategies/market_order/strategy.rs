@@ -268,7 +268,7 @@ impl MarketOrderStrategy {
             stop_loss_percent: None,
             emergency_stop_percent: None,
             stop_loss_delay_secs: None,
-            max_duration_secs: None,
+            trade_duration_secs: None,
 
             ts_ms,
         };

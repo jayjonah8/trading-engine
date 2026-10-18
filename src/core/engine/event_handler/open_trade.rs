@@ -514,7 +514,7 @@ impl Engine {
             stop_loss_percent: intent.stop_loss_percent,
             emergency_stop_percent: intent.emergency_stop_percent,
             stop_loss_delay_secs: intent.stop_loss_delay_secs,
-            max_duration_secs: intent.max_duration_secs,
+            trade_duration_secs: intent.trade_duration_secs,
             entry_fees: 0.0,
             exit_fees: 0.0,
             allocated_entry_fees: 0.0,

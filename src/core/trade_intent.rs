@@ -143,7 +143,7 @@ pub struct TradeIntent {
     /// Optional maximum lifetime of the trade.
     ///
     /// `None` means no engine-managed duration exit.
-    pub max_duration_secs: Option<u64>,
+    pub trade_duration_secs: Option<u64>,
 
     /// Event timestamp when the strategy generated the intent.
     ///

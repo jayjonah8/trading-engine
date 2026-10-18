@@ -466,7 +466,7 @@ impl Strategy for BaseStrategy {
                             stop_loss_percent: Some(self.exit_loss_percent),
                             emergency_stop_percent: Some(self.emergency_exit_percent),
                             stop_loss_delay_secs: Some(self.min_sl_delay),
-                            max_duration_secs: if self.enable_trade_duration {
+                            trade_duration_secs: if self.enable_trade_duration {
                                 self.trade_duration_secs
                             } else {
                                 None
@@ -521,7 +521,7 @@ impl Strategy for BaseStrategy {
                             stop_loss_percent: Some(self.exit_loss_percent),
                             emergency_stop_percent: Some(self.emergency_exit_percent),
                             stop_loss_delay_secs: Some(self.min_sl_delay),
-                            max_duration_secs: if self.enable_trade_duration {
+                            trade_duration_secs: if self.enable_trade_duration {
                                 self.trade_duration_secs
                             } else {
                                 None
