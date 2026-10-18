@@ -31,9 +31,44 @@ use crate::{
 
 use super::backtest_state::ResearchV1BacktestStrategy;
 
-// Todo:
-// * Set up the can_trade requirements for volume.
+// TODO:
+// * Set up the can_trade requirements for volume. Should auto update as volume changes.
 
+// * Set up the if pct_from_min >= self.entry_percent {} code blocks for the basic mean
+//   setup where you actually send the trade intents.
+
+// * Add a stop trading state when all assets have an average 24h percent move (ie >= 10%) over a certain amount.
+//   You may be able to add this as a helper somewhere idk. 
+
+// * Add the logic on when a trade is flipped (trending). Should be simple.
+
+// * Figure out the best way to map a strategy trade identifier to a trade id. See Notion "Current" notes. 
+
+// * Add an early profit tax toolbox feature.
+//   - Can have normal profit taking.
+//   - Can also have slow version profit taking.
+//   - See old bot for implementation details.
+
+// * Start implementing the continuous multi-sync logic as a toolbox feature.
+
+// * Test on 3 months of real data to see its performance.
+
+// * When you have good initial results, add the weighted randomness to the bot
+//   for more dynamic behavior accross all settings. 
+
+// * For track_price_window_while_in_trade add helper function
+//   inside the toolbool feature that clears the assets window.
+//   Do this for both versions of the price window feature.
+//   - Also add another helper function to both that clear all
+//     assets price windows.
+
+// * Add the runner assets detection logic to catch symbol with large movement during a day.
+//   - You can use the r2 and 24hr percent change to see the smoothness and likely trade in whatever 
+//     trending direction the asset is moving towards. Can add only a light weight dynamic logic to this also if you want. 
+
+// * Add an auto compounding tool box that takes in the trade_amount_usd etc and performs
+//   auto compounding as the "real" avenue ccount account is growing. See old bot for logic details.
+//   - You should be able to pick the compounding interval (1 day, 3 days etc).
 
 
 // ============================================================
@@ -53,14 +88,13 @@ impl ResearchV1BacktestStrategy {
             tx_engine,
             rx_view,
             trade_amount_usd: 100.0,
-            entry_percent: 2.0,
-            exit_profit_percent: 2.0,
-            exit_loss_percent: 2.0,
-            emergency_exit_percent: 5.0,
-            min_sl_delay: 1800, // 30 min
-            enable_trade_duration: true,
+            entry_percent: Some(2.0),
+            exit_profit_percent: Some(2.0),
+            exit_loss_percent: Some(2.0),
+            emergency_exit_percent: Some(5.0),
+            min_sl_delay: Some(1800), // 30 min
             trade_duration_secs: Some(3_600), // 1 hour
-            min_volume_usd: 450_000.0, 
+            min_volume_usd: Some(450_000.0), 
             max_24h_move_pct: None,
             track_price_window_while_in_trade: false,
             price_window: PriceWindowTs::new(
@@ -153,48 +187,56 @@ impl Strategy for ResearchV1BacktestStrategy {
                     pct_from_max,
                     elapsed_secs,
                 )) = result {
-                    if self.debug_mode {
-                        print_log(
-                            self.debug_mode,
-                            true,
-                            format!(
-                                "[RESEARCH V1 BACKTEST WINDOW][{}] \
-                                 price=${:.4} | \
-                                 above_min={:.3}% | \
-                                 below_max={:.3}% | \
-                                 age={}s | \
-                                 entry_threshold={:.3}%",
-                                ev.symbol,
-                                trade.price,
-                                pct_from_min,
-                                pct_from_max,
-                                elapsed_secs,
-                                self.entry_percent,
-                            ),
-                        );
-                    }
 
                     // ====================================================
-                    // ENTRY SIGNAL
+                    // ENTRY THRESHOLD
                     // ====================================================
 
-                    // Research-only signal detection.
-                    // No orders are submitted yet.
-                    if pct_from_min >= self.entry_percent {
+                    if let Some(entry_percent) = self.entry_percent {
+
                         if self.debug_mode {
                             print_log(
                                 self.debug_mode,
                                 true,
-                                format!(
-                                    "[RESEARCH V1 BACKTEST SIGNAL][{}] \
-                                     price=${:.4} | \
-                                     above_min={:.3}% >= {:.3}%",
+                                format_args!(
+                                    "[RESEARCH V1 BACKTEST WINDOW][{}] \
+                                    price=${:.4} | \
+                                    above_min={:.3}% | \
+                                    below_max={:.3}% | \
+                                    age={}s | \
+                                    entry_threshold={:.3}%",
                                     ev.symbol,
                                     trade.price,
                                     pct_from_min,
-                                    self.entry_percent,
+                                    pct_from_max,
+                                    elapsed_secs,
+                                    entry_percent,
                                 ),
                             );
+                        }
+
+                        // ====================================================
+                        // ENTRY SIGNAL
+                        // ====================================================
+
+                        // Research-only signal detection.
+                        // No orders are submitted yet.
+                        if pct_from_min >= entry_percent {
+                            if self.debug_mode {
+                                print_log(
+                                    self.debug_mode,
+                                    true,
+                                    format_args!(
+                                        "[RESEARCH V1 BACKTEST SIGNAL][{}] \
+                                        price=${:.4} | \
+                                        above_min={:.3}% >= {:.3}%",
+                                        ev.symbol,
+                                        trade.price,
+                                        pct_from_min,
+                                        entry_percent,
+                                    ),
+                                );
+                            }
                         }
                     }
                 }

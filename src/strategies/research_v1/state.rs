@@ -40,29 +40,26 @@ pub struct ResearchV1Strategy {
     pub trade_amount_usd: f64,
 
     // Minimum percentage price movement required to trigger a trade entry.
-    pub entry_percent: f64,
+    pub entry_percent: Option<f64>,
 
     // Profit percentage at which the position should be closed (e.g. 3.0 = 3%).
-    pub exit_profit_percent: f64,
+    pub exit_profit_percent: Option<f64>,
 
     // Loss percentage at which the position should be closed.
-    pub exit_loss_percent: f64,
+    pub exit_loss_percent: Option<f64>,
 
     // Emergency stop-loss.
-    pub emergency_exit_percent: f64,
+    pub emergency_exit_percent: Option<f64>,
 
     // Duration in seconds to delay hard stop-loss.
-    pub min_sl_delay: u64,
-
-    // Mode to limit how long a trade can be open.
-    pub enable_trade_duration: bool,
+    pub min_sl_delay: Option<u64>,
 
     // Time limit in seconds until an open trade is auto closed.
     pub trade_duration_secs: Option<u64>,
 
     // Minimum USD trading volume required to allow a trade entry.
     // For a rolling-volume filter, accumulate this value over a defined time window rather than indefinitely.
-    pub min_volume_usd: f64,    
+    pub min_volume_usd: Option<f64>,    
 
     // Maximum allowed 24-hour price movement percentage.
     // None = no limit.

@@ -43,14 +43,13 @@ impl ResearchV1Strategy {
             tx_engine,
             rx_view,
             trade_amount_usd: 100.0,
-            entry_percent: 2.0,
-            exit_profit_percent: 2.0,
-            exit_loss_percent: 2.0,
-            emergency_exit_percent: 5.0,
-            min_sl_delay: 1800, // 30 min
-            enable_trade_duration: true,
+            entry_percent: Some(2.0),
+            exit_profit_percent: Some(2.0),
+            exit_loss_percent: Some(2.0),
+            emergency_exit_percent: Some(5.0),
+            min_sl_delay: Some(1800), // 30 min
             trade_duration_secs: Some(3_600), // 1 hour
-            min_volume_usd: 450_000.0, 
+            min_volume_usd: Some(450_000.0), 
             max_24h_move_pct: None,
             track_price_window_while_in_trade: false,
             price_window: PriceWindowTs::new(
@@ -173,48 +172,56 @@ impl Strategy for ResearchV1Strategy {
                     pct_from_max,
                     elapsed_secs,
                 )) = result {
-                    if self.debug_mode {
-                        print_log(
-                            self.debug_mode,
-                            true,
-                            format!(
-                                "[RESEARCH V1 LIVE WINDOW][{}] \
-                                 mid=${:.4} | \
-                                 above_min={:.3}% | \
-                                 below_max={:.3}% | \
-                                 age={}s | \
-                                 entry_threshold={:.3}%",
-                                ev.symbol,
-                                mid,
-                                pct_from_min,
-                                pct_from_max,
-                                elapsed_secs,
-                                self.entry_percent,
-                            ),
-                        );
-                    }
 
                     // ====================================================
-                    // ENTRY SIGNAL
+                    // ENTRY THRESHOLD
                     // ====================================================
 
-                    // Research-only signal detection.
-                    // No orders are submitted yet.
-                    if pct_from_min >= self.entry_percent {
+                    if let Some(entry_percent) = self.entry_percent {
+
                         if self.debug_mode {
                             print_log(
                                 self.debug_mode,
                                 true,
-                                format!(
-                                    "[RESEARCH V1 LIVE SIGNAL][{}] \
-                                     mid=${:.4} | \
-                                     above_min={:.3}% >= {:.3}%",
+                                format_args!(
+                                    "[RESEARCH V1 LIVE WINDOW][{}] \
+                                    mid=${:.4} | \
+                                    above_min={:.3}% | \
+                                    below_max={:.3}% | \
+                                    age={}s | \
+                                    entry_threshold={:.3}%",
                                     ev.symbol,
                                     mid,
                                     pct_from_min,
-                                    self.entry_percent,
+                                    pct_from_max,
+                                    elapsed_secs,
+                                    entry_percent,
                                 ),
                             );
+                        }
+
+                        // ====================================================
+                        // ENTRY SIGNAL
+                        // ====================================================
+
+                        // Research-only signal detection.
+                        // No orders are submitted yet.
+                        if pct_from_min >= entry_percent {
+                            if self.debug_mode {
+                                print_log(
+                                    self.debug_mode,
+                                    true,
+                                    format_args!(
+                                        "[RESEARCH V1 LIVE SIGNAL][{}] \
+                                        mid=${:.4} | \
+                                        above_min={:.3}% >= {:.3}%",
+                                        ev.symbol,
+                                        mid,
+                                        pct_from_min,
+                                        entry_percent,
+                                    ),
+                                );
+                            }
                         }
                     }
                 }
