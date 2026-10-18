@@ -24,17 +24,20 @@ use crate::{
 // ============================================================
 
 pub struct ResearchV1Strategy {
+    // Master switch to enable or disable the strategy.
+    pub enable_strategy: bool,
+
+    // Master switch to enable or disable strategy debug logging.
+    pub debug_mode: bool,
+
     // Channel used to send strategy events and trade requests to the engine.
     pub(crate) tx_engine: UnboundedSender<EngineEvent>,
 
     // Receiver providing the latest shared engine state.
     pub(crate) rx_view: watch::Receiver<Arc<EngineView>>,
 
-    // Master switch to enable or disable the strategy.
-    pub enable_strategy: bool,
-
-    // Master switch to enable or disable strategy debug logging.
-    pub debug_mode: bool,
+    // Amount of USD allocated to each trade before leverage (e.g. 100.0 = $100)
+    pub trade_amount_usd: f64,
 
     // Minimum percentage price movement required to trigger a trade entry.
     pub entry_percent: f64,
@@ -60,6 +63,10 @@ pub struct ResearchV1Strategy {
     // Minimum USD trading volume required to allow a trade entry.
     // For a rolling-volume filter, accumulate this value over a defined time window rather than indefinitely.
     pub min_volume_usd: f64,    
+
+    // Maximum allowed 24-hour price movement percentage.
+    // None = no limit.
+    pub max_24h_move_pct: Option<f64>,
 
     // true  = keep tracking the symbol's rolling price window while a trade is open.
     // false = clear that symbol's rolling window and stop tracking it until the trade is closed.

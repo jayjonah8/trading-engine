@@ -24,19 +24,22 @@ use crate::{
 // ============================================================
 
 pub struct ResearchV1BacktestStrategy {
-    // Channel used to send strategy events and trade requests to the engine.
-    pub(crate) tx_engine: UnboundedSender<EngineEvent>,
-
-    // Receiver providing the latest shared engine state.
-    pub(crate) rx_view: watch::Receiver<Arc<EngineView>>,
-
     // Master switch to enable or disable the strategy.
     pub enable_strategy: bool,
 
     // Master switch to enable or disable strategy debug logging.
     pub debug_mode: bool,
 
-    // Minimum percentage price movement required to trigger a trade entry.
+    // Channel used to send strategy events and trade requests to the engine.
+    pub(crate) tx_engine: UnboundedSender<EngineEvent>,
+
+    // Receiver providing the latest shared engine state.
+    pub(crate) rx_view: watch::Receiver<Arc<EngineView>>,
+
+    // Amount of USD allocated to each trade before leverage (e.g. 100.0 = $100)
+    pub trade_amount_usd: f64,
+
+    // Percentage move from a window extreme required to trigger an entry (e.g. 2.0 = 2%)
     pub entry_percent: f64,
 
     // Profit percentage at which the position should be closed (e.g. 3.0 = 3%).
@@ -60,6 +63,10 @@ pub struct ResearchV1BacktestStrategy {
     // Minimum USD trading volume required to allow a trade entry.
     // For a rolling-volume filter, accumulate this value over a defined time window rather than indefinitely.
     pub min_volume_usd: f64,
+
+    // Maximum allowed 24-hour price movement percentage.
+    // None = no limit.
+    pub max_24h_move_pct: Option<f64>,
 
     // true  = keep tracking the symbol's rolling price window while a trade is open.
     // false = clear that symbol's rolling window and stop tracking it until the trade is closed.

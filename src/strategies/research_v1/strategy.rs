@@ -42,17 +42,19 @@ impl ResearchV1Strategy {
             debug_mode: true,
             tx_engine,
             rx_view,
-            entry_percent: 0.3,
+            trade_amount_usd: 100.0,
+            entry_percent: 2.0,
             exit_profit_percent: 2.0,
             exit_loss_percent: 2.0,
             emergency_exit_percent: 5.0,
-            min_sl_delay: 1800,
+            min_sl_delay: 1800, // 30 min
             enable_trade_duration: true,
-            trade_duration_secs: Some(3_600), // 6 hours
+            trade_duration_secs: Some(3_600), // 1 hour
             min_volume_usd: 450_000.0, 
+            max_24h_move_pct: None,
             track_price_window_while_in_trade: false,
             price_window: PriceWindowTs::new(
-                10_800, // 3-hour rolling window
+                1800, // 30 min rolling window
                 false,
             ),
             candle_history: CandleHistory::new(
