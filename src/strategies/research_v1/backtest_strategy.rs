@@ -66,6 +66,10 @@ use super::backtest_state::ResearchV1BacktestStrategy;
 //   - You can use the r2 and 24hr percent change to see the smoothness and likely trade in whatever 
 //     trending direction the asset is moving towards. Can add only a light weight dynamic logic to this also if you want. 
 
+// * Add a toolbox feature to update leverage continously for all assets as a pollers so leverage stays up to date.
+//   - Have a loop mean you dont have to update leverage again when a new assets qualifies for trading.    
+//   - Add a helper api function that does this on bot start.
+
 // * Add an auto compounding tool box that takes in the trade_amount_usd etc and performs
 //   auto compounding as the "real" avenue ccount account is growing. See old bot for logic details.
 //   - You should be able to pick the compounding interval (1 day, 3 days etc).
