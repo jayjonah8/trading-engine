@@ -125,7 +125,7 @@ async fn main() -> Result<()> {
         // EXECUTION / MARKET DATA
         // ============================================================
 
-        execution_mode: ExecutionMode::Live,
+        execution_mode: ExecutionMode::Backtest,
 
         execution_venue: Venue::Hyperliquid,
 

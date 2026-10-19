@@ -264,7 +264,7 @@ impl Strategy for ResearchV1Strategy {
                 // completed one-minute candle becomes available.
                 if timeframe == Timeframe::ONE_MINUTE {
 
-                    // Number of one-minute candles in 24 hours.
+                    // Number of one-minute candles in 24 hours (1440).
                     let period: usize = 1440;
 
                     // Default to false until all requirements pass.

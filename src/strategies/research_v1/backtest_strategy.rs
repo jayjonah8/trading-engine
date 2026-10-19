@@ -42,9 +42,6 @@ use super::backtest_state::ResearchV1BacktestStrategy;
 // TODO:
 // * Set up the can_trade requirements for volume. Should auto update as volume changes.
 
-// * Add a trade delay that does not allow trading for a given time period while still allowing
-//   assets to build candle data.
-
 // * Set up the if pct_from_min >= self.entry_percent {} code blocks for the basic mean
 //   setup where you actually send the trade intents.
 
@@ -166,6 +163,16 @@ impl Strategy for ResearchV1BacktestStrategy {
             // ====================================================
 
             AppEvent::TapeTrade(trade) => {
+
+                // ============================================================
+                // TRADING ELIGIBILITY
+                // ============================================================
+
+                // Read the latest cached trading eligibility for this symbol.
+                let can_trade = self.can_trade
+                    .get(&ev.symbol)
+                    .copied()
+                    .unwrap_or(false);
          
                 // ====================================================
                 // TRADE DEBUG
@@ -174,7 +181,7 @@ impl Strategy for ResearchV1BacktestStrategy {
                 if self.debug_mode {
                     print_log(
                         self.debug_mode,
-                        true,
+                        false,
                         format_args!(
                             "[RESEARCH V1 BACKTEST TRADE][{}] \
                             price=${:.4} | size={} | timestamp_ms={}",
@@ -213,7 +220,7 @@ impl Strategy for ResearchV1BacktestStrategy {
                         if self.debug_mode {
                             print_log(
                                 self.debug_mode,
-                                true,
+                                false,
                                 format_args!(
                                     "[RESEARCH V1 BACKTEST WINDOW][{}] \
                                     price=${:.4} | \
@@ -237,11 +244,11 @@ impl Strategy for ResearchV1BacktestStrategy {
 
                         // Research-only signal detection.
                         // No orders are submitted yet.
-                        if pct_from_min >= entry_percent {
+                        if can_trade && pct_from_min >= entry_percent {
                             if self.debug_mode {
                                 print_log(
                                     self.debug_mode,
-                                    true,
+                                    false,
                                     format_args!(
                                         "[RESEARCH V1 BACKTEST SIGNAL][{}] \
                                         price=${:.4} | \
@@ -301,7 +308,7 @@ impl Strategy for ResearchV1BacktestStrategy {
                 // completed one-minute historical candle becomes available.
                 if timeframe == Timeframe::ONE_MINUTE {
 
-                    // Number of one-minute candles in 24 hours.
+                    // Number of one-minute candles in 24 hours (1440).
                     let period: usize = 1440;
 
                     // Default to false until all requirements pass.
