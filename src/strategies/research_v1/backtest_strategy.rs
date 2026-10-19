@@ -158,15 +158,7 @@ impl Strategy for ResearchV1BacktestStrategy {
 
         match ev.event {
 
-            // ====================================================
-            // HISTORICAL TRADE
-            // ====================================================
-
             AppEvent::TapeTrade(trade) => {
-
-                // ============================================================
-                // TRADING ELIGIBILITY
-                // ============================================================
 
                 // Read the latest cached trading eligibility for this symbol.
                 let can_trade = self.can_trade
@@ -174,10 +166,6 @@ impl Strategy for ResearchV1BacktestStrategy {
                     .copied()
                     .unwrap_or(false);
          
-                // ====================================================
-                // TRADE DEBUG
-                // ====================================================
-
                 if self.debug_mode {
                     print_log(
                         self.debug_mode,
@@ -193,11 +181,7 @@ impl Strategy for ResearchV1BacktestStrategy {
                     );
                 }
 
-
-                // ====================================================
-                // HISTORICAL PRICE WINDOW
-                // ====================================================
-
+                // Update per asset price tracking window 
                 let result = self.price_window
                     .update_price_window_extreme_diffs_ts(
                         &ev.symbol,
@@ -265,11 +249,6 @@ impl Strategy for ResearchV1BacktestStrategy {
                 }
             }
 
-
-            // ====================================================
-            // HISTORICAL QUOTE
-            // ====================================================
-
             AppEvent::Quote(quote) => {
                 if self.debug_mode {
                     print_log(
@@ -286,193 +265,18 @@ impl Strategy for ResearchV1BacktestStrategy {
                 }
             }
 
-
-            // ====================================================
-            // HISTORICAL CANDLE
-            // ====================================================
-
             AppEvent::BarClosed(bar) => {
                 let timeframe = bar.timeframe;
-
-                // Historical completed candle timestamp in Unix milliseconds.
                 let current_ts = bar.end.timestamp_millis();
 
-                // Store the completed historical candle.
+                // Store completed candle.
                 self.candle_history.push(bar);
 
-                // ============================================================
-                // 24-HOUR MARKET STATISTICS
-                // ============================================================
-
-                // Recalculate trading eligibility only when a new
-                // completed one-minute historical candle becomes available.
-                if timeframe == Timeframe::ONE_MINUTE {
-
-                    // Number of one-minute candles in 24 hours (1440).
-                    let period: usize = 1440;
-
-                    // Default to false until all requirements pass.
-                    let mut requirements_met = false;
-
-                    // ============================================================
-                    // GET ONE-MINUTE CANDLE HISTORY
-                    // ============================================================
-
-                    if let Some(bars) = self.candle_history.get(
-                        &ev.symbol,
-                        Timeframe::ONE_MINUTE,
-                    ) {
-
-                        // Require 1440 completed historical one-minute candles.
-                        if bars.len() >= period {
-
-                            // Collect only the most recent 1440 candles.
-                            // VecDeque is not guaranteed to be contiguous.
-                            let bars_vec: Vec<Bar> = bars
-                                .iter()
-                                .rev()
-                                .take(period)
-                                .cloned()
-                                .collect::<Vec<_>>()
-                                .into_iter()
-                                .rev()
-                                .collect();
-
-                            // ============================================================
-                            // VALIDATED 24-HOUR INDICATORS
-                            // ============================================================
-
-                            // Exact historical USD volume accumulated
-                            // from tape trades within completed candles.
-                            //
-                            // Internally uses valid_candle_window().
-                            let volume_usd_24h = volume_usd(
-                                &bars_vec,
-                                period,
-                                current_ts,
-                            );
-
-                            // Historical percentage price movement over
-                            // the same validated 24-hour candle window.
-                            //
-                            // Internally uses valid_candle_window().
-                            let price_change_24h = price_pct_change(
-                                &bars_vec,
-                                period,
-                                current_ts,
-                            );
-
-                            // ============================================================
-                            // MINIMUM 24-HOUR USD VOLUME
-                            // ============================================================
-
-                            // Some(min_volume) = Require minimum USD volume.
-                            // None = Disable the minimum volume restriction.
-                            let has_enough_volume: bool = match self.min_volume_usd {
-                                Some(min_volume) => {
-                                    volume_usd_24h.is_some_and(|usd_volume| {
-                                        usd_volume >= min_volume
-                                    })
-                                }
-
-                                None => true,
-                            };
-
-                            // ============================================================
-                            // MAXIMUM 24-HOUR PRICE MOVEMENT
-                            // ============================================================
-
-                            // Some(max_pct) = Require absolute historical
-                            // price movement to remain within the limit.
-                            //
-                            // None = Disable the movement restriction.
-                            let within_24h_move_limit =
-                                match self.max_24h_move_pct {
-                                    Some(max_pct) => {
-                                        price_change_24h.is_some_and(
-                                            |change_pct| {
-                                                change_pct.abs() <= max_pct
-                                            }
-                                        )
-                                    }
-
-                                    None => true,
-                                };
-
-                            // ============================================================
-                            // TRADING REQUIREMENTS
-                            // ============================================================
-
-                            // Both indicators must return valid results.
-                            //
-                            // If either indicator returns None, the asset
-                            // is not eligible for trading.
-                            requirements_met =
-                                has_enough_volume
-                                && within_24h_move_limit
-                                && volume_usd_24h.is_some()
-                                && price_change_24h.is_some();
-
-                            // ============================================================
-                            // MARKET STATISTICS DEBUG
-                            // ============================================================
-
-                            if self.debug_mode {
-                                print_log(
-                                    self.debug_mode,
-                                    true,
-                                    format_args!(
-                                        "[RESEARCH V1 BACKTEST 24H MARKET STATS][{}] \
-                                        CHANGE={:?}% | \
-                                        USD_VOLUME={:?} | \
-                                        ENOUGH_VOLUME={} | \
-                                        WITHIN_MOVE_LIMIT={} | \
-                                        CAN_TRADE={}",
-                                        ev.symbol,
-                                        price_change_24h,
-                                        volume_usd_24h,
-                                        has_enough_volume,
-                                        within_24h_move_limit,
-                                        requirements_met,
-                                    ),
-                                );
-                            }
-                        }
-                    }
-
-                    // ============================================================
-                    // CACHE TRADING ELIGIBILITY
-                    // ============================================================
-
-                    // Store the latest historical trading eligibility.
-                    //
-                    // Each asset maintains its own independent Boolean.
-                    self.can_trade.insert(
-                        ev.symbol.clone(),
-                        requirements_met,
-                    );
-
-                    // ============================================================
-                    // ELIGIBILITY DEBUG
-                    // ============================================================
-
-                    if self.debug_mode {
-                        print_log(
-                            self.debug_mode,
-                            true,
-                            format_args!(
-                                "[RESEARCH V1 BACKTEST ELIGIBILITY][{}] \
-                                can_trade={}",
-                                ev.symbol,
-                                requirements_met,
-                            ),
-                        );
-                    }
-                }
-
-                // ============================================================
-                // CANDLE DEBUG
-                // ============================================================
+                self.update_trading_eligibility(
+                    &ev.symbol,
+                    timeframe,
+                    current_ts,
+                );
 
                 if self.debug_mode {
                     print_log(
@@ -491,6 +295,190 @@ impl Strategy for ResearchV1BacktestStrategy {
                     );
                 }
             }
+        }
+    }
+}
+
+
+
+
+impl ResearchV1BacktestStrategy {
+
+    // ============================================================
+    // UPDATE TRADING ELIGIBILITY
+    // ============================================================
+
+    // Updates trading eligibility for each asset using validated 24-hour
+    // market statistics. Runs on completed one-minute candles.
+    //
+    // Checks:
+    // - At least 1440 completed one-minute candles (24 hours).
+    // - Valid and complete 24-hour candle history.
+    // - Valid 24-hour USD trading volume.
+    // - Minimum 24-hour USD volume requirement (if enabled).
+    // - Valid 24-hour percentage price movement.
+    // - Maximum absolute 24-hour price movement (if enabled).
+    //
+    // Caches the final eligibility result per asset.
+    // Trading is only allowed when all requirements pass.
+    fn update_trading_eligibility(
+        &mut self,
+        symbol: &str,
+        timeframe: Timeframe,
+        current_ts: i64,
+    ) {
+        // Only recalculate when a completed one-minute candle arrives.
+        if timeframe != Timeframe::ONE_MINUTE {
+            return;
+        }
+
+        // Number of one-minute candles in 24 hours.
+        // Change to 30 for testing.
+        let period: usize = 1440;
+
+        // Default to false until all requirements pass.
+        let mut requirements_met = false;
+
+        // ============================================================
+        // GET ONE-MINUTE CANDLE HISTORY
+        // ============================================================
+
+        if let Some(bars) = self.candle_history.get(
+            symbol,
+            Timeframe::ONE_MINUTE,
+        ) {
+            // Require 1440 completed one-minute candles.
+            if bars.len() >= period {
+
+                // Collect the most recent candles in chronological order.
+                // VecDeque is not guaranteed to be contiguous.
+                let bars_vec: Vec<Bar> = bars
+                    .iter()
+                    .rev()
+                    .take(period)
+                    .cloned()
+                    .collect::<Vec<_>>()
+                    .into_iter()
+                    .rev()
+                    .collect();
+
+                // ============================================================
+                // VALIDATED 24-HOUR INDICATORS
+                // ============================================================
+
+                // USD volume accumulated from completed candles.
+                // Internally validates the candle window.
+                let volume_usd_24h = volume_usd(
+                    &bars_vec,
+                    period,
+                    current_ts,
+                );
+
+                // Percentage price movement over the same window.
+                // Internally validates the candle window.
+                let price_change_24h = price_pct_change(
+                    &bars_vec,
+                    period,
+                    current_ts,
+                );
+
+                // ============================================================
+                // MINIMUM 24-HOUR USD VOLUME
+                // ============================================================
+
+                // Some(min_volume) = Require minimum USD volume.
+                // None = Disable the minimum volume restriction.
+                let has_enough_volume: bool = match self.min_volume_usd {
+                    Some(min_volume) => {
+                        volume_usd_24h.is_some_and(|usd_volume| {
+                            usd_volume >= min_volume
+                        })
+                    }
+
+                    None => true,
+                };
+
+                // ============================================================
+                // MAXIMUM 24-HOUR PRICE MOVEMENT
+                // ============================================================
+
+                // Some(max_pct) = Require absolute price movement
+                // to remain within the configured limit.
+                // None = Disable the movement restriction.
+                let within_24h_move_limit = match self.max_24h_move_pct {
+                    Some(max_pct) => {
+                        price_change_24h.is_some_and(|change_pct| {
+                            change_pct.abs() <= max_pct
+                        })
+                    }
+
+                    None => true,
+                };
+
+                // ============================================================
+                // TRADING REQUIREMENTS
+                // ============================================================
+
+                // Both indicators must return valid results.
+                // If either returns None, trading is disabled.
+                requirements_met =
+                    has_enough_volume
+                    && within_24h_move_limit
+                    && volume_usd_24h.is_some()
+                    && price_change_24h.is_some();
+
+                // ============================================================
+                // MARKET STATISTICS DEBUG
+                // ============================================================
+
+                if self.debug_mode {
+                    print_log(
+                        self.debug_mode,
+                        false,
+                        format_args!(
+                            "[RESEARCH V1 BACKTEST 24H MARKET STATS][{}] \
+                             CHANGE={:?}% | \
+                             USD_VOLUME={:?} | \
+                             ENOUGH_VOLUME={} | \
+                             WITHIN_MOVE_LIMIT={} | \
+                             CAN_TRADE={}",
+                            symbol,
+                            price_change_24h,
+                            volume_usd_24h,
+                            has_enough_volume,
+                            within_24h_move_limit,
+                            requirements_met,
+                        ),
+                    );
+                }
+            }
+        }
+
+        // ============================================================
+        // CACHE TRADING ELIGIBILITY
+        // ============================================================
+
+        // Each asset maintains its own independent eligibility state.
+        self.can_trade.insert(
+            symbol.to_string(),
+            requirements_met,
+        );
+
+        // ============================================================
+        // ELIGIBILITY DEBUG
+        // ============================================================
+
+        if self.debug_mode {
+            print_log(
+                self.debug_mode,
+                false,
+                format_args!(
+                    "[RESEARCH V1 BACKTEST ELIGIBILITY][{}] \
+                     can_trade={}",
+                    symbol,
+                    requirements_met,
+                ),
+            );
         }
     }
 }
