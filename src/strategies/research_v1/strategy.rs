@@ -1,4 +1,7 @@
+#![allow(dead_code)]
+
 use std::sync::Arc;
+use std::collections::HashMap;
 
 use tokio::sync::{
     mpsc::UnboundedSender,
@@ -12,12 +15,19 @@ use crate::{
         events::{
             AppEvent,
             AppEventEnvelope,
+            Bar,
         },
     },
 
     market::{
         candle::CandleConfig,
         candle_history::CandleHistory,
+        timeframe::Timeframe,
+    },
+
+    indicators::{
+        price_pct_change,
+        volume_usd,
     },
 
     strategies::Strategy,
@@ -59,6 +69,7 @@ impl ResearchV1Strategy {
             candle_history: CandleHistory::new(
                 candle_config.history_retention,
             ),
+            can_trade: HashMap::new(),
         }
     }
 }
@@ -133,12 +144,17 @@ impl Strategy for ResearchV1Strategy {
 
             AppEvent::Quote(quote) => {
 
-                // ====================================================
-                // MID PRICE
-                // ====================================================
+                let mid = (quote.bid_price + quote.ask_price) / 2.0;
 
-                let mid =
-                    (quote.bid_price + quote.ask_price) / 2.0;
+                // ============================================================
+                // TRADING ELIGIBILITY
+                // ============================================================
+
+                // Read the latest cached trading eligibility for this symbol.
+                let can_trade = self.can_trade
+                    .get(&ev.symbol)
+                    .copied()
+                    .unwrap_or(false);
 
                 if self.debug_mode {
                     print_log(
@@ -154,7 +170,6 @@ impl Strategy for ResearchV1Strategy {
                         ),
                     );
                 }
-
 
                 // ====================================================
                 // TIMESTAMP-BASED PRICE WINDOW
@@ -206,7 +221,7 @@ impl Strategy for ResearchV1Strategy {
 
                         // Research-only signal detection.
                         // No orders are submitted yet.
-                        if pct_from_min >= entry_percent {
+                        if can_trade && pct_from_min >= entry_percent {
                             if self.debug_mode {
                                 print_log(
                                     self.debug_mode,
@@ -228,21 +243,195 @@ impl Strategy for ResearchV1Strategy {
             }
 
 
-            // ====================================================
+            // ============================================================
             // LIVE CANDLE
-            // ====================================================
+            // ============================================================
 
             AppEvent::BarClosed(bar) => {
                 let timeframe = bar.timeframe;
 
+                // Current completed candle timestamp in Unix milliseconds.
+                let current_ts = bar.end.timestamp_millis();
+
+                // Store the completed candle.
                 self.candle_history.push(bar);
+
+                // ============================================================
+                // 24-HOUR MARKET STATISTICS
+                // ============================================================
+
+                // Recalculate trading eligibility only when a new
+                // completed one-minute candle becomes available.
+                if timeframe == Timeframe::ONE_MINUTE {
+
+                    // Number of one-minute candles in 24 hours.
+                    let period: usize = 1440;
+
+                    // Default to false until all requirements pass.
+                    let mut requirements_met = false;
+
+                    // ============================================================
+                    // GET ONE-MINUTE CANDLE HISTORY
+                    // ============================================================
+
+                    if let Some(bars) = self.candle_history.get(
+                        &ev.symbol,
+                        Timeframe::ONE_MINUTE,
+                    ) {
+
+                        // Require 1440 completed one-minute candles.
+                        if bars.len() >= period {
+
+                            // Collect only the most recent 1440 candles.
+                            // VecDeque is not guaranteed to be contiguous.
+                            let bars_vec: Vec<Bar> = bars
+                                .iter()
+                                .rev()
+                                .take(period)
+                                .cloned()
+                                .collect::<Vec<_>>()
+                                .into_iter()
+                                .rev()
+                                .collect();
+
+                            // ============================================================
+                            // VALIDATED 24-HOUR INDICATORS
+                            // ============================================================
+
+                            // Exact USD volume from raw tape trade accumulation.
+                            //
+                            // Internally uses valid_candle_window().
+                            let volume_usd_24h = volume_usd(
+                                &bars_vec,
+                                period,
+                                current_ts,
+                            );
+
+                            // Percentage price movement over the same
+                            // validated 24-hour candle window.
+                            //
+                            // Internally uses valid_candle_window().
+                            let price_change_24h = price_pct_change(
+                                &bars_vec,
+                                period,
+                                current_ts,
+                            );
+
+                            // ============================================================
+                            // MINIMUM 24-HOUR USD VOLUME
+                            // ============================================================
+
+                            let has_enough_volume: bool = match self.min_volume_usd {
+                                Some(min_volume) => {
+                                    volume_usd_24h.is_some_and(|usd_volume| {
+                                        usd_volume >= min_volume
+                                    })
+                                }
+                                None => true,
+                            };
+
+                            // ============================================================
+                            // MAXIMUM 24-HOUR PRICE MOVEMENT
+                            // ============================================================
+
+                            // Some(max_pct) = Require the absolute 24-hour
+                            // price movement to remain within the limit.
+                            //
+                            // None = Disable the movement restriction.
+                            let within_24h_move_limit =
+                                match self.max_24h_move_pct {
+                                    Some(max_pct) => {
+                                        price_change_24h.is_some_and(
+                                            |change_pct| {
+                                                change_pct.abs() <= max_pct
+                                            }
+                                        )
+                                    }
+
+                                    None => true,
+                                };
+
+                            // ============================================================
+                            // TRADING REQUIREMENTS
+                            // ============================================================
+
+                            // Both indicators must return valid results.
+                            //
+                            // If either indicator returns None, the asset
+                            // is not eligible for trading.
+                            requirements_met =
+                                has_enough_volume
+                                && within_24h_move_limit
+                                && price_change_24h.is_some();
+
+                            // ============================================================
+                            // MARKET STATISTICS DEBUG
+                            // ============================================================
+
+                            if self.debug_mode {
+                                print_log(
+                                    self.debug_mode,
+                                    true,
+                                    format_args!(
+                                        "[RESEARCH V1 24H MARKET STATS][{}] \
+                                        CHANGE={:?}% | \
+                                        USD_VOLUME={:?} | \
+                                        ENOUGH_VOLUME={} | \
+                                        WITHIN_MOVE_LIMIT={} | \
+                                        CAN_TRADE={}",
+                                        ev.symbol,
+                                        price_change_24h,
+                                        volume_usd_24h,
+                                        has_enough_volume,
+                                        within_24h_move_limit,
+                                        requirements_met,
+                                    ),
+                                );
+                            }
+                        }
+                    }
+
+                    // ============================================================
+                    // CACHE TRADING ELIGIBILITY
+                    // ============================================================
+
+                    // Store the latest trading eligibility for this symbol.
+                    //
+                    // Each asset maintains its own independent Boolean.
+                    self.can_trade.insert(
+                        ev.symbol.clone(),
+                        requirements_met,
+                    );
+
+                    // ============================================================
+                    // ELIGIBILITY DEBUG
+                    // ============================================================
+
+                    if self.debug_mode {
+                        print_log(
+                            self.debug_mode,
+                            true,
+                            format_args!(
+                                "[RESEARCH V1 ELIGIBILITY][{}] \
+                                can_trade={}",
+                                ev.symbol,
+                                requirements_met,
+                            ),
+                        );
+                    }
+                }
+
+                // ============================================================
+                // CANDLE DEBUG
+                // ============================================================
 
                 if self.debug_mode {
                     print_log(
                         self.debug_mode,
                         true,
-                        format!(
-                            "[RESEARCH V1 LIVE CANDLE][{}][{}s] stored={}",
+                        format_args!(
+                            "[RESEARCH V1 CANDLE][{}][{}s] \
+                            stored={}",
                             ev.symbol,
                             timeframe.as_secs(),
                             self.candle_history.len(

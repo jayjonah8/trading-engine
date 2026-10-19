@@ -1,6 +1,7 @@
 #![allow(dead_code)]
 
 use std::sync::Arc;
+use std::collections::HashMap;
 
 use tokio::sync::{
     mpsc::UnboundedSender,
@@ -74,4 +75,8 @@ pub struct ResearchV1Strategy {
 
     // Closed multi-timeframe candle history.
     pub candle_history: CandleHistory,
+
+    // Cached trading eligibility for each symbol (24hr volume checks etc).
+    // Updated whenever a completed one-minute candle arrives.
+    pub can_trade: HashMap<String, bool>,
 }
