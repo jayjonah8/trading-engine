@@ -17,6 +17,12 @@ use crate::{
             AppEventEnvelope,
             Bar,
         },
+        execution::order::{
+            OrderType,
+            TimeInForce,
+        },
+        trade_intent::TradeIntent,
+        trades::Direction,
     },
 
     market::{
@@ -146,7 +152,7 @@ impl Strategy for ResearchV1Strategy {
                         true,
                         format!(
                             "[RESEARCH V1 LIVE QUOTE][{}] \
-                             bid=${:.4} | ask=${:.4} | mid=${:.4}",
+                            bid=${:.4} | ask=${:.4} | mid=${:.4}",
                             ev.symbol,
                             quote.bid_price,
                             quote.ask_price,
@@ -155,7 +161,7 @@ impl Strategy for ResearchV1Strategy {
                     );
                 }
 
-                // Update per asset price tracking window
+                // Update per asset price tracking window.
                 let result = self.price_window
                     .update_price_window_extreme_diffs_ts(
                         &ev.symbol,
@@ -197,26 +203,131 @@ impl Strategy for ResearchV1Strategy {
                         }
 
                         // ====================================================
-                        // ENTRY SIGNAL
+                        // TRADING ELIGIBILITY
                         // ====================================================
 
-                        // Research-only signal detection.
-                        // No orders are submitted yet.
-                        if can_trade && pct_from_min >= entry_percent {
-                            if self.debug_mode {
-                                print_log(
-                                    self.debug_mode,
-                                    true,
-                                    format_args!(
-                                        "[RESEARCH V1 LIVE SIGNAL][{}] \
-                                        mid=${:.4} | \
-                                        above_min={:.3}% >= {:.3}%",
-                                        ev.symbol,
-                                        mid,
-                                        pct_from_min,
-                                        entry_percent,
-                                    ),
-                                );
+                        // Do not generate entry signals unless the asset
+                        // passes all cached 24-hour trading requirements.
+                        if can_trade {
+
+                            // ====================================================
+                            // SHORT ENTRY
+                            // ====================================================
+
+                            if pct_from_min >= entry_percent {
+
+                                let intent = TradeIntent {
+                                    strategy_id: self.name().to_string(),
+                                    symbol: ev.symbol.clone(),
+                                    direction: Direction::Short,
+                                    signal_px: mid,
+                                    target_notional: self.trade_amount_usd,
+                                    order_type: OrderType::Market,
+                                    time_in_force: TimeInForce::Day,
+                                    limit_px: None,
+                                    stop_px: None,
+                                    post_only: false,
+                                    take_profit_percent: self.exit_profit_percent,
+                                    stop_loss_percent: self.exit_loss_percent,
+                                    emergency_stop_percent: self.emergency_exit_percent,
+                                    stop_loss_delay_secs: self.min_sl_delay,
+                                    trade_duration_secs: self.trade_duration_secs,
+                                    ts_ms: quote.timestamp_ms,
+                                };
+
+                                // ====================================================
+                                // SHORT ENTRY DEBUG
+                                // ====================================================
+
+                                if self.debug_mode {
+                                    print_log(
+                                        self.debug_mode,
+                                        true,
+                                        format_args!(
+                                            "[RESEARCH V1 LIVE SHORT ENTRY][{}] \
+                                            mid=${:.4} | \
+                                            above_min={:.3}% >= {:.3}% | \
+                                            amount=${:.2}",
+                                            ev.symbol,
+                                            mid,
+                                            pct_from_min,
+                                            entry_percent,
+                                            self.trade_amount_usd,
+                                        ),
+                                    );
+                                }
+
+                                // ====================================================
+                                // SEND TRADE INTENT
+                                // ====================================================
+
+                                // TODO: Enable once execution is ready.
+                                //
+                                // let _ = self.tx_engine.send(
+                                //     EngineEvent::OpenTrade(intent)
+                                // );
+
+                                let _ = intent;
+                            }
+
+                            // ====================================================
+                            // LONG ENTRY
+                            // ====================================================
+
+                            else if pct_from_max >= entry_percent {
+
+                                let intent = TradeIntent {
+                                    strategy_id: self.name().to_string(),
+                                    symbol: ev.symbol.clone(),
+                                    direction: Direction::Long,
+                                    signal_px: mid,
+                                    target_notional: self.trade_amount_usd,
+                                    order_type: OrderType::Market,
+                                    time_in_force: TimeInForce::Day,
+                                    limit_px: None,
+                                    stop_px: None,
+                                    post_only: false,
+                                    take_profit_percent: self.exit_profit_percent,
+                                    stop_loss_percent: self.exit_loss_percent,
+                                    emergency_stop_percent: self.emergency_exit_percent,
+                                    stop_loss_delay_secs: self.min_sl_delay,
+                                    trade_duration_secs: self.trade_duration_secs,
+                                    ts_ms: quote.timestamp_ms,
+                                };
+
+                                // ====================================================
+                                // LONG ENTRY DEBUG
+                                // ====================================================
+
+                                if self.debug_mode {
+                                    print_log(
+                                        self.debug_mode,
+                                        true,
+                                        format_args!(
+                                            "[RESEARCH V1 LIVE LONG ENTRY][{}] \
+                                            mid=${:.4} | \
+                                            below_max={:.3}% >= {:.3}% | \
+                                            amount=${:.2}",
+                                            ev.symbol,
+                                            mid,
+                                            pct_from_max,
+                                            entry_percent,
+                                            self.trade_amount_usd,
+                                        ),
+                                    );
+                                }
+
+                                // ====================================================
+                                // SEND TRADE INTENT
+                                // ====================================================
+
+                                // TODO: Enable once execution is ready.
+                                //
+                                // let _ = self.tx_engine.send(
+                                //     EngineEvent::OpenTrade(intent)
+                                // );
+
+                                let _ = intent;
                             }
                         }
                     }

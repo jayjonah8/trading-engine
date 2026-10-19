@@ -508,9 +508,6 @@ impl Strategy for BaseBacktestStrategy {
                             ),
                         );
 
-                        // TODO:
-                        // Enable once canonical historical execution is wired.
-                        //
                         let _ = self.tx_engine.send(
                             EngineEvent::OpenTrade(intent)
                         );
