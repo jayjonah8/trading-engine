@@ -70,6 +70,10 @@ use super::backtest_state::ResearchV1BacktestStrategy;
 //   - Also add another helper function to both that clear all
 //     assets price windows.
 
+// * Make sure this strategy is not opening another trade for the same asset when its already in a trade.
+//   - Clearing the price tracking window does this, but this should have its own explicit check which should
+//     be easy since I think the engine allows for this already inside the risk settings.
+
 // * Add the runner assets detection logic to catch symbol with large movement during a day.
 //   - You can use the r2 and 24hr percent change to see the smoothness and likely trade in whatever 
 //     trending direction the asset is moving towards. Can add only a light weight dynamic logic to this also if you want. 
