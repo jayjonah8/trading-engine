@@ -17,6 +17,7 @@ use crate::{
     market::candle_history::CandleHistory,
 
     toolbox::price_window_ts::PriceWindowTs,
+    toolbox::black_swan_protection::BlackSwanProtection,
 };
 
 
@@ -79,4 +80,7 @@ pub struct ResearchV1BacktestStrategy {
     // Cached trading eligibility for each symbol (24hr volume checks etc).
     // Updated whenever a completed one-minute candle arrives.
     pub can_trade: HashMap<String, bool>,
+
+    // black swan event protection (halts trading during extreme moves across all assets)
+    pub black_swan_protection: BlackSwanProtection,
 }

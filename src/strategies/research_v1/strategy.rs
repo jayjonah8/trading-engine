@@ -39,6 +39,7 @@ use crate::{
     strategies::Strategy,
 
     toolbox::price_window_ts::PriceWindowTs,
+    toolbox::black_swan_protection::BlackSwanProtection,
 
     shared::print_log,
 };
@@ -69,13 +70,20 @@ impl ResearchV1Strategy {
             max_24h_move_pct: None,
             track_price_window_while_in_trade: false,
             price_window: PriceWindowTs::new(
-                1800, // 30 min rolling window
-                false,
+                1800,  // 30 min rolling window
+                false, // Enable or disable debug logging.
             ),
             candle_history: CandleHistory::new(
                 candle_config.history_retention,
             ),
             can_trade: HashMap::new(),
+            black_swan_protection: BlackSwanProtection::new(
+                true,   // Enable protection.
+                true,   // Enable or disable debug logging.
+                15.0,   // Halt when average absolute 24-hour movement reaches 15%.
+                8.0,    // Resume when average movement falls to 8%.
+                15,     // Minimum number of assets required.
+            ),
         }
     }
 }
@@ -206,9 +214,10 @@ impl Strategy for ResearchV1Strategy {
                         // TRADING ELIGIBILITY
                         // ====================================================
 
-                        // Do not generate entry signals unless the asset
-                        // passes all cached 24-hour trading requirements.
-                        if can_trade {
+                        // New entries require:
+                        // - Individual asset trading eligibility.
+                        // - Market-wide black swan protection is inactive.
+                        if can_trade && !self.black_swan_protection.is_halted() {
 
                             // ====================================================
                             // SHORT ENTRY
@@ -342,6 +351,12 @@ impl Strategy for ResearchV1Strategy {
                 self.candle_history.push(bar);
 
                 self.update_trading_eligibility(
+                    &ev.symbol,
+                    timeframe,
+                    current_ts,
+                );
+
+                self.update_black_swan_protection(
                     &ev.symbol,
                     timeframe,
                     current_ts,
@@ -549,5 +564,84 @@ impl ResearchV1Strategy {
                 ),
             );
         }
+    }
+}
+
+
+
+
+impl ResearchV1Strategy {
+
+    // ============================================================
+    // UPDATE BLACK SWAN PROTECTION
+    // ============================================================
+
+    // Updates market-wide volatility protection independently
+    // of individual asset trading eligibility.
+    //
+    // Checks:
+    // - Only processes completed one-minute candles.
+    // - Requires 1440 completed one-minute candles.
+    // - Calculates validated 24-hour price movement.
+    // - Updates the shared market-wide protection state.
+    // - Automatically evaluates trading halt conditions.
+    fn update_black_swan_protection(
+        &mut self,
+        symbol: &str,
+        timeframe: Timeframe,
+        current_ts: i64,
+    ) {
+        if timeframe != Timeframe::ONE_MINUTE {
+            return;
+        }
+
+        // Number of one-minute candles in 24 hours.
+        let period: usize = 1440;
+
+        // Default to None until valid statistics are available.
+        let mut price_change_24h: Option<f64> = None;
+
+        // ============================================================
+        // GET ONE-MINUTE CANDLE HISTORY
+        // ============================================================
+
+        if let Some(bars) = self.candle_history.get(
+            symbol,
+            Timeframe::ONE_MINUTE,
+        ) {
+            if bars.len() >= period {
+
+                // Collect the latest candles in chronological order.
+                let bars_vec: Vec<Bar> = bars
+                    .iter()
+                    .rev()
+                    .take(period)
+                    .cloned()
+                    .collect::<Vec<_>>()
+                    .into_iter()
+                    .rev()
+                    .collect();
+
+                // ============================================================
+                // VALIDATED 24-HOUR PRICE MOVEMENT
+                // ============================================================
+
+                price_change_24h = price_pct_change(
+                    &bars_vec,
+                    period,
+                    current_ts,
+                );
+            }
+        }
+
+        // ============================================================
+        // UPDATE BLACK SWAN PROTECTION
+        // ============================================================
+
+        self.black_swan_protection.update(
+            symbol,
+            price_change_24h,
+            current_ts,
+        );
     }
 }
