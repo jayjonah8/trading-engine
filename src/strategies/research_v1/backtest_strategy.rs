@@ -48,19 +48,14 @@ use super::backtest_state::ResearchV1BacktestStrategy;
 
 // TODO:
 
-// * Add a stop trading state when all assets have an average 24h percent move (ie >= 10%) over a certain amount.
-//   You may be able to add this as a helper somewhere idk. Put this black_swan_event_trading_halt or something like that in state.
-
-// * Add the logic on when a trade is flipped (trending). Should be simple.
-
-// * Put the can_trade logic in the toolbox and add it to the strategy state. 
-
-// * Figure out the best way to map a strategy trade identifier to a trade id. See Notion "Current" notes. 
+// * Add the logic on when a trade is flipped (trending). Should be simple. Maybe name it trending_mode
 
 // * Add an early profit tax toolbox feature.
 //   - Can have normal profit taking.
 //   - Can also have slow version profit taking.
 //   - See old bot for implementation details.
+//   - Can use close all trades engine event message. 
+//   - Make sure its not getting called multiple times when it should not. 
 
 // * Start implementing the continuous multi-sync logic as a toolbox feature.
 
@@ -78,6 +73,7 @@ use super::backtest_state::ResearchV1BacktestStrategy;
 // * Add the runner assets detection logic to catch symbol with large movement during a day.
 //   - You can use the r2 and 24hr percent change to see the smoothness and likely trade in whatever 
 //     trending direction the asset is moving towards. Can add only a light weight dynamic logic to this also if you want. 
+//   - Make this a mode you can turn on and off. 
 
 // * Add a toolbox feature to update leverage continously for all assets as a pollers so leverage stays up to date.
 //   - Have a loop mean you dont have to update leverage again when a new assets qualifies for trading.    
@@ -87,6 +83,8 @@ use super::backtest_state::ResearchV1BacktestStrategy;
 //   auto compounding as the "real" avenue ccount account is growing. See old bot for logic details.
 //   - You should be able to pick the compounding interval (1 day, 3 days etc).
 
+// * You should try to add remote message for the live version for certain important events inside the strategy.
+//   This can wait until you actually want to go live though.
 
 // ============================================================
 // CONSTRUCTOR

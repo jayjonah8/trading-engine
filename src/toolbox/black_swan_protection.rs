@@ -56,11 +56,6 @@ pub struct BlackSwanProtection {
 }
 
 impl BlackSwanProtection {
-
-    // ============================================================
-    // NEW
-    // ============================================================
-
     pub fn new(
         enabled: bool,
         debug_mode: bool,
@@ -201,6 +196,22 @@ impl BlackSwanProtection {
         average_move: Option<f64>,
     ) {
         if self.debug_mode {
+
+            // ============================================================
+            // FORMAT AVERAGE MOVEMENT
+            // ============================================================
+
+            // Display percentage with four decimal places or None
+            // when insufficient market statistics are available.
+            let average_move_display = match average_move {
+                Some(value) => format!("{:.4}%", value),
+                None => "None".to_string(),
+            };
+
+            // ============================================================
+            // PRINT DEBUG STATE
+            // ============================================================
+
             print_log(
                 self.debug_mode,
                 true,
@@ -209,7 +220,7 @@ impl BlackSwanProtection {
                     enabled={} | \
                     trading_halt={} | \
                     assets={}/{} | \
-                    avg_24h_move={:?}% | \
+                    avg_24h_move={} | \
                     halt_threshold={:.2}% | \
                     resume_threshold={:.2}% | \
                     max_data_age={}s | \
@@ -219,7 +230,7 @@ impl BlackSwanProtection {
                     self.trading_halt,
                     self.market_24h_moves.len(),
                     self.min_assets,
-                    average_move,
+                    average_move_display,
                     self.halt_threshold_pct,
                     self.resume_threshold_pct,
                     self.max_data_age_ms / 1000,
