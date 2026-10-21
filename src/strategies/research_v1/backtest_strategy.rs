@@ -124,7 +124,7 @@ impl ResearchV1BacktestStrategy {
             can_trade: HashMap::new(),
              black_swan_protection: BlackSwanProtection::new(
                 true,   // Enable protection.
-                true,   // Enable or disable debug logging.
+                false,  // Enable or disable debug logging.
                 15.0,   // Halt when average absolute 24-hour movement reaches 15%.
                 8.0,    // Resume when average movement falls to 8%.
                 15,     // Minimum number of assets required.
