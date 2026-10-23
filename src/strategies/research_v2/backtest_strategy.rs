@@ -32,6 +32,22 @@ use crate::{
 
 use super::backtest_state::ResearchV2BacktestStrategy;
 
+/*
+TODO:
+
+* You should check how much the asset is moving during the day (atr) for better profit targets per asset.
+
+* May use differnt timeframes for you indicators when examining the candles (ie. 2hrs, 4hrs, 6hrs, 8hrs, 24hrs etc.)
+* Try to develop a function that dynamically examines the candles / assets markets to predict the next direction move. 
+
+* Add the trailing stop loss logic that can be highly customized with different arbitrary dynamic levels.
+
+* These trades will likely last around 2 - 8 hours. Will not use trade duration except for a 24hr duration
+  incase a trade is stuct for some reason. Pare this with stale trades closes / messages. 
+
+
+*/
+
 
 
 // ============================================================
