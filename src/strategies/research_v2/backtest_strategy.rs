@@ -37,7 +37,18 @@ TODO:
 
 * You should check how much the asset is moving during the day (atr) for better profit targets per asset.
 
-* May use differnt timeframes for you indicators when examining the candles (ie. 2hrs, 4hrs, 6hrs, 8hrs, 24hrs etc.)
+* To accumulate more, you will likely have to use limit orders that continues to grow you qty in that assets when it
+  finally moves, but you will have to delete those limit orders when that assets is no longer in a trade.
+* Each higher/lower limit order should have different stoploss parameters for ex. every added limit orders should have a
+  tigher stop loose and possible lower trade duration if used. 
+* - Or you could just fully accumulate during the side ways moves before the assets moves in any direction. Maybe have a mode
+    to choose between limit accumulation or side ways / flat accumulation!
+
+* Don't trade when the entire market moves together rapidly (maybe, we'll see)
+* Most of the market follows Bitcoin anyway, so maybe you only need to follow BTC, and go down to additional assets based off
+  how much volume they have the higher being the better.
+
+* May use differnt timeframes for you indicators when examining the candles (ie. 2hrs, 4hrs (best), 6hrs, 8hrs, 24hrs etc.)
 * Try to develop a function that dynamically examines the candles / assets markets to predict the next direction move. 
 
 * Add the trailing stop loss logic that can be highly customized with different arbitrary dynamic levels.

@@ -156,7 +156,7 @@ async fn main() -> Result<()> {
         // ENGINE SETTINGS
         // ============================================================
 
-        close_trades_on_startup: true,
+        close_trades_on_startup: false,
         min_trade_age_before_exit_secs: 1, // delete later
 
         custom_starting_balance: 250_000.0,
