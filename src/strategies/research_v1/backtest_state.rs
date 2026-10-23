@@ -21,10 +21,6 @@ use crate::{
 };
 
 
-// ============================================================
-// RESEARCH V1 BACKTEST STRATEGY
-// ============================================================
-
 pub struct ResearchV1BacktestStrategy {
        // Master switch to enable or disable the strategy.
     pub enable_strategy: bool,

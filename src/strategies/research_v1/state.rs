@@ -21,10 +21,6 @@ use crate::{
 };
 
 
-// ============================================================
-// RESEARCH V1 LIVE STRATEGY
-// ============================================================
-
 pub struct ResearchV1Strategy {
     // Master switch to enable or disable the strategy.
     pub enable_strategy: bool,
@@ -84,3 +80,5 @@ pub struct ResearchV1Strategy {
     // black swan event protection (halts trading during extreme moves across all assets)
     pub black_swan_protection: BlackSwanProtection,
 }
+
+

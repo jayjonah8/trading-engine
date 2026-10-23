@@ -103,9 +103,6 @@ use crate::strategies::{
 };
 
 
-// ============================================================
-// MAIN
-// ============================================================
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -143,22 +140,6 @@ async fn main() -> Result<()> {
             "NEAR".to_string(),
         ],
 
-        // Example equity configuration:
-        //
-        // execution_venue: Venue::Alpaca,
-        //
-        // symbols: vec![
-        //     "AAPL".to_string(),
-        //     "MSFT".to_string(),
-        //     "NVDA".to_string(),
-        // ],
-
-        // symbols: vec![
-        //     "FAKEA".to_string(),
-        //     "FAKEB".to_string(),
-        //     "FAKEC".to_string(),
-        // ],
-
         // ============================================================
         // RISK LIMITS
         // ============================================================
@@ -185,7 +166,7 @@ async fn main() -> Result<()> {
     };
 
 
-   // ============================================================
+    // ============================================================
     // STARTUP POSITION CLEANUP
     // ============================================================
 
@@ -213,6 +194,22 @@ async fn main() -> Result<()> {
             _ => {}
         }
     }
+
+    // Example equity configuration:
+    //
+    // execution_venue: Venue::Alpaca,
+    //
+    // symbols: vec![
+    //     "AAPL".to_string(),
+    //     "MSFT".to_string(),
+    //     "NVDA".to_string(),
+    // ],
+
+    // symbols: vec![
+    //     "FAKEA".to_string(),
+    //     "FAKEB".to_string(),
+    //     "FAKEC".to_string(),
+    // ],
 
 
     // ============================================================
@@ -1156,6 +1153,7 @@ async fn main() -> Result<()> {
     // chooses the live or historical implementation.
     let enabled = vec![
         StrategyKind::ResearchV1,
+        // StrategyKind::ResearchV2,
         // StrategyKind::Base,
         // StrategyKind::Indicator,
         // StrategyKind::MeanReversion,

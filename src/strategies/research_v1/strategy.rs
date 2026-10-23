@@ -47,6 +47,40 @@ use crate::{
 use super::state::ResearchV1Strategy;
 
 
+
+
+// ============================================================
+// STRATEGY DESCRIPTION
+// ============================================================
+//
+// A regime-adaptive trading strategy combining mean reversion
+// and momentum-based trend following.
+//
+// The primary strategy operates on mean-reversion principles,
+// identifying entry opportunities when price deviates beyond
+// a configurable percentage threshold relative to the extrema
+// of a rolling price window. These deviations are treated as
+// potential short-term price dislocations, with positions
+// established in anticipation of a reversion toward equilibrium.
+//
+// The strategy also incorporates a trend-following mode designed
+// to adapt to market conditions where mean reversion becomes
+// ineffective. This mode reverses the directional interpretation
+// of entry signals, converting countertrend positions into
+// momentum-aligned trades. This provides a mechanism for adapting
+// to changing market regimes rather than relying exclusively
+// on a single directional trading approach.
+//
+// Additional specialized logic is intended for high-momentum
+// assets ("runners") exhibiting unusually large 24-hour price
+// movements. These assets may require distinct entry criteria,
+// directional bias, and risk-management parameters to account
+// for elevated volatility and persistent directional momentum.
+// ============================================================
+
+
+
+
 impl ResearchV1Strategy {
     pub fn new(
         tx_engine: UnboundedSender<EngineEvent>,
