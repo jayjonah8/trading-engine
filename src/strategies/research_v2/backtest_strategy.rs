@@ -35,6 +35,14 @@ use super::backtest_state::ResearchV2BacktestStrategy;
 /*
 TODO:
 
+* Start off only trading BTC with this strategy. 
+
+* You can track what the assets high and low price of the day is since its more likely that if you trade it near the high, then it could reversion 
+  for a perfect short trade opportuniaty and vice versa. 
+  - You can also check how mancy times in the past 24hrs an assets has hit a new high or new low price for that day and depending on that
+    number you can chose to entire into the trade using the dynamic trailing stop loss for the maximum reverval profit potential. Maybe do something like
+    if it have 2 or 3 new highs/lows, entire into the dynamic trailing stop loss trade.
+
 * You should check how much the asset is moving during the day (atr) for better profit targets per asset.
 
 * To accumulate more, you will likely have to use limit orders that continues to grow you qty in that assets when it

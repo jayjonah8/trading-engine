@@ -140,6 +140,22 @@ async fn main() -> Result<()> {
             "NEAR".to_string(),
         ],
 
+        // Example equity configuration:
+        //
+        // execution_venue: Venue::Alpaca,
+        //
+        // symbols: vec![
+        //     "AAPL".to_string(),
+        //     "MSFT".to_string(),
+        //     "NVDA".to_string(),
+        // ],
+
+        // symbols: vec![
+        //     "FAKEA".to_string(),
+        //     "FAKEB".to_string(),
+        //     "FAKEC".to_string(),
+        // ],
+
         // ============================================================
         // RISK LIMITS
         // ============================================================
@@ -195,23 +211,7 @@ async fn main() -> Result<()> {
         }
     }
 
-    // Example equity configuration:
-    //
-    // execution_venue: Venue::Alpaca,
-    //
-    // symbols: vec![
-    //     "AAPL".to_string(),
-    //     "MSFT".to_string(),
-    //     "NVDA".to_string(),
-    // ],
-
-    // symbols: vec![
-    //     "FAKEA".to_string(),
-    //     "FAKEB".to_string(),
-    //     "FAKEC".to_string(),
-    // ],
-
-
+ 
     // ============================================================
     // INITIAL ACCOUNT BALANCE
     // ============================================================
