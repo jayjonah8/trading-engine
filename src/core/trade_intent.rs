@@ -129,12 +129,17 @@ pub struct TradeIntent {
     pub take_profit_percent: Option<f64>,
 
     /// Optional engine-managed normal stop-loss percentage.
+    ///
+    /// Respects and works with stop_loss_delay_secs before triggering.
     pub stop_loss_percent: Option<f64>,
 
     /// Optional engine-managed emergency stop-loss percentage.
     pub emergency_stop_percent: Option<f64>,
 
     /// Optional delay before the normal stop-loss may activate.
+    ///
+    /// Only applies to stop_loss_percent.
+    /// Does not apply to trailing_stop or emergency_stop_percent.
     ///
     /// Example:
     ///
@@ -151,6 +156,7 @@ pub struct TradeIntent {
     /// None disables trailing-stop protection.
     ///
     /// Supports fixed and dynamically tightening trailing stops.
+    /// Does not respect or work with stop_loss_delay_secs.
     pub trailing_stop: Option<TrailingStopConfig>,
 
     /// Event timestamp when the strategy generated the intent.
