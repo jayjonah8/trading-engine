@@ -101,7 +101,7 @@ impl ResearchV1Strategy {
             min_sl_delay: Some(1800), // 30 min
             trade_duration_secs: Some(3_600), // 1 hour
             min_volume_usd: Some(450_000.0), 
-            max_24h_move_pct: None,
+            max_24h_move_pct: Some(15.00),
             track_price_window_while_in_trade: false,
             price_window: PriceWindowTs::new(
                 1800,  // 30 min rolling window

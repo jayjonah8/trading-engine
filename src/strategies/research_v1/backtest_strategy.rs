@@ -90,6 +90,11 @@ use super::backtest_state::ResearchV1BacktestStrategy;
 // * You should try to add remote message for the live version for certain important events inside the strategy.
 //   This can wait until you actually want to go live though.
 
+// ---------------------------------------
+
+// * Consider adding another price window for BTC only and not trading when BTC is making sharp moves.
+//   - The point is to try to prevent market vacuum. Try other things also etc. 
+
 
 
 
@@ -145,7 +150,7 @@ impl ResearchV1BacktestStrategy {
             min_sl_delay: Some(1800), // 30 min
             trade_duration_secs: Some(3_600), // 1 hour
             min_volume_usd: Some(450_000.0), 
-            max_24h_move_pct: None,
+            max_24h_move_pct: Some(15.00),
             track_price_window_while_in_trade: false,
             price_window: PriceWindowTs::new(
                 1800, // 30 min rolling window
