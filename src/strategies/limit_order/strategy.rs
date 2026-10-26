@@ -321,6 +321,8 @@ impl LimitOrderStrategy {
             stop_loss_delay_secs: None,
             trade_duration_secs: None,
 
+            trailing_stop: None,
+
             ts_ms,
         };
 

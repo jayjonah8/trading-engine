@@ -298,6 +298,7 @@ impl Strategy for ResearchV1BacktestStrategy {
                                     emergency_stop_percent: self.emergency_exit_percent,
                                     stop_loss_delay_secs: self.min_sl_delay,
                                     trade_duration_secs: self.trade_duration_secs,
+                                    trailing_stop: None,
                                     ts_ms: trade.timestamp_ms,
                                 };
 
@@ -358,6 +359,7 @@ impl Strategy for ResearchV1BacktestStrategy {
                                     emergency_stop_percent: self.emergency_exit_percent,
                                     stop_loss_delay_secs: self.min_sl_delay,
                                     trade_duration_secs: self.trade_duration_secs,
+                                    trailing_stop: None,
                                     ts_ms: trade.timestamp_ms,
                                 };
 

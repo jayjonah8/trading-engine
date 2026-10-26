@@ -466,6 +466,7 @@ impl Strategy for BaseStrategy {
                             stop_loss_percent: Some(self.exit_loss_percent),
                             emergency_stop_percent: Some(self.emergency_exit_percent),
                             stop_loss_delay_secs: Some(self.min_sl_delay),
+                            trailing_stop: None,
                             trade_duration_secs: if self.enable_trade_duration {
                                 self.trade_duration_secs
                             } else {
@@ -526,6 +527,7 @@ impl Strategy for BaseStrategy {
                             } else {
                                 None
                             },
+                            trailing_stop: None,
                             ts_ms: quote.timestamp_ms,
                         };
 

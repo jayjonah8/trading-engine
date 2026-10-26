@@ -160,6 +160,8 @@ async fn test_handle_open_trade_creates_state_and_command() {
             stop_loss_delay_secs: Some(30),
             trade_duration_secs: Some(3600),
 
+            trailing_stop: None,
+
             ts_ms: 1_789_105_360_000,
         };
 

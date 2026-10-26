@@ -6,6 +6,7 @@ use crate::core::{
         TimeInForce,
     },
     trades::Direction,
+    risk::TrailingStopConfig,
 };
 
 
@@ -145,6 +146,13 @@ pub struct TradeIntent {
     /// `None` means no engine-managed duration exit.
     pub trade_duration_secs: Option<u64>,
 
+    /// Optional engine-managed trailing-stop configuration.
+    ///
+    /// None disables trailing-stop protection.
+    ///
+    /// Supports fixed and dynamically tightening trailing stops.
+    pub trailing_stop: Option<TrailingStopConfig>,
+
     /// Event timestamp when the strategy generated the intent.
     ///
     /// Live trading uses live event time.
@@ -211,6 +219,18 @@ pub enum TradeIntentError {
 
     InvalidEmergencyStopPercent {
         percent: f64,
+    },
+
+    // ============================================================
+    // TRAILING STOP VALIDATION ERROR
+    // ============================================================
+
+    /// Invalid engine-managed trailing-stop configuration.
+    ///
+    /// Contains the specific reason returned by
+    /// TrailingStopConfig::validate().
+    InvalidTrailingStopConfig {
+        reason: String,
     },
 }
 
@@ -403,6 +423,32 @@ impl TradeIntent {
                     }
                 );
             }
+        }
+
+        // ============================================================
+        // VALIDATE TRAILING STOP LOSS
+        // ============================================================
+
+        // Trailing-stop protection is optional.
+        //
+        // None:
+        //     Trailing-stop protection is disabled.
+        //
+        // Some(config):
+        //     Validate all configured profit thresholds
+        //     and trailing distances.
+        //
+        // Invalid configurations return TradeIntentError
+        // without panicking or terminating the engine.
+        // See core/risk/trailing_stop.rs for specific trailing_stop checks.
+        if let Some(trailing_stop) = &self.trailing_stop {
+            trailing_stop
+                .validate()
+                .map_err(|reason| {
+                    TradeIntentError::InvalidTrailingStopConfig {
+                        reason,
+                    }
+                })?;
         }
 
         Ok(())

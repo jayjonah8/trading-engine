@@ -41,7 +41,7 @@ TODO:
   for a perfect short trade opportuniaty and vice versa. 
   - You can also check how mancy times in the past 24hrs an assets has hit a new high or new low price for that day and depending on that
     number you can chose to entire into the trade using the dynamic trailing stop loss for the maximum reverval profit potential. Maybe do something like
-    if it have 2 or 3 new highs/lows, entire into the dynamic trailing stop loss trade.
+    if it have 3 new highs/lows, entire into the dynamic trailing stop loss trade.
 
 * You should check how much the asset is moving during the day (atr) for better profit targets per asset.
 

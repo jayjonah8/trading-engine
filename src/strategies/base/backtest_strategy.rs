@@ -434,6 +434,7 @@ impl Strategy for BaseBacktestStrategy {
                             } else {
                                 None
                             },
+                            trailing_stop: None,
                             ts_ms: trade.timestamp_ms,
                         };
 
@@ -489,6 +490,7 @@ impl Strategy for BaseBacktestStrategy {
                             } else {
                                 None
                             },
+                            trailing_stop: None,
                             ts_ms: trade.timestamp_ms,
                         };
 
