@@ -28,11 +28,6 @@ pub struct PriceWindowTimer {
 // ============================================================
 
 impl PriceWindowTimer {
-
-    // ========================================================
-    // CONSTRUCTOR
-    // ========================================================
-
     pub fn new(
         entry_window_secs: i64,
         debug_mode: bool,
@@ -215,5 +210,33 @@ impl PriceWindowTimer {
             pct_from_max,
             elapsed_secs,
         ))
+    }
+
+
+    // ========================================================
+    // CLEAR SYMBOL PRICE WINDOW
+    // ========================================================
+
+    /// Removes the entire price history for a specific symbol.
+    ///
+    /// Returns true if the symbol had an existing price window.
+    /// Returns false if the symbol was already absent.
+    pub fn clear_symbol(
+        &mut self,
+        symbol: &str,
+    ) -> bool {
+        self.window_prices.remove(symbol).is_some()
+    }
+
+
+    // ========================================================
+    // CLEAR ALL PRICE WINDOWS
+    // ========================================================
+
+    /// Removes all stored symbol price histories.
+    pub fn clear_all(
+        &mut self,
+    ) {
+        self.window_prices.clear();
     }
 }

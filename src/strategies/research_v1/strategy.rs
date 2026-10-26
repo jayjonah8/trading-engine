@@ -199,6 +199,46 @@ impl Strategy for ResearchV1Strategy {
                     );
                 }
 
+                // ====================================================
+                // ACTIVE STRATEGY TRADE CHECK
+                // ====================================================
+                
+                // Check whether this strategy already has an active
+                // trade for the current symbol.
+                let has_active_trade = {
+                    let view = self.rx_view.borrow();
+
+                    view.trades.has_active_trade_for_strategy_symbol(
+                        self.name(),
+                        &ev.symbol,
+                    )
+                };
+
+                // ====================================================
+                // PRICE WINDOW TRACKING DURING ACTIVE TRADES
+                // ====================================================
+
+                // Clear the symbol's price history and stop tracking
+                // while this strategy has an active trade, if disabled.
+                if has_active_trade && !self.track_price_window_while_in_trade {
+
+                    let cleared =
+                        self.price_window.clear_symbol(&ev.symbol);
+
+                    if cleared {
+                        print_log(
+                            self.debug_mode,
+                            false,
+                            format!(
+                                "[RESEARCH V1 LIVE] PRICE WINDOW CLEARED | symbol={} | active_trade=true",
+                                ev.symbol,
+                            ),
+                        );
+                    }
+
+                    return;
+                }
+
                 // Update per asset price tracking window.
                 let result = self.price_window
                     .update_price_window_extreme_diffs_ts(
@@ -247,7 +287,10 @@ impl Strategy for ResearchV1Strategy {
                         // New entries require:
                         // - Individual asset trading eligibility.
                         // - Market-wide black swan protection is inactive.
-                        if can_trade && !self.black_swan_protection.is_halted() {
+                        if can_trade 
+                            && !self.black_swan_protection.is_halted() 
+                            && !has_active_trade
+                        {
 
                             // ====================================================
                             // SHORT ENTRY / TRENDING LONG ENTRY

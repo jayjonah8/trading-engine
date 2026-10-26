@@ -50,15 +50,6 @@ use super::shared::MarketRegime;
 /* 
 // TODO:
 
-* For track_price_window_while_in_trade add helper function
-  inside the toolbox feature that clears the assets window.
-  Do this for both versions of the price window feature.
-  - Also add another helper function to both that clear all
-    assets price windows.
-
-* Find the best way to check if this strategy is already inside and open trades since we only want the strategy
-  to enter into a simple one time. The engine should already make this easy.
-
 * Create a toolbox or something for the engine where you can close trades if they are older than a certain points.
   - This should be flexible so as not to close the trades from other strategies that have londer durations if need be. 
   - You might need to add the mapping logic where a strategy can keep trade of its trades (strategy trade identifiery -> Trade Id).
@@ -240,6 +231,46 @@ impl Strategy for ResearchV1BacktestStrategy {
                     );
                 }
 
+                // ====================================================
+                // ACTIVE STRATEGY TRADE CHECK
+                // ====================================================
+
+                // Check whether this strategy already has an active
+                // trade for the current symbol.
+                let has_active_trade = {
+                    let view = self.rx_view.borrow();
+
+                    view.trades.has_active_trade_for_strategy_symbol(
+                        self.name(),
+                        &ev.symbol,
+                    )
+                };
+
+                // ====================================================
+                // PRICE WINDOW TRACKING DURING ACTIVE TRADES
+                // ====================================================
+
+                // Clear the symbol's price history and stop tracking
+                // while this strategy has an active trade, if disabled.
+                if has_active_trade && !self.track_price_window_while_in_trade {
+
+                    let cleared =
+                        self.price_window.clear_symbol(&ev.symbol);
+
+                    if cleared {
+                        print_log(
+                            self.debug_mode,
+                            false,
+                            format!(
+                                "[RESEARCH V1 BACKTEST] PRICE WINDOW CLEARED | symbol={} | active_trade=true",
+                                ev.symbol,
+                            ),
+                        );
+                    }
+
+                    return;
+                }
+
                 // Update per asset price tracking window.
                 let result = self.price_window
                     .update_price_window_extreme_diffs_ts(
@@ -285,10 +316,10 @@ impl Strategy for ResearchV1BacktestStrategy {
                         // TRADING ELIGIBILITY
                         // ====================================================
 
-                        // New entries require:
-                        // - Individual asset trading eligibility.
-                        // - Market-wide black swan protection is inactive.
-                        if can_trade && !self.black_swan_protection.is_halted() {
+                        if can_trade 
+                            && !self.black_swan_protection.is_halted() 
+                            && !has_active_trade
+                        {
 
                             // ====================================================
                             // SHORT ENTRY / TRENDING LONG ENTRY

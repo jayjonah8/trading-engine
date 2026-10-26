@@ -66,7 +66,7 @@ impl Trades {
     }
 
 
-   /// Returns true if the given strategy already has an active logical trade
+    /// Returns true if the given strategy already has an active logical trade
     /// for the specified symbol.
     ///
     /// `Opening`, `Open`, and `Closing` trades are all considered active.
