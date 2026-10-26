@@ -111,10 +111,6 @@ pub struct Config {
     // Flatten all live trades when starting the bot for the selected venue
     pub close_trades_on_startup: bool,
 
-    // Maybe delete later.
-    /// Minimum number of seconds a trade must remain open before it can be exited.
-    pub min_trade_age_before_exit_secs: u64,
-
     /// Starting account balance used when running simulation or backtests.
     pub custom_starting_balance: f64,
 

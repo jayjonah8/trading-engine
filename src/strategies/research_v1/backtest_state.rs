@@ -17,6 +17,7 @@ use crate::{
     market::candle_history::CandleHistory,
 
     toolbox::price_window_ts::PriceWindowTs,
+    toolbox::TradeCooldown,
     toolbox::black_swan_protection::BlackSwanProtection,
 };
 
@@ -84,4 +85,7 @@ pub struct ResearchV1BacktestStrategy {
 
     // black swan event protection (halts trading during extreme moves across all assets)
     pub black_swan_protection: BlackSwanProtection,
+
+    // Tracks per-symbol trade entry cooldowns.
+    pub trade_cooldown: TradeCooldown,
 }

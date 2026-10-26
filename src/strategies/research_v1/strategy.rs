@@ -39,6 +39,7 @@ use crate::{
     strategies::Strategy,
 
     toolbox::price_window_ts::PriceWindowTs,
+    toolbox::TradeCooldown,
     toolbox::black_swan_protection::BlackSwanProtection,
 
     shared::print_log,
@@ -114,6 +115,7 @@ impl ResearchV1Strategy {
                 8.0,    // Resume when average movement falls to 8%.
                 15,     // Minimum number of assets required.
             ),
+            trade_cooldown: TradeCooldown::new(200),
         }
     }
 }
@@ -202,7 +204,7 @@ impl Strategy for ResearchV1Strategy {
                 // ====================================================
                 // ACTIVE STRATEGY TRADE CHECK
                 // ====================================================
-                
+
                 // Check whether this strategy already has an active
                 // trade for the current symbol.
                 let has_active_trade = {
@@ -290,6 +292,10 @@ impl Strategy for ResearchV1Strategy {
                         if can_trade 
                             && !self.black_swan_protection.is_halted() 
                             && !has_active_trade
+                            && self.trade_cooldown.can_trade(
+                                &ev.symbol,
+                                quote.timestamp_ms,
+                            )
                         {
 
                             // ====================================================
@@ -353,13 +359,15 @@ impl Strategy for ResearchV1Strategy {
                                 // SEND TRADE INTENT
                                 // ====================================================
 
-                                // TODO: Enable once execution is ready.
-                                //
                                 // let _ = self.tx_engine.send(
                                 //     EngineEvent::OpenTrade(intent)
                                 // );
 
-                                let _ = intent;
+                                // Record the trade submission cooldown.
+                                self.trade_cooldown.record_trade(
+                                    &ev.symbol,
+                                    quote.timestamp_ms,
+                                );
                             }
 
                             // ====================================================
@@ -423,13 +431,15 @@ impl Strategy for ResearchV1Strategy {
                                 // SEND TRADE INTENT
                                 // ====================================================
 
-                                // TODO: Enable once execution is ready.
-                                //
                                 // let _ = self.tx_engine.send(
                                 //     EngineEvent::OpenTrade(intent)
                                 // );
 
-                                let _ = intent;
+                                // Record the trade submission cooldown.
+                                self.trade_cooldown.record_trade(
+                                    &ev.symbol,
+                                    quote.timestamp_ms,
+                                );
                             }
                         }
                     }

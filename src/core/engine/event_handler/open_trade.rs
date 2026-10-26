@@ -624,7 +624,7 @@ impl Engine {
         self.state.orders.insert(order.clone());
         self.state.risk.reservations.insert(reservation);
 
-
+        
         // ============================================================
         // SUBMIT ORDER
         // ============================================================

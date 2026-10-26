@@ -39,6 +39,7 @@ use crate::{
     strategies::Strategy,
 
     toolbox::price_window_ts::PriceWindowTs,
+    toolbox::TradeCooldown,
     toolbox::black_swan_protection::BlackSwanProtection,
 
     shared::print_log,
@@ -51,17 +52,20 @@ use super::shared::MarketRegime;
 // TODO:
 
 * Create a toolbox or something for the engine where you can close trades if they are older than a certain points.
-  - This should be flexible so as not to close the trades from other strategies that have londer durations if need be. 
-  - You might need to add the mapping logic where a strategy can keep trade of its trades (strategy trade identifiery -> Trade Id).
-    Then you can look into the engine and close only the trades this strategy have open instead of all trades etc. 
-  - If it makes sense, put some of this logic inside a toolbox feature so it can be reused in any strategy. 
+  - This should be flexible so as not to close the trades from other strategies that have londer trades durations if need be. 
 
 * Test on 3 months of real data to see its performance.
+  - Check your AWS bill first to make sure your currect data is not too expensive.
   - Create an engine helper function that grabs all the symbols used inside the backtest data to pass them through the backtest run.
     This way you are able to trade every assest inside the backtest run just like you would in real life.
   - Then get another 3 months for a total of 6 months. 
   - Try to get another different 6 months of older data during a bear market so we can backtest bull and bear markets and see if the bot performs
     we in both markets. 
+
+* Start adding the regime change logic to detect when the market should. be trending etc. Mabye a single regime_manager function
+  can handle updating the proper regime when it needs to be updated.
+  - Use your market wide growth indicators and past know on market behavior to get this right and backtest several versions.
+  - Mabye add a market wide atr indicator if you need to. 
 
 ---------------------------------------
 
@@ -77,6 +81,7 @@ use super::shared::MarketRegime;
 
 * When you have good initial results, add the weighted randomness to the bot
   for more dynamic behavior accross all settings. 
+  - The dynamic randomness can be a mode you turn off and on. 
 
 * Add a toolbox feature to update leverage continously for all assets as a pollers so leverage stays up to date.
   - Have a loop mean you dont have to update leverage again when a new assets qualifies for trading.    
@@ -167,6 +172,7 @@ impl ResearchV1BacktestStrategy {
                 8.0,    // Resume when average movement falls to 8%.
                 15,     // Minimum number of assets required.
             ),
+            trade_cooldown: TradeCooldown::new(200),
         }
     }
 }
@@ -219,7 +225,7 @@ impl Strategy for ResearchV1BacktestStrategy {
                 if self.debug_mode {
                     print_log(
                         self.debug_mode,
-                        false,
+                        true,
                         format_args!(
                             "[RESEARCH V1 BACKTEST TRADE][{}] \
                             price=${:.4} | size={} | timestamp_ms={}",
@@ -319,6 +325,10 @@ impl Strategy for ResearchV1BacktestStrategy {
                         if can_trade 
                             && !self.black_swan_protection.is_halted() 
                             && !has_active_trade
+                            && self.trade_cooldown.can_trade(
+                                &ev.symbol,
+                                trade.timestamp_ms,
+                            )
                         {
 
                             // ====================================================
@@ -382,13 +392,15 @@ impl Strategy for ResearchV1BacktestStrategy {
                                 // SEND TRADE INTENT
                                 // ====================================================
 
-                                // TODO: Enable once execution is ready.
-                                //
                                 // let _ = self.tx_engine.send(
                                 //     EngineEvent::OpenTrade(intent)
                                 // );
 
-                                let _ = intent;
+                                // Record the trade submission cooldown.
+                                self.trade_cooldown.record_trade(
+                                    &ev.symbol,
+                                    trade.timestamp_ms,
+                                );
                             }
 
                             // ====================================================
@@ -452,13 +464,15 @@ impl Strategy for ResearchV1BacktestStrategy {
                                 // SEND TRADE INTENT
                                 // ====================================================
 
-                                // TODO: Enable once execution is ready.
-                                //
                                 // let _ = self.tx_engine.send(
                                 //     EngineEvent::OpenTrade(intent)
                                 // );
 
-                                let _ = intent;
+                                // Record the trade submission cooldown.
+                                self.trade_cooldown.record_trade(
+                                    &ev.symbol,
+                                    trade.timestamp_ms,
+                                );
                             }
                         }
                     }

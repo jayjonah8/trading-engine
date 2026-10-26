@@ -75,8 +75,6 @@ async fn test_handle_open_trade_creates_state_and_command() {
     cfg.max_gross_notional = Some(50_000.0);
     cfg.max_symbol_notional = Some(20_000.0);
 
-    cfg.min_trade_age_before_exit_secs = 1;
-
     cfg.custom_starting_balance = 100_000.0;
 
     cfg.close_trades_on_startup = false;
