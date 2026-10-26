@@ -22,7 +22,7 @@ use crate::{
 
 
 pub struct ResearchV1BacktestStrategy {
-       // Master switch to enable or disable the strategy.
+    // Master switch to enable or disable the strategy.
     pub enable_strategy: bool,
 
     // Master switch to enable or disable strategy debug logging.

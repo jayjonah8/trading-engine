@@ -1152,8 +1152,9 @@ async fn main() -> Result<()> {
     // The same StrategyKind identifies a strategy family while the factory
     // chooses the live or historical implementation.
     let enabled = vec![
-        StrategyKind::ResearchV1,
+        // StrategyKind::ResearchV1,
         // StrategyKind::ResearchV2,
+        StrategyKind:: ResearchV3,
         // StrategyKind::Base,
         // StrategyKind::Indicator,
         // StrategyKind::MeanReversion,

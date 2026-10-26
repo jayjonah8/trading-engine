@@ -16,6 +16,7 @@ use crate::{
 
     market::candle_history::CandleHistory,
 
+    toolbox::price_window_ts::PriceWindowTs,
     toolbox::black_swan_protection::BlackSwanProtection,
 };
 
@@ -33,10 +34,13 @@ pub struct ResearchV2Strategy {
     // Receiver providing the latest shared engine state.
     pub(crate) rx_view: watch::Receiver<Arc<EngineView>>,
 
-    // Amount of USD allocated to each trade before leverage.
+    // Amount of USD allocated to each trade before leverage (e.g. 100.0 = $100)
     pub trade_amount_usd: f64,
 
-    // Profit percentage at which the position should be closed.
+    // Minimum percentage price movement required to trigger a trade entry.
+    pub entry_percent: Option<f64>,
+
+    // Profit percentage at which the position should be closed (e.g. 3.0 = 3%).
     pub exit_profit_percent: Option<f64>,
 
     // Loss percentage at which the position should be closed.
@@ -48,22 +52,31 @@ pub struct ResearchV2Strategy {
     // Duration in seconds to delay hard stop-loss.
     pub min_sl_delay: Option<u64>,
 
-    // Time limit in seconds until an open trade is automatically closed.
+    // Time limit in seconds until an open trade is auto closed.
     pub trade_duration_secs: Option<u64>,
 
     // Minimum USD trading volume required to allow a trade entry.
-    pub min_volume_usd: Option<f64>,
+    // For a rolling-volume filter, accumulate this value over a defined time window rather than indefinitely.
+    pub min_volume_usd: Option<f64>,    
 
     // Maximum allowed 24-hour price movement percentage.
     // None = no limit.
     pub max_24h_move_pct: Option<f64>,
 
+    // true  = keep tracking the symbol's rolling price window while a trade is open.
+    // false = clear that symbol's rolling window and stop tracking it until the trade is closed.
+    pub track_price_window_while_in_trade: bool,
+
+    // Timestamp-based rolling price window.
+    pub price_window: PriceWindowTs,
+
     // Closed multi-timeframe candle history.
     pub candle_history: CandleHistory,
 
-    // Cached trading eligibility for each symbol.
+    // Cached trading eligibility for each symbol (24hr volume checks etc).
+    // Updated whenever a completed one-minute candle arrives.
     pub can_trade: HashMap<String, bool>,
 
-    // Market-wide black swan protection.
+    // black swan event protection (halts trading during extreme moves across all assets)
     pub black_swan_protection: BlackSwanProtection,
 }
