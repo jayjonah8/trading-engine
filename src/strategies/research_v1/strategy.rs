@@ -45,6 +45,7 @@ use crate::{
 };
 
 use super::state::ResearchV1Strategy;
+use super::shared::MarketRegime;
 
 
 
@@ -96,6 +97,7 @@ impl ResearchV1Strategy {
             trade_duration_secs: Some(3_600), // 1 hour
             min_volume_usd: Some(450_000.0), 
             max_24h_move_pct: Some(15.00),
+            market_regime: MarketRegime::MeanReversion,
             track_price_window_while_in_trade: false,
             price_window: PriceWindowTs::new(
                 1800,  // 30 min rolling window
@@ -248,15 +250,22 @@ impl Strategy for ResearchV1Strategy {
                         if can_trade && !self.black_swan_protection.is_halted() {
 
                             // ====================================================
-                            // SHORT ENTRY
+                            // SHORT ENTRY / TRENDING LONG ENTRY
                             // ====================================================
 
                             if pct_from_min >= entry_percent {
 
+                                // Reverse trade direction when the market
+                                // regime switches from MeanReversion to Trending.
+                                let direction = match self.market_regime {
+                                    MarketRegime::MeanReversion => Direction::Short,
+                                    MarketRegime::Trending => Direction::Long,
+                                };
+
                                 let intent = TradeIntent {
                                     strategy_id: self.name().to_string(),
                                     symbol: ev.symbol.clone(),
-                                    direction: Direction::Short,
+                                    direction,
                                     signal_px: mid,
                                     target_notional: self.trade_amount_usd,
                                     order_type: OrderType::Market,
@@ -274,7 +283,7 @@ impl Strategy for ResearchV1Strategy {
                                 };
 
                                 // ====================================================
-                                // SHORT ENTRY DEBUG
+                                // ENTRY DEBUG
                                 // ====================================================
 
                                 if self.debug_mode {
@@ -282,15 +291,17 @@ impl Strategy for ResearchV1Strategy {
                                         self.debug_mode,
                                         true,
                                         format_args!(
-                                            "[RESEARCH V1 LIVE SHORT ENTRY][{}] \
+                                            "[RESEARCH V1 LIVE {:?} ENTRY][{}] \
                                             mid=${:.4} | \
                                             above_min={:.3}% >= {:.3}% | \
-                                            amount=${:.2}",
+                                            amount=${:.2} | regime={:?}",
+                                            direction,
                                             ev.symbol,
                                             mid,
                                             pct_from_min,
                                             entry_percent,
                                             self.trade_amount_usd,
+                                            self.market_regime,
                                         ),
                                     );
                                 }
@@ -309,15 +320,22 @@ impl Strategy for ResearchV1Strategy {
                             }
 
                             // ====================================================
-                            // LONG ENTRY
+                            // LONG ENTRY / TRENDING SHORT ENTRY
                             // ====================================================
 
                             else if pct_from_max >= entry_percent {
 
+                                // Reverse trade direction when the market
+                                // regime switches from MeanReversion to Trending.
+                                let direction = match self.market_regime {
+                                    MarketRegime::MeanReversion => Direction::Long,
+                                    MarketRegime::Trending => Direction::Short,
+                                };
+
                                 let intent = TradeIntent {
                                     strategy_id: self.name().to_string(),
                                     symbol: ev.symbol.clone(),
-                                    direction: Direction::Long,
+                                    direction,
                                     signal_px: mid,
                                     target_notional: self.trade_amount_usd,
                                     order_type: OrderType::Market,
@@ -335,7 +353,7 @@ impl Strategy for ResearchV1Strategy {
                                 };
 
                                 // ====================================================
-                                // LONG ENTRY DEBUG
+                                // ENTRY DEBUG
                                 // ====================================================
 
                                 if self.debug_mode {
@@ -343,15 +361,17 @@ impl Strategy for ResearchV1Strategy {
                                         self.debug_mode,
                                         true,
                                         format_args!(
-                                            "[RESEARCH V1 LIVE LONG ENTRY][{}] \
+                                            "[RESEARCH V1 LIVE {:?} ENTRY][{}] \
                                             mid=${:.4} | \
                                             below_max={:.3}% >= {:.3}% | \
-                                            amount=${:.2}",
+                                            amount=${:.2} | regime={:?}",
+                                            direction,
                                             ev.symbol,
                                             mid,
                                             pct_from_max,
                                             entry_percent,
                                             self.trade_amount_usd,
+                                            self.market_regime,
                                         ),
                                     );
                                 }

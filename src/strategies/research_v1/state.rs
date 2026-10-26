@@ -20,6 +20,8 @@ use crate::{
     toolbox::black_swan_protection::BlackSwanProtection,
 };
 
+use super::shared::MarketRegime;
+
 
 pub struct ResearchV1Strategy {
     // Master switch to enable or disable the strategy.
@@ -62,6 +64,9 @@ pub struct ResearchV1Strategy {
     // Maximum allowed 24-hour price movement percentage.
     // None = no limit.
     pub max_24h_move_pct: Option<f64>,
+
+    // Current market regime determining trade direction.
+    pub market_regime: MarketRegime,
 
     // true  = keep tracking the symbol's rolling price window while a trade is open.
     // false = clear that symbol's rolling window and stop tracking it until the trade is closed.

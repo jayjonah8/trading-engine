@@ -2,6 +2,7 @@ mod state;
 mod backtest_state;
 mod strategy;
 mod backtest_strategy;
+mod shared;
 
 // Strategy struct.
 pub use state::ResearchV1Strategy;
