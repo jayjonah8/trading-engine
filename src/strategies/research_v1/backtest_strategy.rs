@@ -46,54 +46,65 @@ use crate::{
 
 use super::backtest_state::ResearchV1BacktestStrategy;
 
+/* 
 // TODO:
 
-// * Add the logic on when a trade is flipped (trending). Should be simple. Maybe name it trending_mode
+* Add the logic on when a trade is flipped (trending). Should be simple. Maybe name it trending_mode.
 
-// * Add an early profit tax toolbox feature.
-//   - Can have normal profit taking.
-//   - Can also have slow version profit taking.
-//   - See old bot for implementation details.
-//   - Can use close all trades engine event message. 
-//   - Make sure its not getting called multiple times when it should not. 
+* For track_price_window_while_in_trade add helper function
+  inside the toolbox feature that clears the assets window.
+  Do this for both versions of the price window feature.
+  - Also add another helper function to both that clear all
+    assets price windows.
 
-// * Start implementing the continuous multi-sync logic as a toolbox feature.
+* Find the best way to check if this strategy is already inside and open trades since we only want the strategy
+  to enter into a simple one time. The engine should already make this easy.
 
-// * Test on 3 months of real data to see its performance.
+* Create a toolbox or something for the engine where you can close trades if they are older than a certain points.
+  - This should be flexible so as not to close the trades from other strategies that have londer durations if need be. 
+  - You might need to add the mapping logic where a strategy can keep trade of its trades (strategy trade identifiery -> Trade Id).
+    Then you can look into the engine and close only the trades this strategy have open instead of all trades etc. 
+  - If it makes sense, put some of this logic inside a toolbox feature so it can be reused in any strategy. 
 
-// * When you have good initial results, add the weighted randomness to the bot
-//   for more dynamic behavior accross all settings. 
+* Test on 3 months of real data to see its performance.
+  - Create an engine helper function that grabs all the symbols used inside the backtest data to pass them through the backtest run.
+    This way you are able to trade every assest inside the backtest run just like you would in real life.
+  - Then get another 3 months for a total of 6 months. 
+  - Try to get another different 6 months of older data during a bear market so we can backtest bull and bear markets and see if the bot performs
+    we in both markets. 
 
-// * For track_price_window_while_in_trade add helper function
-//   inside the toolbool feature that clears the assets window.
-//   Do this for both versions of the price window feature.
-//   - Also add another helper function to both that clear all
-//     assets price windows.
+---------------------------------------
 
-// * Make sure this strategy is not opening another trade for the same asset when its already in a trade.
-//   - Clearing the price tracking window does this, but this should have its own explicit check which should
-//     be easy since I think the engine allows for this already inside the risk settings.
+* Add an early profit tax toolbox feature.
+- Can have normal profit taking.
+- Can also have slow version profit taking.
+- See old bot for implementation details.
+- Can use close all trades engine event message. 
+- Make sure its not getting called multiple times when it should not. 
 
-// * Add the runner assets detection logic to catch symbol with large movement during a day.
-//   - You can use the r2 and 24hr percent change to see the smoothness and likely trade in whatever 
-//     trending direction the asset is moving towards. Can add only a light weight dynamic logic to this also if you want. 
-//   - Make this a mode you can turn on and off. 
+* Start implementing the continuous multi-sync logic as a toolbox feature only if you need to
+  since the goal is to be able to detect the trending mode without using multi-sync logic. 
 
-// * Add a toolbox feature to update leverage continously for all assets as a pollers so leverage stays up to date.
-//   - Have a loop mean you dont have to update leverage again when a new assets qualifies for trading.    
-//   - Add a helper api function that does this on bot start.
+* When you have good initial results, add the weighted randomness to the bot
+  for more dynamic behavior accross all settings. 
 
-// * Add an auto compounding tool box that takes in the trade_amount_usd etc and performs
-//   auto compounding as the "real" avenue ccount account is growing. See old bot for logic details.
-//   - You should be able to pick the compounding interval (1 day, 3 days etc).
+* Add a toolbox feature to update leverage continously for all assets as a pollers so leverage stays up to date.
+  - Have a loop mean you dont have to update leverage again when a new assets qualifies for trading.    
+  - Add a helper api function that does this on bot start.
 
-// * You should try to add remote message for the live version for certain important events inside the strategy.
-//   This can wait until you actually want to go live though.
+* Add an auto compounding toolbox that takes in the trade_amount_usd etc and performs
+  auto compounding as the "real" avenue ccount account is growing. See old bot for logic details.
+  - You should be able to pick the compounding interval (1 day, 3 days etc).
 
-// ---------------------------------------
+* You should try to add remote message for the live version for certain important events inside the strategy.
+  This can wait until you actually want to go live though.
 
-// * Consider adding another price window for BTC only and not trading when BTC is making sharp moves.
-//   - The point is to try to prevent market vacuum. Try other things also etc. 
+---------------------------------------
+
+* Consider adding another price window for BTC only and not trading when BTC is making sharp moves.
+  - The point is to try to prevent market vacuum. Try other things also etc. 
+
+*/
 
 
 
@@ -119,12 +130,6 @@ use super::backtest_state::ResearchV1BacktestStrategy;
 // momentum-aligned trades. This provides a mechanism for adapting
 // to changing market regimes rather than relying exclusively
 // on a single directional trading approach.
-//
-// Additional specialized logic is intended for high-momentum
-// assets ("runners") exhibiting unusually large 24-hour price
-// movements. These assets may require distinct entry criteria,
-// directional bias, and risk-management parameters to account
-// for elevated volatility and persistent directional momentum.
 // ============================================================
 
 

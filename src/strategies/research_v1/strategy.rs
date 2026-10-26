@@ -70,12 +70,6 @@ use super::state::ResearchV1Strategy;
 // momentum-aligned trades. This provides a mechanism for adapting
 // to changing market regimes rather than relying exclusively
 // on a single directional trading approach.
-//
-// Additional specialized logic is intended for high-momentum
-// assets ("runners") exhibiting unusually large 24-hour price
-// movements. These assets may require distinct entry criteria,
-// directional bias, and risk-management parameters to account
-// for elevated volatility and persistent directional momentum.
 // ============================================================
 
 

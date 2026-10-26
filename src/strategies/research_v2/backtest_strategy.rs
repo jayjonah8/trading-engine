@@ -55,6 +55,7 @@ TODO:
   the market was moving in the opposite way for most of the day.
 * You should maybe only enter a trade also by first checking that the market is reversing after being over bought/sold for
   most of the day. You can see this by look at the candle data. 
+* The day should have atleast 2 higher peaks or troughs with a total move minimun from start to finish so it ignore a bunch of weak signals. 
 
 ----
 
