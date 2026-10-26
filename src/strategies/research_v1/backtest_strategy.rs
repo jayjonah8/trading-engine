@@ -99,6 +99,10 @@ use super::backtest_state::ResearchV1BacktestStrategy;
 * You should try to add remote message for the live version for certain important events inside the strategy.
   This can wait until you actually want to go live though.
 
+* Add the engine database save trade records in collections. 
+  - Consider having a Live, Paper, Simulation collection.
+  - Also add the option to save the backtest output when everything if fully done.
+
 ---------------------------------------
 
 * Consider adding another price window for BTC only and not trading when BTC is making sharp moves.

@@ -51,6 +51,8 @@ TODO:
 
 * Start off only trading BTC with this strategy. 
 
+* Should check for a smooth r2 before entering into a trade.
+
 * Use a rolling price window since these move actually usually start off with a major price trend reversial "after" 
   the market was moving in the opposite way for most of the day.
 * You should maybe only enter a trade also by first checking that the market is reversing after being over bought/sold for
