@@ -38,6 +38,11 @@ use crate::core::trades::Direction;
 // When the stop is breached, the engine requests a canonical
 // CloseTrade event using market execution.
 //
+//
+// WARNING!! Unlike the normal stop_loss_percent, which respects
+// stop_loss_delay_secs, trailing stops activate immediately
+// and are not affected by the stop-loss delay.
+//
 // ============================================================
 
 
