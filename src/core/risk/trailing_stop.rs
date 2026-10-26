@@ -3,6 +3,7 @@
 use crate::core::trades::Direction;
 
 
+
 // ============================================================
 // TRAILING STOP LOSS
 // ============================================================
@@ -38,6 +39,147 @@ use crate::core::trades::Direction;
 // CloseTrade event using market execution.
 //
 // ============================================================
+
+
+
+// ============================================================
+// EXAMPLE USAGE — BTC DYNAMIC TRAILING STOP
+// ============================================================
+//
+// Example:
+//     Asset: BTC
+//     Direction: Long
+//     Entry price: $100,000
+//
+// Strategy configuration:
+//
+// let trailing_stop = TrailingStopConfig {
+//     levels: vec![
+//         TrailingStopLevel {
+//             profit_percent: 0.0,
+//             trail_percent: 2.0,
+//         },
+//         TrailingStopLevel {
+//             profit_percent: 3.0,
+//             trail_percent: 1.5,
+//         },
+//         TrailingStopLevel {
+//             profit_percent: 5.0,
+//             trail_percent: 1.0,
+//         },
+//         TrailingStopLevel {
+//             profit_percent: 8.0,
+//             trail_percent: 0.5,
+//         },
+//     ],
+// };
+//
+// How it works:
+//
+// BTC entry: $100,000
+//
+// Maximum PnL       BTC Best Price      Trailing Distance     Stop Price
+// -----------------------------------------------------------------------
+//      0%              $100,000               2.0%             $98,000
+//     +3%              $103,000               1.5%            $101,455
+//     +5%              $105,000               1.0%            $103,950
+//     +8%              $108,000               0.5%            $107,460
+//
+// The trailing stop automatically tightens as BTC reaches
+// higher profit thresholds.
+//
+// Example:
+//
+// 1. BTC enters at $100,000.
+// 2. BTC rises to $105,000 (+5%).
+// 3. The trailing stop tightens to 1% below $105,000.
+// 4. The protective stop becomes $103,950.
+// 5. BTC falls to $103,950.
+// 6. The engine triggers a market exit.
+//
+// Result:
+//     Entry:        $100,000
+//     Exit trigger: $103,950
+//     Gross gain:   +3.95%
+//
+// Actual execution price may differ because of slippage,
+// spread, fees, and market movement.
+//
+// IMPORTANT:
+//
+// - All percentages are based on underlying BTC price changes.
+// - Leverage does not change trailing-stop calculations.
+// - Each Trade maintains its own independent trailing-stop state.
+// - Protective stops never move backward.
+// - The engine evaluates stops on incoming market-price ticks.
+// - A stop trigger submits a market exit; it does not guarantee
+//   execution at the exact stop price.
+//
+// ============================================================
+
+
+
+// ============================================================
+// TRAILING STOP VALIDATION — QUICK REFERENCE
+// ============================================================
+//
+// CONFIGURATION:
+//
+// 1. At least one trailing-stop level is required.
+//
+// 2. profit_percent must be finite (no NaN or infinity).
+//
+// 3. profit_percent must be >= 0%.
+//
+// 4. trail_percent must be finite (no NaN or infinity).
+//
+// 5. trail_percent must be > 0% and < 100%.
+//
+// 6. Profit thresholds must be strictly increasing.
+//    Valid:   0%, 3%, 5%, 8%
+//    Invalid: 0%, 5%, 3%, 8%
+//
+// 7. Trailing distances must be non-increasing.
+//    Valid:   2%, 1.5%, 1%, 0.5%
+//    Invalid: 2%, 3%, 1%, 0.5%
+//
+// RUNTIME:
+//
+// 8. Entry price must be finite and > 0.
+//
+// 9. Market price must be finite and > 0.
+//
+// 10. Favorable-price watermark must exist, be finite,
+//     and be > 0.
+//
+// 11. Existing protective stop must be finite and > 0.
+//
+// 12. Calculated unrealized PnL must be finite.
+//
+// 13. Calculated protective stop must be finite and > 0.
+//
+// PROTECTION RULES:
+//
+// 14. A 0% first threshold activates protection immediately.
+//
+// 15. A positive first threshold delays activation until
+//     the required maximum unrealized PnL is reached.
+//
+// 16. Long trailing stops can only increase.
+//
+// 17. Short trailing stops can only decrease.
+//
+// 18. Existing stops are checked before updating state.
+//
+// 19. State updates are committed only after successful
+//     calculations and validation.
+//
+// 20. Validation failures return Result::Err.
+//     They do not panic or terminate the engine.
+//
+// ============================================================
+
+
 
 
 // ============================================================
