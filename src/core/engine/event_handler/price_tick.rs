@@ -126,6 +126,30 @@ impl Engine {
             return;
         }
 
+        
+        // ============================================================
+        // REJECT OUT-OF-ORDER PRICE TICKS
+        // ============================================================
+
+        // Ignore prices older than the latest accepted tick.
+        // Equal timestamps are allowed to preserve tick-level data.
+        if let Some(last_price) = self.last_px.get(&symbol) {
+            if ts_ms < last_price.ts_ms {
+                print_log(
+                    self.debug_mode,
+                    false,
+                    format!(
+                        "[ENGINE RISK] STALE PRICE TICK | symbol={} | ts_ms={} | latest_ts_ms={}",
+                        symbol,
+                        ts_ms,
+                        last_price.ts_ms,
+                    ),
+                );
+
+                return;
+            }
+        }
+
 
         // ============================================================
         // INITIALIZE BACKTEST START DATE
@@ -165,12 +189,9 @@ impl Engine {
         // COLLECT CLOSE REQUESTS
         // ============================================================
 
-        // Collect requests first rather than sending CloseTrade while
-        // iterating over Trades.
-        //
-        // The resulting CloseTrade event will later mutate Trade / Order /
-        // Risk state, so keeping this pass read-only avoids borrow conflicts
-        // and keeps the risk evaluation deterministic.
+        // Update trailing-stop state during trade iteration.
+        // Collect close requests and emit them afterward to avoid
+        // borrow conflicts and preserve the canonical execution flow.
         let mut trades_to_close:
             Vec<(TradeId, String)> =
             Vec::new();
@@ -181,7 +202,7 @@ impl Engine {
         // ============================================================
 
         for (trade_id, trade) in
-            self.state.trades.iter()
+            self.state.trades.iter_mut()
         {
             // This price tick only applies to this symbol.
             if trade.symbol != symbol {
@@ -406,6 +427,115 @@ impl Engine {
                         );
 
                         continue;
+                    }
+                }
+            }
+
+            // ========================================================
+            // TRAILING STOP LOSS
+            // ========================================================
+
+            // Trailing-stop protection is optional.
+            //
+            // None:
+            //     Trailing-stop protection is disabled.
+            //
+            // Some(state):
+            //     Evaluate the current market price against the
+            //     Trade's independently maintained protective stop.
+            //
+            // The trailing-stop calculation:
+            //
+            // 1. Checks the existing protective stop first.
+            // 2. Returns a close signal if the stop was breached.
+            // 3. Otherwise updates the favorable-price watermark.
+            // 4. Updates maximum unrealized PnL.
+            // 5. Activates or tightens the trailing stop as needed.
+            //
+            // All calculations use the confirmed average entry price
+            // and unleveraged underlying price movements.
+            if let Some(trailing_stop) = trade.trailing_stop.as_mut() {
+
+                // ====================================================
+                // SKIP UNINITIALIZED TRAILING STOP
+                // ====================================================
+
+                // The configuration is stored when the Trade is created,
+                // but runtime state is initialized after entry execution.
+                //
+                // We will connect initialization to the fill lifecycle
+                // in a later step.
+                if trailing_stop.best_px.is_none() {
+
+                    print_log(
+                        self.debug_mode,
+                        false,
+                        format!(
+                            "[ENGINE RISK] TRAILING STOP NOT INITIALIZED | trade_id={} | symbol={}",
+                            trade.id,
+                            trade.symbol,
+                        ),
+                    );
+
+                } else {
+
+                    // ====================================================
+                    // EVALUATE TRAILING STOP
+                    // ====================================================
+
+                    match trailing_stop.update(
+                        trade.direction,
+                        entry_px,
+                        px,
+                    ) {
+                        // ====================================================
+                        // TRAILING STOP TRIGGERED
+                        // ====================================================
+
+                        Ok(true) => {
+                            trades_to_close.push(
+                                (
+                                    *trade_id,
+                                    "TRAILING_STOP_LOSS".to_string(),
+                                )
+                            );
+
+                            continue;
+                        }
+
+                        // ====================================================
+                        // TRAILING STOP NOT TRIGGERED
+                        // ====================================================
+
+                        Ok(false) => {
+                            // State was updated successfully.
+                            //
+                            // Continue evaluating remaining risk rules.
+                        }
+
+                        // ====================================================
+                        // TRAILING STOP CALCULATION ERROR
+                        // ====================================================
+
+                        Err(err) => {
+                            print_log(
+                                self.debug_mode,
+                                true,
+                                format!(
+                                    "[ENGINE RISK] TRAILING STOP ERROR | trade_id={} | symbol={} | error={}",
+                                    trade.id,
+                                    trade.symbol,
+                                    err,
+                                ),
+                            );
+
+                            // TODO:
+                            // Send a remote Slack/Discord critical error
+                            // notification in live trading.
+                            //
+                            // An invalid trailing-stop state can leave
+                            // an otherwise Open Trade unprotected.
+                        }
                     }
                 }
             }

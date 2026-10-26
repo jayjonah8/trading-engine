@@ -9,6 +9,7 @@ use crate::{
             OrderState,
         },
         trades::TradeState,
+        risk::TrailingStopState,
     },
     shared::print_log,
 };
@@ -262,6 +263,74 @@ impl Engine {
                             symbol,
                         ),
                     );
+                }
+
+                // ============================================================
+                // HANDLE PARTIALLY FILLED ENTRY REJECTION TRAILING STOP LOSS INIT
+                // ============================================================
+
+                // Confirmed partial fills represent real exposure.
+                // Preserve the Trade and initialize trailing-stop protection
+                // before transitioning it to Open.
+                if let Some(trade) = self.state.trades.get_mut(trade_id) {
+                    if trade.state == TradeState::Opening
+                        && trade.quantity > f64::EPSILON
+                    {
+                        // ====================================================
+                        // INITIALIZE TRAILING STOP
+                        // ====================================================
+
+                        if let Some(trailing_stop) = trade.trailing_stop.as_mut() {
+                            if trailing_stop.best_px.is_none() {
+                                if let Some(entry_px) = trade.avg_entry_px {
+                                    match TrailingStopState::new(
+                                        trailing_stop.config.clone(),
+                                        trade.direction,
+                                        entry_px,
+                                    ) {
+                                        Ok(state) => {
+                                            *trailing_stop = state;
+                                        }
+
+                                        Err(err) => {
+                                            // Confirmed fills have already updated
+                                            // authoritative state and must be preserved.
+                                            // TODO: Send a critical Slack/Discord alert.
+                                            print_log(
+                                                self.debug_mode,
+                                                true,
+                                                format!(
+                                                    "[ENGINE] TRAILING STOP INITIALIZATION FAILED | trade_id={} | symbol={} | error={}",
+                                                    trade.id,
+                                                    trade.symbol,
+                                                    err,
+                                                ),
+                                            );
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        // ====================================================
+                        // TRANSITION TRADE TO OPEN
+                        // ====================================================
+
+                        trade.state =
+                            TradeState::Open;
+
+                        print_log(
+                            self.debug_mode,
+                            true,
+                            format!(
+                                "[ENGINE] PARTIALLY FILLED ENTRY REJECTED | order_id={} | trade_id={} | symbol={} | trade_qty={} | trade_state=Open",
+                                order_id,
+                                trade_id,
+                                symbol,
+                                trade.quantity,
+                            ),
+                        );
+                    }
                 }
             }
         }

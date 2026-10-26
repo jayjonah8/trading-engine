@@ -1,5 +1,8 @@
 #![allow(dead_code)]
 
+use crate::core::trades::Direction;
+
+
 // ============================================================
 // TRAILING STOP LOSS
 // ============================================================
@@ -325,6 +328,314 @@ impl TrailingStopConfig {
         // ========================================================
         // VALID CONFIGURATION
         // ========================================================
+
+        Ok(())
+    }
+}
+
+
+
+
+// ============================================================
+// TRAILING STOP RUNTIME STATE IMPLEMENTATION 
+// ============================================================
+
+impl TrailingStopState {
+
+    // ========================================================
+    // INITIALIZE TRAILING STOP STATE
+    // ========================================================
+
+    /// Initializes trailing-stop protection using the
+    /// Trade's confirmed average entry price.
+    ///
+    /// A 0% activation threshold enables protection
+    /// immediately.
+    ///
+    /// A positive first threshold delays activation
+    /// until sufficient unrealized profit is reached.
+    pub fn new(
+        config: TrailingStopConfig,
+        direction: Direction,
+        entry_px: f64,
+    ) -> Result<Self, String> {
+
+        // ====================================================
+        // VALIDATE CONFIGURATION
+        // ====================================================
+
+        config.validate()?;
+
+        // ====================================================
+        // VALIDATE ENTRY PRICE
+        // ====================================================
+
+        if !entry_px.is_finite() || entry_px <= 0.0 {
+            return Err(format!(
+                "Invalid trailing-stop entry price: {}",
+                entry_px,
+            ));
+        }
+
+        // ====================================================
+        // INITIALIZE STATE
+        // ====================================================
+
+        let mut state = Self {
+            config,
+            best_px: Some(entry_px),
+            max_pnl_percent: 0.0,
+            stop_px: None,
+        };
+
+        // ====================================================
+        // ACTIVATE INITIAL STOP WHEN APPLICABLE
+        // ====================================================
+
+        state.advance_stop(direction, entry_px, entry_px)?;
+
+        Ok(state)
+    }
+
+
+    // ========================================================
+    // PROCESS MARKET PRICE
+    // ========================================================
+
+    /// Processes a canonical market-price event.
+    ///
+    /// Returns:
+    ///
+    /// Ok(true):
+    ///     The existing trailing stop was breached.
+    ///
+    /// Ok(false):
+    ///     No trailing-stop exit is required.
+    ///
+    /// Err(...):
+    ///     Invalid price or trailing-stop state.
+    ///
+    /// The existing protective stop is checked BEFORE
+    /// updating the favorable-price watermark.
+    ///
+    /// A triggered stop does not update state.
+    pub fn update(
+        &mut self,
+        direction: Direction,
+        entry_px: f64,
+        market_px: f64,
+    ) -> Result<bool, String> {
+
+        // ====================================================
+        // VALIDATE ENTRY PRICE
+        // ====================================================
+
+        if !entry_px.is_finite() || entry_px <= 0.0 {
+            return Err(format!(
+                "Invalid trailing-stop entry price: {}",
+                entry_px,
+            ));
+        }
+
+        // ====================================================
+        // VALIDATE MARKET PRICE
+        // ====================================================
+
+        if !market_px.is_finite() || market_px <= 0.0 {
+            return Err(format!(
+                "Invalid trailing-stop market price: {}",
+                market_px,
+            ));
+        }
+
+        // ====================================================
+        // VALIDATE FAVORABLE PRICE WATERMARK
+        // ====================================================
+
+        let best_px = self.best_px.ok_or_else(|| {
+            "Trailing-stop state has no favorable-price watermark".to_string()
+        })?;
+
+        if !best_px.is_finite() || best_px <= 0.0 {
+            return Err(format!(
+                "Invalid trailing-stop favorable price: {}",
+                best_px,
+            ));
+        }
+
+        // ====================================================
+        // CHECK EXISTING STOP BEFORE UPDATING STATE
+        // ====================================================
+
+        if let Some(stop_px) = self.stop_px {
+
+            if !stop_px.is_finite() || stop_px <= 0.0 {
+                return Err(format!(
+                    "Invalid trailing-stop price: {}",
+                    stop_px,
+                ));
+            }
+
+            let breached = match direction {
+                Direction::Long => market_px <= stop_px,
+                Direction::Short => market_px >= stop_px,
+            };
+
+            if breached {
+                return Ok(true);
+            }
+        }
+
+        // ====================================================
+        // UPDATE FAVORABLE PRICE AND PROTECTIVE STOP
+        // ====================================================
+
+        self.advance_stop(direction, entry_px, market_px)?;
+
+        Ok(false)
+    }
+
+
+    // ========================================================
+    // ADVANCE FAVORABLE PRICE AND PROTECTIVE STOP
+    // ========================================================
+
+    /// Updates the most favorable price, maximum
+    /// unrealized PnL, and protective stop.
+    ///
+    /// This method does not evaluate stop breaches.
+    ///
+    /// Callers should use update() for market events
+    /// so an existing stop is checked first.
+    fn advance_stop(
+        &mut self,
+        direction: Direction,
+        entry_px: f64,
+        market_px: f64,
+    ) -> Result<(), String> {
+
+        // ====================================================
+        // CALCULATE FAVORABLE PRICE WATERMARK
+        // ====================================================
+
+        let previous_best = self.best_px.ok_or_else(|| {
+            "Trailing-stop state has no favorable-price watermark".to_string()
+        })?;
+
+        let best_px = match direction {
+            Direction::Long => previous_best.max(market_px),
+            Direction::Short => previous_best.min(market_px),
+        };
+
+        // ====================================================
+        // CALCULATE MAXIMUM UNREALIZED PNL
+        // ====================================================
+
+        let pnl_percent = match direction {
+            Direction::Long => {
+                ((best_px - entry_px) / entry_px) * 100.0
+            }
+
+            Direction::Short => {
+                ((entry_px - best_px) / entry_px) * 100.0
+            }
+        };
+
+        if !pnl_percent.is_finite() {
+            return Err(
+                "Trailing-stop PnL calculation produced a non-finite value"
+                    .to_string()
+            );
+        }
+
+        let max_pnl_percent = self.max_pnl_percent.max(pnl_percent);
+
+        // ====================================================
+        // SELECT ACTIVE TRAILING LEVEL
+        // ====================================================
+
+        // Select the highest configured profit threshold
+        // reached by the Trade.
+        //
+        // If no threshold has been reached, trailing-stop
+        // protection remains inactive.
+
+        let active_level = self
+            .config
+            .levels
+            .iter()
+            .rev()
+            .find(|level| {
+                max_pnl_percent >= level.profit_percent
+            });
+
+        // ====================================================
+        // CALCULATE PROTECTIVE STOP
+        // ====================================================
+
+        let next_stop_px = if let Some(level) = active_level {
+
+            let trail_fraction = level.trail_percent / 100.0;
+
+            let candidate = match direction {
+                Direction::Long => {
+                    best_px * (1.0 - trail_fraction)
+                }
+
+                Direction::Short => {
+                    best_px * (1.0 + trail_fraction)
+                }
+            };
+
+            // ====================================================
+            // VALIDATE CALCULATED STOP PRICE
+            // ====================================================
+
+            if !candidate.is_finite() || candidate <= 0.0 {
+                return Err(format!(
+                    "Trailing-stop calculation produced invalid stop price: {}",
+                    candidate,
+                ));
+            }
+
+            // ====================================================
+            // PREVENT PROTECTIVE STOP FROM LOOSENING
+            // ====================================================
+
+            // Long:
+            //     Stop price may only increase.
+            //
+            // Short:
+            //     Stop price may only decrease.
+
+            Some(match self.stop_px {
+                Some(previous_stop) => match direction {
+                    Direction::Long => previous_stop.max(candidate),
+                    Direction::Short => previous_stop.min(candidate),
+                },
+
+                None => candidate,
+            })
+
+        } else {
+
+            // ====================================================
+            // TRAILING STOP NOT YET ACTIVATED
+            // ====================================================
+
+            self.stop_px
+        };
+
+        // ====================================================
+        // COMMIT UPDATED TRAILING STOP STATE
+        // ====================================================
+
+        // State is committed only after calculations
+        // and stop-price validation succeed.
+
+        self.best_px = Some(best_px);
+        self.max_pnl_percent = max_pnl_percent;
+        self.stop_px = next_stop_px;
 
         Ok(())
     }

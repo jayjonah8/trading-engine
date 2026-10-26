@@ -9,6 +9,7 @@ use crate::{
             OrderState,
         },
         trades::TradeState,
+        risk::TrailingStopState,
     },
     shared::print_log,
 };
@@ -372,6 +373,45 @@ impl Engine {
                     if filled_quantity > f64::EPSILON
                         && trade.state == TradeState::Opening
                     {
+
+                        // ====================================================
+                        // INITIALIZE TRAILING STOP
+                        // ====================================================
+
+                        // The entry order has expired, so the confirmed
+                        // partial-fill VWAP becomes the final entry price.
+                        if let Some(trailing_stop) = trade.trailing_stop.as_mut() {
+                            if trailing_stop.best_px.is_none() {
+                                if let Some(entry_px) = trade.avg_entry_px {
+                                    match TrailingStopState::new(
+                                        trailing_stop.config.clone(),
+                                        trade.direction,
+                                        entry_px,
+                                    ) {
+                                        Ok(state) => {
+                                            *trailing_stop = state;
+                                        }
+
+                                        Err(err) => {
+                                            // Confirmed fills have already updated authoritative state.
+                                            // Initialization failure must never undo a real fill.
+                                            // TODO: Send a critical Slack/Discord alert.
+                                            print_log(
+                                                self.debug_mode,
+                                                true,
+                                                format!(
+                                                    "[ENGINE] TRAILING STOP INITIALIZATION FAILED | trade_id={} | symbol={} | error={}",
+                                                    trade.id,
+                                                    trade.symbol,
+                                                    err,
+                                                ),
+                                            );
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
                         trade.state =
                             TradeState::Open;
 

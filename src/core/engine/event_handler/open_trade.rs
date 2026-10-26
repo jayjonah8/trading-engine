@@ -24,6 +24,7 @@ use crate::core::{
         },
         ReservationPurpose,
         RiskReservation,
+        TrailingStopState
     },
 
     trade_intent::TradeIntent,
@@ -483,6 +484,26 @@ impl Engine {
             }
         };
 
+        
+        // ============================================================
+        // TRAILING STOP LOSS
+        // ============================================================
+
+        // Preserve the strategy-defined trailing-stop configuration.
+        //
+        // Runtime state remains uninitialized until the Trade's
+        // confirmed average entry price becomes available.
+        //
+        // None disables trailing-stop protection.
+        let trailing_stop = intent.trailing_stop.clone().map(|config| {
+            TrailingStopState {
+                config,
+                best_px: None,
+                max_pnl_percent: 0.0,
+                stop_px: None,
+            }
+        });
+
 
         // ============================================================
         // IDS
@@ -515,6 +536,7 @@ impl Engine {
             emergency_stop_percent: intent.emergency_stop_percent,
             stop_loss_delay_secs: intent.stop_loss_delay_secs,
             trade_duration_secs: intent.trade_duration_secs,
+            trailing_stop,
             entry_fees: 0.0,
             exit_fees: 0.0,
             allocated_entry_fees: 0.0,

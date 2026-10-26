@@ -17,6 +17,8 @@ use crate::{
         positions::PositionKey,
 
         trades::TradeState,
+
+        risk::TrailingStopState,
     },
 
     shared::print_log,
@@ -779,6 +781,51 @@ impl Engine {
                     // or expires, order_canceled.rs / order_expired.rs will
                     // promote the partially-established Trade to Open.
                     if order_fully_filled {
+
+                        // ====================================================
+                        // INITIALIZE TRAILING STOP
+                        // ====================================================
+
+                        // Initialize from the final confirmed entry VWAP.
+                        // This avoids using an incomplete average entry price
+                        // while the entry order is still partially filling.
+                        if let Some(trailing_stop) = trade.trailing_stop.as_mut() {
+                            if trailing_stop.best_px.is_none() {
+                                if let Some(entry_px) = trade.avg_entry_px {
+                                    match TrailingStopState::new(
+                                        trailing_stop.config.clone(),
+                                        trade.direction,
+                                        entry_px,
+                                    ) {
+                                        Ok(state) => {
+                                            *trailing_stop = state;
+                                        }
+
+                                        // The confirmed Fill has already updated authoritative state.
+                                        // TSL Initialization failure must never undo or reject a real Fill.
+                                        // The Trade remains Open, but trailing-stop protection is inactive.
+                                        // TODO: Send a critical Slack/Discord alert.
+                                        Err(err) => {
+                                            print_log(
+                                                self.debug_mode,
+                                                true,
+                                                format!(
+                                                    "[ENGINE] TRAILING STOP INITIALIZATION FAILED | trade_id={} | symbol={} | error={}",
+                                                    trade.id,
+                                                    trade.symbol,
+                                                    err,
+                                                ),
+                                            );
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        // ====================================================
+                        // TRANSITION TRADE TO OPEN
+                        // ====================================================
+
                         trade.state =
                             TradeState::Open;
                     }

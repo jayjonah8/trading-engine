@@ -184,6 +184,13 @@ impl Trades {
         self.trades.iter()
     }
 
+    /// Iterates over all trades with mutable access.
+    pub fn iter_mut(
+        &mut self,
+    ) -> impl Iterator<Item = (&TradeId, &mut Trade)> {
+        self.trades.iter_mut()
+    }
+
 
     /// Iterates over all active trades.
     ///

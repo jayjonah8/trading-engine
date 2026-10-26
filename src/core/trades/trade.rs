@@ -6,6 +6,9 @@ use crate::core::trades::{
     state::TradeState,
 };
 
+use crate::core::risk::TrailingStopState;
+
+
 // Trade should represent the strategy lifecycle, 
 // while orders/fills/positions handle execution state.
 
@@ -127,6 +130,26 @@ pub struct Trade {
     ///
     /// `None` means no duration-based exit is configured.
     pub trade_duration_secs: Option<u64>,
+
+    /// Optional engine-managed trailing-stop state.
+    ///
+    /// None:
+    ///     Trailing-stop protection is disabled.
+    ///
+    /// Some(state):
+    ///     This Trade maintains its own independent:
+    ///
+    ///     - Trailing-stop configuration.
+    ///     - Most favorable market price.
+    ///     - Maximum unrealized PnL percentage.
+    ///     - Current protective stop price.
+    ///
+    /// Trailing-stop state is initialized using the
+    /// confirmed average entry price.
+    ///
+    /// Supports both fixed and dynamically tightening
+    /// trailing stops for Long and Short trades.
+    pub trailing_stop: Option<TrailingStopState>,
 
     /// Total fees accumulated across confirmed entry fills.
     /// Includes all partial entry executions.
