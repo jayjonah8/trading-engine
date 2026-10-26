@@ -115,6 +115,10 @@ use crate::core::trades::Direction;
 // - A stop trigger submits a market exit; it does not guarantee
 //   execution at the exact stop price.
 //
+// - A 0% first threshold activates protection immediately.
+// - A positive first threshold delays activation until
+//   the required maximum unrealized PnL is reached.
+//
 // ============================================================
 
 
@@ -165,9 +169,9 @@ use crate::core::trades::Direction;
 // 15. A positive first threshold delays activation until
 //     the required maximum unrealized PnL is reached.
 //
-// 16. Long trailing stops can only increase.
+// 16. Long trailing stops can only increase (engine handles this automatically).
 //
-// 17. Short trailing stops can only decrease.
+// 17. Short trailing stops can only decrease (engine handles this automatically).
 //
 // 18. Existing stops are checked before updating state.
 //
