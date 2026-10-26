@@ -86,6 +86,8 @@ use super::shared::MarketRegime;
 * Add a toolbox feature to update leverage continously for all assets as a pollers so leverage stays up to date.
   - Have a loop mean you dont have to update leverage again when a new assets qualifies for trading.    
   - Add a helper api function that does this on bot start.
+  - The toolbox feature should show a boolean when ready to trade ie the asset already had its leverage updated.
+    Put this toolbox feature inside /toolbox/hyperliquid for organization.
 
 * Add an auto compounding toolbox that takes in the trade_amount_usd etc and performs
   auto compounding as the "real" avenue ccount account is growing. See old bot for logic details.
