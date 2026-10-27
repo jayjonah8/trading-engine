@@ -110,6 +110,31 @@ impl Trades {
             .map(|trade| trade.id)
     }
 
+    
+    // ============================================================
+    // OPEN TRADES FOR STRATEGY
+    // ============================================================
+
+    /// Iterates over fully open trades belonging to a specific strategy.
+    ///
+    /// Only trades in TradeState::Open are returned.
+    ///
+    /// Trades belonging to other strategies are excluded.
+    ///
+    /// Useful for strategy-specific trade management, including
+    /// duration watchdogs and custom exit conditions.
+    pub fn open_trades_for_strategy<'a>(
+        &'a self,
+        strategy_id: &'a str,
+    ) -> impl Iterator<Item = &'a Trade> + 'a {
+        self.trades
+            .values()
+            .filter(move |trade| {
+                trade.strategy_id == strategy_id
+                    && trade.state == TradeState::Open
+            })
+    }
+
 
     /// Returns the number of active strategy trades.
     ///

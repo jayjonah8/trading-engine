@@ -18,6 +18,7 @@ use crate::{
 
     toolbox::price_window_ts::PriceWindowTs,
     toolbox::TradeCooldown,
+    toolbox::TradeDurationWatchdog,
     toolbox::black_swan_protection::BlackSwanProtection,
 };
 
@@ -88,4 +89,8 @@ pub struct ResearchV1BacktestStrategy {
 
     // Tracks per-symbol trade entry cooldowns.
     pub trade_cooldown: TradeCooldown,
+
+    // Closes only this strategies trades that are past their trade duration that have not been closed already.
+    // Acts as a backup to the engine's normal trade close logic.
+    pub trade_duration_watchdog: TradeDurationWatchdog,
 }

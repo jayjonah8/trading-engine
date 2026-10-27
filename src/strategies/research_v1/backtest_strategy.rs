@@ -21,6 +21,7 @@ use crate::{
             OrderType,
             TimeInForce,
         },
+        execution::ExitOrderRequest,
         trade_intent::TradeIntent,
         trades::Direction,
     },
@@ -40,6 +41,7 @@ use crate::{
 
     toolbox::price_window_ts::PriceWindowTs,
     toolbox::TradeCooldown,
+    toolbox::TradeDurationWatchdog,
     toolbox::black_swan_protection::BlackSwanProtection,
 
     shared::print_log,
@@ -51,8 +53,11 @@ use super::shared::MarketRegime;
 /* 
 // TODO:
 
-* Create a toolbox or something for the engine where you can close trades if they are older than a certain points.
-  - This should be flexible so as not to close the trades from other strategies that have londer trades durations if need be. 
+* (Do a simple version first) 
+  Start adding the regime change logic to detect when the market should. be trending etc. Mabye a single regime_manager function
+    can handle updating the proper regime when it needs to be updated.
+  - Use your market wide growth indicators and past know on market behavior to get this right and backtest several versions.
+  - Mabye add a market wide atr indicator if you need to. 
 
 * Test on 3 months of real data to see its performance.
   - Check your AWS bill first to make sure your currect data is not too expensive.
@@ -62,12 +67,9 @@ use super::shared::MarketRegime;
   - Try to get another different 6 months of older data during a bear market so we can backtest bull and bear markets and see if the bot performs
     we in both markets. 
 
-* Start adding the regime change logic to detect when the market should. be trending etc. Mabye a single regime_manager function
-  can handle updating the proper regime when it needs to be updated.
-  - Use your market wide growth indicators and past know on market behavior to get this right and backtest several versions.
-  - Mabye add a market wide atr indicator if you need to. 
 
 ---------------------------------------
+
 
 * Add an early profit tax toolbox feature.
 - Can have normal profit taking.
@@ -175,6 +177,11 @@ impl ResearchV1BacktestStrategy {
                 15,     // Minimum number of assets required.
             ),
             trade_cooldown: TradeCooldown::new(200),
+            trade_duration_watchdog: TradeDurationWatchdog::new(
+                true,   // Enable watchdog.
+                10.0,   // Allow 10% beyond trade duration.
+                300_000,  // Check every 5 minutes.
+            ),
         }
     }
 }
@@ -217,6 +224,10 @@ impl Strategy for ResearchV1BacktestStrategy {
         match ev.event {
 
             AppEvent::TapeTrade(trade) => {
+
+                self.check_trade_duration_watchdog(
+                    trade.timestamp_ms,
+                );
 
                 // Read the latest cached trading eligibility for this symbol.
                 let can_trade = self.can_trade
@@ -797,5 +808,74 @@ impl ResearchV1BacktestStrategy {
             price_change_24h,
             current_ts,
         );
+    }
+}
+
+
+
+
+impl ResearchV1BacktestStrategy {
+
+    // ============================================================
+    // TRADE DURATION WATCHDOG
+    // ============================================================
+
+    /// Checks this strategy's open trades for overdue durations.
+    ///
+    /// Only trades belonging to this strategy are evaluated.
+    ///
+    /// Trades without configured durations are ignored.
+    ///
+    /// Closure requests are submitted through the engine.
+    fn check_trade_duration_watchdog(
+        &mut self,
+        now_ts_ms: i64,
+    ) {
+        // ====================================================
+        // CHECK INTERVAL
+        // ====================================================
+
+        if !self.trade_duration_watchdog.should_check(
+            now_ts_ms,
+        ) {
+            return;
+        }
+
+
+        // ====================================================
+        // FIND OVERDUE TRADES
+        // ====================================================
+
+        let overdue_trades = {
+            let view = self.rx_view.borrow();
+
+            view.trades
+                .open_trades_for_strategy(self.name())
+                .filter(|trade| {
+                    self.trade_duration_watchdog.should_close(
+                        trade.opened_ts_ms,
+                        trade.trade_duration_secs,
+                        now_ts_ms,
+                    )
+                })
+                .map(|trade| trade.id)
+                .collect::<Vec<_>>()
+        };
+
+
+        // ====================================================
+        // REQUEST CLOSURE
+        // ====================================================
+
+        for trade_id in overdue_trades {
+            let _ = self.tx_engine.send(
+                EngineEvent::CloseTrade {
+                    trade_id,
+                    execution: ExitOrderRequest::market(),
+                    reason: "Trade duration watchdog exceeded".to_string(),
+                    ts_ms: now_ts_ms,
+                }
+            );
+        }
     }
 }

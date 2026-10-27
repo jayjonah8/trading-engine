@@ -53,6 +53,10 @@ TODO:
 
 * Should check for a smooth r2 before entering into a trade.
 
+* You coulde also just get the highest / lowest 24hr percent movers of the day and trade in their direction with the same number
+  of longs as shorts normally. Basically getting the opposites of the markets and trading in their direction with the dynamic trailing stop loss.
+* These trades can easilty last for 2 - 8 hrs and even a couple days to extract the fully profit. 
+
 * Use a rolling price window since these move actually usually start off with a major price trend reversial "after" 
   the market was moving in the opposite way for most of the day.
 * You should maybe only enter a trade also by first checking that the market is reversing after being over bought/sold for

@@ -21,6 +21,7 @@ use crate::{
             OrderType,
             TimeInForce,
         },
+        execution::ExitOrderRequest,
         trade_intent::TradeIntent,
         trades::Direction,
     },
@@ -40,6 +41,7 @@ use crate::{
 
     toolbox::price_window_ts::PriceWindowTs,
     toolbox::TradeCooldown,
+    toolbox::TradeDurationWatchdog,
     toolbox::black_swan_protection::BlackSwanProtection,
 
     shared::print_log,
@@ -116,6 +118,11 @@ impl ResearchV1Strategy {
                 15,     // Minimum number of assets required.
             ),
             trade_cooldown: TradeCooldown::new(200),
+            trade_duration_watchdog: TradeDurationWatchdog::new(
+                true,   // Enable watchdog.
+                10.0,   // Allow 10% beyond trade duration.
+                300_000,  // Check every 5 minutes.
+            ),
         }
     }
 }
@@ -179,6 +186,10 @@ impl Strategy for ResearchV1Strategy {
             AppEvent::Quote(quote) => {
 
                 let mid = (quote.bid_price + quote.ask_price) / 2.0;
+
+                self.check_trade_duration_watchdog(
+                    quote.timestamp_ms,
+                );
 
                 // Read the latest cached trading eligibility for this symbol.
                 let can_trade = self.can_trade
@@ -746,5 +757,74 @@ impl ResearchV1Strategy {
             price_change_24h,
             current_ts,
         );
+    }
+}
+
+
+
+
+impl ResearchV1Strategy {
+
+    // ============================================================
+    // TRADE DURATION WATCHDOG
+    // ============================================================
+
+    /// Checks this strategy's open trades for overdue durations.
+    ///
+    /// Only trades belonging to this strategy are evaluated.
+    ///
+    /// Trades without configured durations are ignored.
+    ///
+    /// Closure requests are submitted through the engine.
+    fn check_trade_duration_watchdog(
+        &mut self,
+        now_ts_ms: i64,
+    ) {
+        // ====================================================
+        // CHECK INTERVAL
+        // ====================================================
+
+        if !self.trade_duration_watchdog.should_check(
+            now_ts_ms,
+        ) {
+            return;
+        }
+
+
+        // ====================================================
+        // FIND OVERDUE TRADES
+        // ====================================================
+
+        let overdue_trades = {
+            let view = self.rx_view.borrow();
+
+            view.trades
+                .open_trades_for_strategy(self.name())
+                .filter(|trade| {
+                    self.trade_duration_watchdog.should_close(
+                        trade.opened_ts_ms,
+                        trade.trade_duration_secs,
+                        now_ts_ms,
+                    )
+                })
+                .map(|trade| trade.id)
+                .collect::<Vec<_>>()
+        };
+
+
+        // ====================================================
+        // REQUEST CLOSURE
+        // ====================================================
+
+        for trade_id in overdue_trades {
+            let _ = self.tx_engine.send(
+                EngineEvent::CloseTrade {
+                    trade_id,
+                    execution: ExitOrderRequest::market(),
+                    reason: "Trade duration watchdog exceeded".to_string(),
+                    ts_ms: now_ts_ms,
+                }
+            );
+        }
     }
 }
