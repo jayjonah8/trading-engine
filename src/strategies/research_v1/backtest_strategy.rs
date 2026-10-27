@@ -35,6 +35,9 @@ use crate::{
     indicators::{
         price_pct_change,
         volume_usd,
+        market_volume_expansion,
+        market_volume_acceleration,
+        market_breadth,
     },
 
     strategies::Strategy,
@@ -48,16 +51,14 @@ use crate::{
 };
 
 use super::backtest_state::ResearchV1BacktestStrategy;
-use super::shared::MarketRegime;
+
+use super::shared::{
+    MarketRegime,
+    market_regime_manager,
+};
 
 /* 
 // TODO:
-
-* (Do a simple version first) 
-  Start adding the regime change logic to detect when the market should. be trending etc. Mabye a single regime_manager function
-    can handle updating the proper regime when it needs to be updated.
-  - Use your market wide growth indicators and past know on market behavior to get this right and backtest several versions.
-  - Mabye add a market wide atr indicator if you need to. 
 
 * Test on 3 months of real data to see its performance.
   - Check your AWS bill first to make sure your currect data is not too expensive.
@@ -66,6 +67,11 @@ use super::shared::MarketRegime;
   - Then get another 3 months for a total of 6 months. 
   - Try to get another different 6 months of older data during a bear market so we can backtest bull and bear markets and see if the bot performs
     we in both markets. 
+
+    
+* (Done!!) (Do a simple version first) 
+  Start adding the regime change logic. 
+  - Mabye add a market wide atr indicator if you need to. 
 
 
 ---------------------------------------
@@ -405,9 +411,9 @@ impl Strategy for ResearchV1BacktestStrategy {
                                 // SEND TRADE INTENT
                                 // ====================================================
 
-                                // let _ = self.tx_engine.send(
-                                //     EngineEvent::OpenTrade(intent)
-                                // );
+                                let _ = self.tx_engine.send(
+                                    EngineEvent::OpenTrade(intent)
+                                );
 
                                 // Record the trade submission cooldown.
                                 self.trade_cooldown.record_trade(
@@ -477,9 +483,9 @@ impl Strategy for ResearchV1BacktestStrategy {
                                 // SEND TRADE INTENT
                                 // ====================================================
 
-                                // let _ = self.tx_engine.send(
-                                //     EngineEvent::OpenTrade(intent)
-                                // );
+                                let _ = self.tx_engine.send(
+                                    EngineEvent::OpenTrade(intent)
+                                );
 
                                 // Record the trade submission cooldown.
                                 self.trade_cooldown.record_trade(
@@ -525,6 +531,16 @@ impl Strategy for ResearchV1BacktestStrategy {
                     &ev.symbol,
                     timeframe,
                     current_ts,
+                );
+
+                let symbols = {
+                    let view = self.rx_view.borrow();
+                    view.cfg.symbols.clone()
+                };
+
+                self.update_market_regime(
+                    timeframe,
+                    &symbols,
                 );
 
                 if self.debug_mode {
@@ -876,6 +892,122 @@ impl ResearchV1BacktestStrategy {
                     ts_ms: now_ts_ms,
                 }
             );
+        }
+    }
+}
+
+
+
+
+impl ResearchV1BacktestStrategy {
+
+    // ============================================================
+    // UPDATE MARKET REGIME
+    // ============================================================
+
+    /// Evaluates synchronized market-wide indicators and updates
+    /// the current market regime when conditions change.
+    fn update_market_regime(
+        &mut self,
+        timeframe: Timeframe,
+        symbols: &[String],
+    ) {
+        // ====================================================
+        // TIMEFRAME FILTER
+        // ====================================================
+
+        // Only evaluate market regimes using 1-minute candles.
+        if timeframe != Timeframe::ONE_MINUTE {
+            return;
+        }
+
+        // ====================================================
+        // MARKET-WIDE INDICATORS
+        // ====================================================
+
+        let expansion = market_volume_expansion(
+            &self.candle_history,
+            symbols,
+            timeframe,
+            20,    // Volume lookback period.
+            1.5,   // Individual asset RVOL expansion threshold.
+            80.0,  // Minimum synchronized asset percentage.
+        );
+
+        let acceleration = market_volume_acceleration(
+            &self.candle_history,
+            symbols,
+            timeframe,
+            20,    // Volume lookback period.
+            80.0,  // Minimum synchronized asset percentage.
+        );
+
+        let breadth = market_breadth(
+            &self.candle_history,
+            symbols,
+            timeframe,
+            5,     // Price movement lookback period.
+            80.0,  // Minimum synchronized asset percentage.
+        );
+
+
+        // ====================================================
+        // UPDATE MARKET REGIME
+        // ====================================================
+
+        if let (
+            Some(expansion),
+            Some(acceleration),
+            Some(breadth),
+        ) = (
+            expansion,
+            acceleration,
+            breadth,
+        ) {
+            if let Some(new_regime) = market_regime_manager(
+                &expansion,
+                &acceleration,
+                &breadth,
+
+                50.0, // At least 50% of assets have elevated RVOL.
+                60.0, // At least 60% of assets have increasing RVOL.
+                65.0, // At least 65% of assets move in the same direction.
+            ) {
+
+                // ====================================================
+                // REGIME CHANGE
+                // ====================================================
+
+                if new_regime != self.market_regime {
+
+                    if self.debug_mode {
+                        print_log(
+                            self.debug_mode,
+                            true,
+                            format_args!(
+                                "[RESEARCH V1 BACKTEST REGIME CHANGE] \
+                                {:?} -> {:?} | \
+                                timeframe={}s | \
+                                timestamp={} | \
+                                expansion={:.2}% | \
+                                acceleration={:.2}% | \
+                                bullish={:.2}% | \
+                                bearish={:.2}%",
+                                self.market_regime,
+                                new_regime,
+                                timeframe.as_secs(),
+                                expansion.snapshot_end,
+                                expansion.expanding_assets_pct,
+                                acceleration.accelerating_assets_pct,
+                                breadth.bullish_assets_pct,
+                                breadth.bearish_assets_pct,
+                            ),
+                        );
+                    }
+
+                    self.market_regime = new_regime;
+                }
+            }
         }
     }
 }
