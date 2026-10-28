@@ -82,13 +82,6 @@ use super::shared::{
 ---------------------------------------
 
 
-* Add an early profit tax toolbox feature.
-- Can have normal profit taking.
-- Can also have slow version profit taking.
-- See old bot for implementation details.
-- Can use close all trades engine event message. 
-- Make sure its not getting called multiple times when it should not. 
-
 * Start implementing the continuous multi-sync logic as a toolbox feature only if you need to
   since the goal is to be able to detect the trending mode without using multi-sync logic. 
 
