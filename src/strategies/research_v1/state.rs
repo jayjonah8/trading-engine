@@ -20,6 +20,9 @@ use crate::{
     toolbox::TradeCooldown,
     toolbox::TradeDurationWatchdog,
     toolbox::black_swan_protection::BlackSwanProtection,
+    toolbox::early_profit_taking::{
+        EarlyProfitTaking,
+    },
 };
 
 use super::shared::MarketRegime;
@@ -40,6 +43,9 @@ pub struct ResearchV1Strategy {
 
     // Amount of USD allocated to each trade before leverage (e.g. 100.0 = $100)
     pub trade_amount_usd: f64,
+
+    /// None means no strategy-level leverage adjustment.
+    pub leverage: Option<f64>,
 
     // Minimum percentage price movement required to trigger a trade entry.
     pub entry_percent: Option<f64>,
@@ -93,6 +99,9 @@ pub struct ResearchV1Strategy {
     // Closes only this strategies trades that are past their trade duration that have not been closed already.
     // Acts as a backup to the engine's normal trade close logic.
     pub trade_duration_watchdog: TradeDurationWatchdog,
+
+    /// Strategy-specific early-profit-taking configuration.
+    pub early_profit_taking: EarlyProfitTaking,
 }
 
 

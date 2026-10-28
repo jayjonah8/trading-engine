@@ -444,4 +444,37 @@ impl Trades {
             })
             .sum()
     }
+
+
+    // ============================================================
+    // TOTAL OPEN MARGIN
+    // ============================================================
+
+    /// Calculates total strategy-allocated margin across
+    /// trades with remaining executed quantity.
+    ///
+    /// TODO: Adjust margin for partial fills and exits.
+    pub fn total_open_margin(&self) -> f64 {
+        self.iter_with_open_quantity()
+            .map(|trade| trade.margin_usd)
+            .sum()
+    }
+
+
+    // ============================================================
+    // STRATEGY TOTAL OPEN MARGIN
+    // ============================================================
+
+    /// Calculates total strategy-allocated margin across
+    /// trades belonging exclusively to the specified strategy.
+    ///
+    /// TODO: Adjust margin for partial fills and exits.
+    pub fn total_open_margin_for_strategy(
+        &self,
+        strategy_id: &str,
+    ) -> f64 {
+        self.iter_with_open_quantity_for_strategy(strategy_id)
+            .map(|trade| trade.margin_usd)
+            .sum()
+    }
 }

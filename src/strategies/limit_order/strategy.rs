@@ -303,6 +303,7 @@ impl LimitOrderStrategy {
             direction: self.direction,
             signal_px: market_px,
             target_notional: self.trade_amount_usd,
+            margin_usd: self.trade_amount_usd,
 
             order_type: OrderType::Limit,
             time_in_force: TimeInForce::Gtc,

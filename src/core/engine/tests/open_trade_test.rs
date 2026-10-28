@@ -144,6 +144,7 @@ async fn test_handle_open_trade_creates_state_and_command() {
 
             signal_px: 100_000.0,
             target_notional: 100.0,
+            margin_usd: 100.0,
 
             order_type: OrderType::Market,
             time_in_force: TimeInForce::Day,

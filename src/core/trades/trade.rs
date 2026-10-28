@@ -114,6 +114,14 @@ pub struct Trade {
     /// TODO: Replace with `Money`.
     pub target_notional: f64,
 
+    /// Strategy-defined capital allocated to this trade.
+    ///
+    /// Used for basket profitability and early profit taking.
+    /// Does not represent actual venue margin requirements.
+    ///
+    /// TODO: Adjust proportionally for partial fills and exits.
+    pub margin_usd: f64,
+
     /// Optional take-profit percentage.
     pub take_profit_percent: Option<f64>,
 

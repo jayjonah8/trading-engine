@@ -10,6 +10,7 @@ use tokio::sync::{
 
 use crate::{
     core::{
+        trades::state::TradeState,
         engine::engine::EngineEvent,
         engine_view::EngineView,
         events::{
@@ -46,6 +47,10 @@ use crate::{
     toolbox::TradeCooldown,
     toolbox::TradeDurationWatchdog,
     toolbox::black_swan_protection::BlackSwanProtection,
+    toolbox::early_profit_taking::{
+        EarlyProfitTaking,
+        EarlyProfitRule,
+    },
 
     shared::print_log,
 };
@@ -98,7 +103,9 @@ impl ResearchV1Strategy {
             debug_mode: true,
             tx_engine,
             rx_view,
+
             trade_amount_usd: 100.0,
+            leverage: None,
             entry_percent: Some(2.0),
             exit_profit_percent: Some(2.0),
             exit_loss_percent: Some(2.0),
@@ -109,14 +116,18 @@ impl ResearchV1Strategy {
             max_24h_move_pct: Some(15.00),
             market_regime: MarketRegime::MeanReversion,
             track_price_window_while_in_trade: false,
+
             price_window: PriceWindowTs::new(
                 1800,  // 30 min rolling window
                 false, // Enable or disable debug logging.
             ),
+
             candle_history: CandleHistory::new(
                 candle_config.history_retention,
             ),
+
             can_trade: HashMap::new(),
+
             black_swan_protection: BlackSwanProtection::new(
                 true,   // Enable protection.
                 false,   // Enable or disable debug logging.
@@ -124,11 +135,38 @@ impl ResearchV1Strategy {
                 8.0,    // Resume when average movement falls to 8%.
                 15,     // Minimum number of assets required.
             ),
+
             trade_cooldown: TradeCooldown::new(200),
+
             trade_duration_watchdog: TradeDurationWatchdog::new(
                 true,   // Enable watchdog.
                 10.0,   // Allow 10% beyond trade duration.
                 300_000,  // Check every 5 minutes.
+            ),
+
+            early_profit_taking: EarlyProfitTaking::new(
+                vec![
+                    EarlyProfitRule {
+                        name: "Standard Early Profit".to_string(),  // Rule identifier.
+                        enabled: true,                              // Enable this rule.
+                        min_open_trades: 1,                         // Require at least 1 open trade.
+                        max_open_trades: None,                      // No maximum open trade limit.
+                        min_margin_usd: 100.0,                      // Require at least $100 total basket margin.
+                        min_profit_percent: 4.3,                    // Close basket when net profit reaches 4.3%.
+                        no_new_trade_for_ms: None,                  // No minimum inactivity period.
+                    },
+
+                    EarlyProfitRule {
+                        name: "Slow Market Early Profit".to_string(), // Rule identifier.
+                        enabled: false,                               // Disable this rule.
+                        min_open_trades: 2,                           // Require at least 2 open trades.
+                        max_open_trades: Some(4),                     // Allow a maximum of 4 open trades.
+                        min_margin_usd: 200.0,                        // Require at least $200 total basket margin.
+                        min_profit_percent: 0.9,                      // Close basket when net profit reaches 0.9%.
+                        no_new_trade_for_ms: Some(15 * 60 * 1000),    // Require 15 minutes without a new trade.
+                    },
+                ],
+                5_000, // Minimum 5 seconds between early-profit exit requests.
             ),
         }
     }
@@ -194,16 +232,6 @@ impl Strategy for ResearchV1Strategy {
 
                 let mid = (quote.bid_price + quote.ask_price) / 2.0;
 
-                self.check_trade_duration_watchdog(
-                    quote.timestamp_ms,
-                );
-
-                // Read the latest cached trading eligibility for this symbol.
-                let can_trade = self.can_trade
-                    .get(&ev.symbol)
-                    .copied()
-                    .unwrap_or(false);
-
                 if self.debug_mode {
                     print_log(
                         self.debug_mode,
@@ -219,6 +247,21 @@ impl Strategy for ResearchV1Strategy {
                     );
                 }
 
+                self.check_trade_duration_watchdog(
+                    quote.timestamp_ms,
+                );
+
+                self.evaluate_early_profit_taking(
+                    quote.timestamp_ms,
+                );
+
+                // Read the latest cached trading eligibility for this symbol.
+                let can_trade = self.can_trade
+                    .get(&ev.symbol)
+                    .copied()
+                    .unwrap_or(false);
+
+               
                 // ====================================================
                 // ACTIVE STRATEGY TRADE CHECK
                 // ====================================================
@@ -335,6 +378,7 @@ impl Strategy for ResearchV1Strategy {
                                     direction,
                                     signal_px: mid,
                                     target_notional: self.trade_amount_usd,
+                                    margin_usd: self.trade_margin_usd(),
                                     order_type: OrderType::Market,
                                     time_in_force: TimeInForce::Day,
                                     limit_px: None,
@@ -407,6 +451,7 @@ impl Strategy for ResearchV1Strategy {
                                     direction,
                                     signal_px: mid,
                                     target_notional: self.trade_amount_usd,
+                                    margin_usd: self.trade_margin_usd(),
                                     order_type: OrderType::Market,
                                     time_in_force: TimeInForce::Day,
                                     limit_px: None,
@@ -510,6 +555,32 @@ impl Strategy for ResearchV1Strategy {
                     );
                 }
             }
+        }
+    }
+}
+
+
+
+
+impl ResearchV1Strategy {
+
+    // ============================================================
+    // CALCULATE TRADE MARGIN
+    // ============================================================
+
+    /// Calculates strategy-allocated margin based on
+    /// the current requested trade notional.
+    ///
+    /// Without leverage, margin equals trade amount.
+    ///
+    /// With leverage, margin equals trade amount / leverage.
+    pub fn trade_margin_usd(&self) -> f64 {
+        match self.leverage {
+            Some(leverage) if leverage > 0.0 && leverage.is_finite() => {
+                self.trade_amount_usd / leverage
+            }
+
+            _ => self.trade_amount_usd,
         }
     }
 }
@@ -842,6 +913,113 @@ impl ResearchV1Strategy {
                     ts_ms: now_ts_ms,
                 }
             );
+        }
+    }
+}
+
+
+
+
+impl ResearchV1Strategy {
+
+    // ============================================================
+    // EVALUATE EARLY PROFIT TAKING
+    // ============================================================
+
+    /// Evaluates early-profit-taking rules for trades
+    /// belonging exclusively to this strategy.
+    ///
+    /// Requests market exits when a rule triggers.
+    /// Cooldown is managed internally by the toolbox.
+    fn evaluate_early_profit_taking(&mut self, ts_ms: i64) {
+
+        // ============================================================
+        // CHECK COOLDOWN
+        // ============================================================
+
+        if !self.early_profit_taking.cooldown_ready(ts_ms) {
+            return;
+        }
+
+        let view = self.rx_view.borrow();
+
+        // ============================================================
+        // BUILD STRATEGY BASKET
+        // ============================================================
+
+        let basket = self.early_profit_taking.basket_snapshot(
+            self.name(),
+            &view.trades,
+            &view.last_px,
+        );
+
+        // ============================================================
+        // REQUIRE FULLY OPEN BASKET
+        // ============================================================
+
+        let fully_open_count = view.trades
+            .open_trades_for_strategy(self.name())
+            .count();
+
+        if fully_open_count != basket.open_trades {
+            return;
+        }
+
+        // ============================================================
+        // EVALUATE RULES
+        // ============================================================
+
+        let Some(rule) = self.early_profit_taking.check(
+            &basket,
+            ts_ms,
+        ) else {
+            return;
+        };
+
+        // ============================================================
+        // CLOSE STRATEGY TRADES
+        // ============================================================
+
+        let mut submitted = false;
+
+        for trade in view.trades.open_trades_for_strategy(
+            self.name(),
+        ) {
+            if trade.state != TradeState::Open {
+                continue;
+            }
+
+            let event = EngineEvent::CloseTrade {
+                trade_id: trade.id.clone(),
+                execution: ExitOrderRequest::market(),
+                reason: format!(
+                    "Early profit taking: {} ({:.2}%)",
+                    rule.name,
+                    basket.net_profit_percent,
+                ),
+                ts_ms,
+            };
+
+            match self.tx_engine.send(event) {
+                Ok(()) => submitted = true,
+
+                Err(err) => {
+                    eprintln!(
+                        "[EarlyProfitTaking] Failed to send close event: {}",
+                        err
+                    );
+                }
+            }
+        }
+
+        // ============================================================
+        // UPDATE COOLDOWN
+        // ============================================================
+
+        drop(view);
+
+        if submitted {
+            self.early_profit_taking.record_exit_request(ts_ms);
         }
     }
 }

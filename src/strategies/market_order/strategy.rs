@@ -257,6 +257,7 @@ impl MarketOrderStrategy {
             direction: self.direction,
             signal_px,
             target_notional: self.trade_amount_usd,
+            margin_usd: self.trade_amount_usd,
             order_type: OrderType::Market,
             time_in_force: TimeInForce::Day,
             limit_px: None,

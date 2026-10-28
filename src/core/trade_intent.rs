@@ -71,6 +71,12 @@ pub struct TradeIntent {
     /// `100.0` means approximately $100 of exposure.
     pub target_notional: f64,
 
+    /// Strategy-defined capital allocated to this trade.
+    ///
+    /// Used for basket profitability calculations.
+    /// Independent of actual venue margin requirements.
+    pub margin_usd: f64,
+
     // ============================================================
     // ENTRY EXECUTION
     // ============================================================
@@ -187,6 +193,10 @@ pub enum TradeIntentError {
         notional: f64,
     },
 
+    InvalidMargin {
+        margin_usd: f64,
+    },
+
     MissingLimitPrice {
         order_type: OrderType,
     },
@@ -298,6 +308,14 @@ impl TradeIntent {
             return Err(
                 TradeIntentError::InvalidTargetNotional {
                     notional: self.target_notional,
+                }
+            );
+        }
+
+        if !valid_positive_number(self.margin_usd) {
+            return Err(
+                TradeIntentError::InvalidMargin {
+                    margin_usd: self.margin_usd,
                 }
             );
         }

@@ -531,6 +531,7 @@ impl Engine {
             entry_signal_px: intent.signal_px,
             exit_signal_px: None,
             target_notional: intent.target_notional,
+            margin_usd: intent.margin_usd,
             take_profit_percent: intent.take_profit_percent,
             stop_loss_percent: intent.stop_loss_percent,
             emergency_stop_percent: intent.emergency_stop_percent,

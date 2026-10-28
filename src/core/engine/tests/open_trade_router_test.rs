@@ -238,6 +238,7 @@ async fn test_open_trade_routes_to_hyperliquid_adapter() {
 
             signal_px: 100_000.0,
             target_notional: 100.0,
+            margin_usd: 100.0,
 
             order_type: OrderType::Market,
             time_in_force: TimeInForce::Day,
