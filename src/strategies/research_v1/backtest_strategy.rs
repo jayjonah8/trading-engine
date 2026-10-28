@@ -163,7 +163,7 @@ impl ResearchV1BacktestStrategy {
 
             trade_amount_usd: 350.0,
             leverage: None,
-            entry_percent: Some(0.003),
+            entry_percent: Some(0.05),
             exit_profit_percent: Some(2.0),
             exit_loss_percent: Some(2.0),
             emergency_exit_percent: Some(5.0),
@@ -206,10 +206,10 @@ impl ResearchV1BacktestStrategy {
                     EarlyProfitRule {
                         name: "Standard Early Profit".to_string(),  // Rule identifier.
                         enabled: false,                              // Enable this rule.
-                        min_open_trades: 1,                         // Require at least 1 open trade.
+                        min_open_trades: 2,                         // Require at least 2 open trade.
                         max_open_trades: None,                      // No maximum open trade limit.
-                        min_margin_usd: 100.0,                      // Require at least $100 total basket margin.
-                        min_profit_percent: 4.3,                    // Close basket when net profit reaches 4.3%.
+                        min_margin_usd: 10.0,                      // Require at least $10 total basket margin.
+                        min_profit_percent: 0.005,                    // Close basket when net profit reaches 4.3%.
                         no_new_trade_for_ms: None,                  // No minimum inactivity period.
                     },
 
@@ -271,7 +271,7 @@ impl Strategy for ResearchV1BacktestStrategy {
                 if self.debug_mode {
                     print_log(
                         self.debug_mode,
-                        true,
+                        false,
                         format_args!(
                             "[RESEARCH V1 BACKTEST TRADE][{}] \
                             price=${:.4} | size={} | timestamp_ms={}",
@@ -423,38 +423,38 @@ impl Strategy for ResearchV1BacktestStrategy {
                                     emergency_stop_percent: self.emergency_exit_percent,
                                     stop_loss_delay_secs: self.min_sl_delay,
                                     trade_duration_secs: self.trade_duration_secs,
-                                    // trailing_stop: None,
-                                    trailing_stop: Some(TrailingStopConfig {
-                                        levels: vec![
-                                            // super tight for testing (slow)
-                                            // TrailingStopLevel {
-                                            //     profit_percent: 0.0,   // Initial activation threshold.
-                                            //     trail_percent: 0.010,  // Initial trailing distance.
-                                            // },
-                                            // TrailingStopLevel {
-                                            //     profit_percent: 0.005, // Second activation threshold.
-                                            //     trail_percent: 0.005,  // Second trailing distance.
-                                            // },
-                                            // TrailingStopLevel {
-                                            //     profit_percent: 0.010, // Third activation threshold.
-                                            //     trail_percent: 0.002,  // Third trailing distance.
-                                            // },
+                                    trailing_stop: None,
+                                    // trailing_stop: Some(TrailingStopConfig {
+                                    //     levels: vec![
+                                    //         // super tight for testing (slow)
+                                    //         // TrailingStopLevel {
+                                    //         //     profit_percent: 0.0,   // Initial activation threshold.
+                                    //         //     trail_percent: 0.010,  // Initial trailing distance.
+                                    //         // },
+                                    //         // TrailingStopLevel {
+                                    //         //     profit_percent: 0.005, // Second activation threshold.
+                                    //         //     trail_percent: 0.005,  // Second trailing distance.
+                                    //         // },
+                                    //         // TrailingStopLevel {
+                                    //         //     profit_percent: 0.010, // Third activation threshold.
+                                    //         //     trail_percent: 0.002,  // Third trailing distance.
+                                    //         // },
                                         
-                                            // more realistic (fast)
-                                            TrailingStopLevel {
-                                                profit_percent: 0.0,  // Initial activation threshold.
-                                                trail_percent: 0.50,  // Initial trailing distance.
-                                            },
-                                            TrailingStopLevel {
-                                                profit_percent: 0.50, // Second activation threshold.
-                                                trail_percent: 0.30,  // Second trailing distance.
-                                            },
-                                            TrailingStopLevel {
-                                                profit_percent: 1.00, // Third activation threshold.
-                                                trail_percent: 0.15,  // Third trailing distance.
-                                            },
-                                        ],
-                                    }),
+                                    //         // more realistic (fast)
+                                    //         TrailingStopLevel {
+                                    //             profit_percent: 0.0,  // Initial activation threshold.
+                                    //             trail_percent: 0.50,  // Initial trailing distance.
+                                    //         },
+                                    //         TrailingStopLevel {
+                                    //             profit_percent: 0.50, // Second activation threshold.
+                                    //             trail_percent: 0.30,  // Second trailing distance.
+                                    //         },
+                                    //         TrailingStopLevel {
+                                    //             profit_percent: 1.00, // Third activation threshold.
+                                    //             trail_percent: 0.15,  // Third trailing distance.
+                                    //         },
+                                    //     ],
+                                    // }),
                                     ts_ms: trade.timestamp_ms,
                                 };
 
@@ -527,38 +527,38 @@ impl Strategy for ResearchV1BacktestStrategy {
                                     emergency_stop_percent: self.emergency_exit_percent,
                                     stop_loss_delay_secs: self.min_sl_delay,
                                     trade_duration_secs: self.trade_duration_secs,
-                                    // trailing_stop: None,
-                                    trailing_stop: Some(TrailingStopConfig {
-                                        levels: vec![
-                                            // super tight for testing (slow)
-                                            // TrailingStopLevel {
-                                            //     profit_percent: 0.0,   // Initial activation threshold.
-                                            //     trail_percent: 0.010,  // Initial trailing distance.
-                                            // },
-                                            // TrailingStopLevel {
-                                            //     profit_percent: 0.005, // Second activation threshold.
-                                            //     trail_percent: 0.005,  // Second trailing distance.
-                                            // },
-                                            // TrailingStopLevel {
-                                            //     profit_percent: 0.010, // Third activation threshold.
-                                            //     trail_percent: 0.002,  // Third trailing distance.
-                                            // },
+                                    trailing_stop: None,
+                                    // trailing_stop: Some(TrailingStopConfig {
+                                    //     levels: vec![
+                                    //         // super tight for testing (slow)
+                                    //         // TrailingStopLevel {
+                                    //         //     profit_percent: 0.0,   // Initial activation threshold.
+                                    //         //     trail_percent: 0.010,  // Initial trailing distance.
+                                    //         // },
+                                    //         // TrailingStopLevel {
+                                    //         //     profit_percent: 0.005, // Second activation threshold.
+                                    //         //     trail_percent: 0.005,  // Second trailing distance.
+                                    //         // },
+                                    //         // TrailingStopLevel {
+                                    //         //     profit_percent: 0.010, // Third activation threshold.
+                                    //         //     trail_percent: 0.002,  // Third trailing distance.
+                                    //         // },
                                         
-                                            // more realistic (fast)
-                                            TrailingStopLevel {
-                                                profit_percent: 0.0,  // Initial activation threshold.
-                                                trail_percent: 0.50,  // Initial trailing distance.
-                                            },
-                                            TrailingStopLevel {
-                                                profit_percent: 0.50, // Second activation threshold.
-                                                trail_percent: 0.30,  // Second trailing distance.
-                                            },
-                                            TrailingStopLevel {
-                                                profit_percent: 1.00, // Third activation threshold.
-                                                trail_percent: 0.15,  // Third trailing distance.
-                                            },
-                                        ],
-                                    }),
+                                    //         // more realistic (fast)
+                                    //         TrailingStopLevel {
+                                    //             profit_percent: 0.0,  // Initial activation threshold.
+                                    //             trail_percent: 0.50,  // Initial trailing distance.
+                                    //         },
+                                    //         TrailingStopLevel {
+                                    //             profit_percent: 0.50, // Second activation threshold.
+                                    //             trail_percent: 0.30,  // Second trailing distance.
+                                    //         },
+                                    //         TrailingStopLevel {
+                                    //             profit_percent: 1.00, // Third activation threshold.
+                                    //             trail_percent: 0.15,  // Third trailing distance.
+                                    //         },
+                                    //     ],
+                                    // }),
                                     ts_ms: trade.timestamp_ms,
                                 };
 
@@ -609,7 +609,7 @@ impl Strategy for ResearchV1BacktestStrategy {
                 if self.debug_mode {
                     print_log(
                         self.debug_mode,
-                        true,
+                        false,
                         format!(
                             "[RESEARCH V1 BACKTEST QUOTE][{}] \
                              bid=${:.4} | ask=${:.4}",
@@ -653,7 +653,7 @@ impl Strategy for ResearchV1BacktestStrategy {
                 if self.debug_mode {
                     print_log(
                         self.debug_mode,
-                        true,
+                        false,
                         format_args!(
                             "[RESEARCH V1 BACKTEST CANDLE][{}][{}s] \
                             stored={}",
