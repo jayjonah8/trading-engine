@@ -1,6 +1,9 @@
 #![allow(dead_code)]
 
-use std::sync::Arc;
+use std::{
+    collections::HashMap,
+    sync::Arc,
+};
 
 use crate::core::{
     config::Config,
@@ -13,6 +16,8 @@ use crate::core::{
     },
     venue::VenueState,
 };
+
+use crate::core::engine::state::LastPrice;
 
 
 /// ============================================================
@@ -64,6 +69,9 @@ pub struct EngineView {
 
     /// Convenience field so readers don't have to count every time.
     pub open_trades: usize,
+
+    /// Latest engine-maintained market price for each symbol.
+    pub last_px: HashMap<String, LastPrice>,
 }
 
 
@@ -75,6 +83,7 @@ impl EngineView {
         general: &General,
         state: &EngineState,
         venue_state: &VenueState,
+        last_px: &HashMap<String, LastPrice>,
     ) -> Arc<Self> {
         Arc::new(
             Self {
@@ -83,6 +92,7 @@ impl EngineView {
                 trades: state.trades.clone(),
                 orders: state.orders.clone(),
                 venue_state: venue_state.clone(),
+                last_px: last_px.clone(),
                 open_trades: state.trades.count_open(),
             }
         )
@@ -125,6 +135,7 @@ impl EngineView {
                 trades: Trades::default(),
                 orders: Orders::default(),
                 venue_state: VenueState::default(),
+                last_px: HashMap::new(),
                 open_trades: 0,
             }
         )

@@ -268,6 +268,7 @@ impl Engine {
             &self.general,
             &self.state,
             &self.venue_state,
+            &self.last_px,
         );
 
         let _ = self.tx_view.send_replace(view);

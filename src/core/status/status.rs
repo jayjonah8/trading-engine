@@ -198,26 +198,11 @@ impl Engine {
     // TOTAL UNREALIZED PNL
     // ============================================================
 
-    /// Calculates gross unrealized PnL across all trades
-    /// with remaining open quantity.
-    ///
-    /// Uses each trade's individual unrealized_pnl() method.
-    ///
-    /// Trades without a known market price contribute zero.
-    ///
-    /// Does not deduct execution fees or estimated closing costs.
+    /// Returns total gross unrealized PnL across all open trades.
     pub fn get_total_unrealized_pnl(&self) -> f64 {
         self.state
             .trades
-            .iter_with_open_quantity()
-            .filter_map(|trade| {
-                self.last_px
-                    .get(&trade.symbol)
-                    .map(|last| {
-                        trade.unrealized_pnl(last.px)
-                    })
-            })
-            .sum()
+            .total_unrealized_pnl(&self.last_px)
     }
 
 
@@ -225,43 +210,11 @@ impl Engine {
     // TOTAL NET UNREALIZED PNL
     // ============================================================
 
-    /// Calculates net unrealized PnL across all Trades
-    /// with remaining open quantity.
-    ///
-    /// Net Unrealized PnL:
-    ///
-    ///     Gross Unrealized PnL
-    ///     - Remaining Entry Fees
-    ///     - Estimated Exit Fees
-    ///
-    /// Estimated exit fees are assumed equal to the remaining
-    /// entry fees. Actual exit fees are recorded when fills occur.
+    /// Returns total net unrealized PnL across all open trades.
     pub fn get_total_net_unrealized_pnl(&self) -> f64 {
         self.state
             .trades
-            .iter_with_open_quantity()
-            .filter_map(|trade| {
-                self.last_px
-                    .get(&trade.symbol)
-                    .map(|last| {
-                        // Gross unrealized PnL.
-                        let gross_pnl = trade.unrealized_pnl(last.px);
-
-                        // Actual entry fees attributable to remaining quantity.
-                        let remaining_entry_fees =
-                            (trade.entry_fees - trade.allocated_entry_fees)
-                                .max(0.0);
-
-                        // Estimate exit fees equal to remaining entry fees.
-                        let estimated_exit_fees = remaining_entry_fees;
-
-                        // Net unrealized PnL after estimated round-trip fees.
-                        gross_pnl
-                            - remaining_entry_fees
-                            - estimated_exit_fees
-                    })
-            })
-            .sum()
+            .total_net_unrealized_pnl(&self.last_px)
     }
 
 

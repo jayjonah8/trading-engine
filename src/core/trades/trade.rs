@@ -178,7 +178,10 @@ pub struct Trade {
 }
 
 
+
+
 impl Trade {
+
     // ============================================================
     // CALCULATE UNREALIZED PNL
     // ============================================================
@@ -210,6 +213,50 @@ impl Trade {
                 (entry_px - current_px) * self.quantity
             }
         }
+    }
+
+
+    // ============================================================
+    // CALCULATE NET UNREALIZED PNL
+    // ============================================================
+
+    /// Calculates a single trade's net unrealized PnL.
+    ///
+    /// Net Unrealized PnL:
+    ///
+    ///     Gross Unrealized PnL
+    ///     - Remaining Entry Fees
+    ///     - Estimated Exit Fees
+    ///
+    /// Remaining entry fees exclude fees already allocated
+    /// to realized PnL through partial exits.
+    ///
+    /// Estimated exit fees are assumed equal to the remaining
+    /// entry fees.
+    ///
+    /// Supports:
+    /// - Long and short trades
+    /// - Partial fills
+    /// - Partial exits
+    /// - Multiple trades on the same symbol
+    ///
+    /// Does not include funding or slippage.
+    pub fn net_unrealized_pnl(&self, current_px: f64) -> f64 {
+        // Gross unrealized PnL.
+        let gross_pnl = self.unrealized_pnl(current_px);
+
+        // Entry fees attributable to remaining open quantity.
+        let remaining_entry_fees =
+            (self.entry_fees - self.allocated_entry_fees)
+                .max(0.0);
+
+        // Estimate exit fees equal to remaining entry fees.
+        let estimated_exit_fees = remaining_entry_fees;
+
+        // Net unrealized PnL after estimated round-trip fees.
+        gross_pnl
+            - remaining_entry_fees
+            - estimated_exit_fees
     }
 }
 

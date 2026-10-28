@@ -8,6 +8,8 @@ use crate::core::trades::{
     trade::Trade,
 };
 
+use crate::core::engine::state::LastPrice;
+
 /// Authoritative collection of strategy trades known by the engine.
 ///
 /// `Trades` represents logical strategy-level trade lifecycles. It does not
@@ -136,6 +138,54 @@ impl Trades {
     }
 
 
+    // ============================================================
+    // ITERATE TRADES WITH OPEN QUANTITY FOR STRATEGY
+    // ============================================================
+
+    /// Iterates over trades belonging to a specific strategy
+    /// that still have remaining executed quantity.
+    ///
+    /// Includes Opening, Open, and Closing trades with
+    /// positive remaining quantity.
+    ///
+    /// Excludes trades belonging to other strategies.
+    pub fn iter_with_open_quantity_for_strategy<'a>(
+        &'a self,
+        strategy_id: &'a str,
+    ) -> impl Iterator<Item = &'a Trade> + 'a {
+        self.iter_with_open_quantity()
+            .filter(move |trade| {
+                trade.strategy_id == strategy_id
+            })
+    }
+
+
+    // ============================================================
+    // LAST OPEN TRADE TIMESTAMP FOR STRATEGY
+    // ============================================================
+
+    /// Returns the latest confirmed first-entry timestamp
+    /// among all recorded trades belonging to the strategy.
+    ///
+    /// Includes closed trades that remain in the collection.
+    ///
+    /// Does not track subsequent entry fills for an existing trade.
+    pub fn last_open_ts_for_strategy(
+        &self,
+        strategy_id: &str,
+    ) -> Option<i64> {
+        self.trades
+            .values()
+            .filter(|trade| {
+                trade.strategy_id == strategy_id
+            })
+            .filter_map(|trade| {
+                trade.opened_ts_ms
+            })
+            .max()
+    }
+
+
     /// Returns the number of active strategy trades.
     ///
     /// Active trades include trades that are `Opening`, `Open`, or `Closing`.
@@ -153,6 +203,24 @@ impl Trades {
     /// Trades that are still `Opening`, already `Closing`, or `Closed` are excluded.
     pub fn count_open(&self) -> usize {
         self.trades.values().filter(|trade| trade.state == TradeState::Open).count()
+    }
+
+
+    // ============================================================
+    // COUNT TRADES WITH OPEN QUANTITY FOR STRATEGY
+    // ============================================================
+
+    /// Counts trades belonging to the specified strategy
+    /// that have remaining executed quantity.
+    ///
+    /// Includes partially filled Opening trades and
+    /// partially exited Closing trades.
+    pub fn count_with_open_quantity_for_strategy(
+        &self,
+        strategy_id: &str,
+    ) -> usize {
+        self.iter_with_open_quantity_for_strategy(strategy_id)
+            .count()
     }
 
 
@@ -253,5 +321,127 @@ impl Trades {
             .filter(|trade| {
                 trade.quantity > f64::EPSILON
             })
+    }
+}
+
+
+
+
+impl Trades {
+
+    // ============================================================
+    // TOTAL UNREALIZED PNL
+    // ============================================================
+
+    /// Calculates gross unrealized PnL across all trades
+    /// with remaining open quantity.
+    ///
+    /// Uses each trade's individual unrealized_pnl() method.
+    ///
+    /// Trades without a known market price contribute zero.
+    ///
+    /// Does not deduct execution fees or estimated closing costs.
+    pub fn total_unrealized_pnl(
+        &self,
+        last_px: &HashMap<String, LastPrice>,
+    ) -> f64 {
+        self.iter_with_open_quantity()
+            .filter_map(|trade| {
+                last_px
+                    .get(&trade.symbol)
+                    .map(|last| {
+                        trade.unrealized_pnl(last.px)
+                    })
+            })
+            .sum()
+    }
+
+
+    // ============================================================
+    // STRATEGY TOTAL UNREALIZED PNL
+    // ============================================================
+
+    /// Calculates gross unrealized PnL across trades belonging
+    /// exclusively to the specified strategy.
+    ///
+    /// Includes trades with remaining open quantity.
+    ///
+    /// Trades without a known market price contribute zero.
+    ///
+    /// Does not deduct execution fees or estimated closing costs.
+    pub fn total_unrealized_pnl_for_strategy(
+        &self,
+        strategy_id: &str,
+        last_px: &HashMap<String, LastPrice>,
+    ) -> f64 {
+        self.iter_with_open_quantity_for_strategy(strategy_id)
+            .filter_map(|trade| {
+                last_px
+                    .get(&trade.symbol)
+                    .map(|last| {
+                        trade.unrealized_pnl(last.px)
+                    })
+            })
+            .sum()
+    }
+
+
+    // ============================================================
+    // TOTAL NET UNREALIZED PNL
+    // ============================================================
+
+    /// Calculates net unrealized PnL across all Trades
+    /// with remaining open quantity.
+    ///
+    /// Net Unrealized PnL:
+    ///
+    ///     Gross Unrealized PnL
+    ///     - Remaining Entry Fees
+    ///     - Estimated Exit Fees
+    ///
+    /// Estimated exit fees are assumed equal to the remaining
+    /// entry fees. Actual exit fees are recorded when fills occur.
+    pub fn total_net_unrealized_pnl(
+        &self,
+        last_px: &HashMap<String, LastPrice>,
+    ) -> f64 {
+        self.iter_with_open_quantity()
+            .filter_map(|trade| {
+                last_px
+                    .get(&trade.symbol)
+                    .map(|last| {
+                        trade.net_unrealized_pnl(last.px)
+                    })
+            })
+            .sum()
+    }
+
+
+    // ============================================================
+    // STRATEGY TOTAL NET UNREALIZED PNL
+    // ============================================================
+
+    /// Calculates net unrealized PnL across trades belonging
+    /// exclusively to the specified strategy.
+    ///
+    /// Includes trades with remaining open quantity.
+    ///
+    /// Uses each trade's net_unrealized_pnl() method.
+    ///
+    /// Trades without a known market price contribute zero.
+    pub fn total_net_unrealized_pnl_for_strategy(
+        &self,
+        strategy_id: &str,
+        last_px: &HashMap<String, LastPrice>,
+    ) -> f64 {
+        self.iter_with_open_quantity_for_strategy(strategy_id)
+            .filter_map(|trade| {
+                last_px
+                    .get(&trade.symbol)
+                    .map(|last| {
+                        trade.net_unrealized_pnl(last.px)
+                    })
+            })
+            .sum()
     }
 }

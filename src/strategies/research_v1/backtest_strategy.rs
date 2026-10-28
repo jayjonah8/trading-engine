@@ -68,7 +68,7 @@ use super::shared::{
   - Try to get another different 6 months of older data during a bear market so we can backtest bull and bear markets and see if the bot performs
     we in both markets. 
 
-    
+
 * (Done!!) (Do a simple version first) 
   Start adding the regime change logic. 
   - Mabye add a market wide atr indicator if you need to. 
@@ -982,7 +982,7 @@ impl ResearchV1BacktestStrategy {
 
                     if self.debug_mode {
                         print_log(
-                            self.debug_mode,
+                            true,
                             true,
                             format_args!(
                                 "[RESEARCH V1 BACKTEST REGIME CHANGE] \
