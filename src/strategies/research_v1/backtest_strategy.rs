@@ -110,6 +110,7 @@ use super::shared::{
   - Consider having a Live, Paper, Simulation collection.
   - Also add the option to save the backtest output when everything if fully done.
 
+  (Important!!)
 * For the live production version, trade_margin_usd() function below must take into account the assets max_leverage and use that instead.
 
 ---------------------------------------
@@ -171,9 +172,10 @@ impl ResearchV1BacktestStrategy {
             trade_duration_secs: None, // 600 = 10 minutes, 3600 = 1hr
             min_volume_usd: Some(150_000.0), 
             max_24h_move_pct: Some(15.00),
-            market_regime: MarketRegime::MeanReversion,
-            track_price_window_while_in_trade: false,
 
+            market_regime: MarketRegime::MeanReversion,
+
+            track_price_window_while_in_trade: false,
             price_window: PriceWindowTs::new(
                 1800, // 30 min rolling window
                 false,
@@ -183,6 +185,9 @@ impl ResearchV1BacktestStrategy {
                 candle_config.history_retention,
             ),
 
+            // false = bypass can_trade check, 
+            // true = enforce can_trade check.
+            enable_trading_eligibility_check: false, 
             can_trade: HashMap::new(),
 
             black_swan_protection: BlackSwanProtection::new(
@@ -209,7 +214,7 @@ impl ResearchV1BacktestStrategy {
                         min_open_trades: 2,                         // Require at least 2 open trade.
                         max_open_trades: None,                      // No maximum open trade limit.
                         min_margin_usd: 10.0,                      // Require at least $10 total basket margin.
-                        min_profit_percent: 0.005,                    // Close basket when net profit reaches 4.3%.
+                        min_profit_percent: 0.005,                   // Close basket when net profit reaches the %.
                         no_new_trade_for_ms: None,                  // No minimum inactivity period.
                     },
 
@@ -291,14 +296,17 @@ impl Strategy for ResearchV1BacktestStrategy {
                     trade.timestamp_ms,
                 );
 
-                // Read the latest cached trading eligibility for this symbol.
-                let can_trade = true;
-                // let can_trade = self.can_trade
-                //     .get(&ev.symbol)
-                //     .copied()
-                //     .unwrap_or(false);
+                // Read the latest cached trading eligibility check for this symbol.
+                // When disabled, all symbols are eligible for trading.
+                let can_trade = if self.enable_trading_eligibility_check {
+                    self.can_trade
+                        .get(&ev.symbol)
+                        .copied()
+                        .unwrap_or(false)
+                } else {
+                    true
+                };
 
-               
                 // ====================================================
                 // ACTIVE STRATEGY TRADE CHECK
                 // ====================================================
@@ -640,15 +648,15 @@ impl Strategy for ResearchV1BacktestStrategy {
                     current_ts,
                 );
 
-                let symbols = {
-                    let view = self.rx_view.borrow();
-                    view.cfg.symbols.clone()
-                };
+                // let symbols = {
+                //     let view = self.rx_view.borrow();
+                //     view.cfg.symbols.clone()
+                // };
 
-                self.update_market_regime(
-                    timeframe,
-                    &symbols,
-                );
+                // self.update_market_regime(
+                //     timeframe,
+                //     &symbols,
+                // );
 
                 if self.debug_mode {
                     print_log(

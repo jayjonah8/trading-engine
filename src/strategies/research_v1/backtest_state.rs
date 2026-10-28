@@ -86,6 +86,11 @@ pub struct ResearchV1BacktestStrategy {
     // Closed multi-timeframe candle history.
     pub candle_history: CandleHistory,
 
+    /// Enables or disables can_trade trading eligibility checks.
+    /// When enabled, trades must pass the cached symbol eligibility check.
+    /// When disabled, all symbols are considered eligible for trading.
+    pub enable_trading_eligibility_check: bool,
+
     // Cached trading eligibility for each symbol (24hr volume checks etc).
     // Updated whenever a completed one-minute candle arrives.
     pub can_trade: HashMap<String, bool>,

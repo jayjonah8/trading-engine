@@ -118,9 +118,10 @@ impl ResearchV1Strategy {
             trade_duration_secs: Some(3_600), // 1 hour
             min_volume_usd: Some(450_000.0), 
             max_24h_move_pct: Some(15.00),
-            market_regime: MarketRegime::MeanReversion,
-            track_price_window_while_in_trade: false,
 
+            market_regime: MarketRegime::MeanReversion,
+
+            track_price_window_while_in_trade: false,
             price_window: PriceWindowTs::new(
                 1800,  // 30 min rolling window
                 false, // Enable or disable debug logging.
@@ -130,6 +131,9 @@ impl ResearchV1Strategy {
                 candle_config.history_retention,
             ),
 
+            // false = bypass can_trade check, 
+            // true = enforce can_trade check.
+            enable_trading_eligibility_check: true, 
             can_trade: HashMap::new(),
 
             black_swan_protection: BlackSwanProtection::new(
@@ -259,13 +263,17 @@ impl Strategy for ResearchV1Strategy {
                     quote.timestamp_ms,
                 );
 
-                // Read the latest cached trading eligibility for this symbol.
-                let can_trade = self.can_trade
-                    .get(&ev.symbol)
-                    .copied()
-                    .unwrap_or(false);
+                // Read the latest cached trading eligibility check for this symbol.
+                // When disabled, all symbols are eligible for trading.
+                let can_trade = if self.enable_trading_eligibility_check {
+                    self.can_trade
+                        .get(&ev.symbol)
+                        .copied()
+                        .unwrap_or(false)
+                } else {
+                    true
+                };
 
-               
                 // ====================================================
                 // ACTIVE STRATEGY TRADE CHECK
                 // ====================================================
@@ -532,15 +540,15 @@ impl Strategy for ResearchV1Strategy {
                     current_ts,
                 );
 
-                let symbols = {
-                    let view = self.rx_view.borrow();
-                    view.cfg.symbols.clone()
-                };
+                // let symbols = {
+                //     let view = self.rx_view.borrow();
+                //     view.cfg.symbols.clone()
+                // };
 
-                self.update_market_regime(
-                    timeframe,
-                    &symbols,
-                );
+                // self.update_market_regime(
+                //     timeframe,
+                //     &symbols,
+                // );
 
                 if self.debug_mode {
                     print_log(
