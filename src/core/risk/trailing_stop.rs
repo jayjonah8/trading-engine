@@ -643,6 +643,17 @@ impl TrailingStopState {
 
         self.advance_stop(direction, entry_px, market_px)?;
 
+        // ====================================================
+        // TRAILING STOP DEBUG
+        // ====================================================
+
+        println!(
+            "[TRAILING STOP] best_px={:?} | max_pnl={:.5}% | stop_px={:?}",
+            self.best_px,
+            self.max_pnl_percent,
+            self.stop_px,
+        );
+
         Ok(false)
     }
 

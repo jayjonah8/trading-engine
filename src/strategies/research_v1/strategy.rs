@@ -25,6 +25,10 @@ use crate::{
         execution::ExitOrderRequest,
         trade_intent::TradeIntent,
         trades::Direction,
+        risk::trailing_stop::{
+            TrailingStopConfig,
+            TrailingStopLevel,
+        },
     },
 
     market::{
@@ -148,7 +152,7 @@ impl ResearchV1Strategy {
                 vec![
                     EarlyProfitRule {
                         name: "Standard Early Profit".to_string(),  // Rule identifier.
-                        enabled: true,                              // Enable this rule.
+                        enabled: false,                              // Enable this rule.
                         min_open_trades: 1,                         // Require at least 1 open trade.
                         max_open_trades: None,                      // No maximum open trade limit.
                         min_margin_usd: 100.0,                      // Require at least $100 total basket margin.

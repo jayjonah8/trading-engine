@@ -25,6 +25,10 @@ use crate::{
         execution::ExitOrderRequest,
         trade_intent::TradeIntent,
         trades::Direction,
+        risk::trailing_stop::{
+            TrailingStopConfig,
+            TrailingStopLevel,
+        },
     },
 
     market::{
@@ -106,7 +110,7 @@ use super::shared::{
   - Consider having a Live, Paper, Simulation collection.
   - Also add the option to save the backtest output when everything if fully done.
 
-* For the live production version, trade_margin_usd must take into account the assets max_leverage and use that instead.
+* For the live production version, trade_margin_usd() function below must take into account the assets max_leverage and use that instead.
 
 ---------------------------------------
 
@@ -157,15 +161,15 @@ impl ResearchV1BacktestStrategy {
             tx_engine,
             rx_view,
 
-            trade_amount_usd: 100.0,
+            trade_amount_usd: 350.0,
             leverage: None,
-            entry_percent: Some(2.0),
+            entry_percent: Some(0.003),
             exit_profit_percent: Some(2.0),
             exit_loss_percent: Some(2.0),
             emergency_exit_percent: Some(5.0),
-            min_sl_delay: Some(1800), // 30 min
-            trade_duration_secs: Some(3_600), // 1 hour
-            min_volume_usd: Some(450_000.0), 
+            min_sl_delay: None, // 1800 = 30 min
+            trade_duration_secs: None, // 600 = 10 minutes, 3600 = 1hr
+            min_volume_usd: Some(150_000.0), 
             max_24h_move_pct: Some(15.00),
             market_regime: MarketRegime::MeanReversion,
             track_price_window_while_in_trade: false,
@@ -181,7 +185,7 @@ impl ResearchV1BacktestStrategy {
 
             can_trade: HashMap::new(),
 
-             black_swan_protection: BlackSwanProtection::new(
+            black_swan_protection: BlackSwanProtection::new(
                 true,   // Enable protection.
                 false,  // Enable or disable debug logging.
                 15.0,   // Halt when average absolute 24-hour movement reaches 15%.
@@ -201,7 +205,7 @@ impl ResearchV1BacktestStrategy {
                 vec![
                     EarlyProfitRule {
                         name: "Standard Early Profit".to_string(),  // Rule identifier.
-                        enabled: true,                              // Enable this rule.
+                        enabled: false,                              // Enable this rule.
                         min_open_trades: 1,                         // Require at least 1 open trade.
                         max_open_trades: None,                      // No maximum open trade limit.
                         min_margin_usd: 100.0,                      // Require at least $100 total basket margin.
@@ -288,10 +292,11 @@ impl Strategy for ResearchV1BacktestStrategy {
                 );
 
                 // Read the latest cached trading eligibility for this symbol.
-                let can_trade = self.can_trade
-                    .get(&ev.symbol)
-                    .copied()
-                    .unwrap_or(false);
+                let can_trade = true;
+                // let can_trade = self.can_trade
+                //     .get(&ev.symbol)
+                //     .copied()
+                //     .unwrap_or(false);
 
                
                 // ====================================================
@@ -418,7 +423,38 @@ impl Strategy for ResearchV1BacktestStrategy {
                                     emergency_stop_percent: self.emergency_exit_percent,
                                     stop_loss_delay_secs: self.min_sl_delay,
                                     trade_duration_secs: self.trade_duration_secs,
-                                    trailing_stop: None,
+                                    // trailing_stop: None,
+                                    trailing_stop: Some(TrailingStopConfig {
+                                        levels: vec![
+                                            // super tight for testing (slow)
+                                            // TrailingStopLevel {
+                                            //     profit_percent: 0.0,   // Initial activation threshold.
+                                            //     trail_percent: 0.010,  // Initial trailing distance.
+                                            // },
+                                            // TrailingStopLevel {
+                                            //     profit_percent: 0.005, // Second activation threshold.
+                                            //     trail_percent: 0.005,  // Second trailing distance.
+                                            // },
+                                            // TrailingStopLevel {
+                                            //     profit_percent: 0.010, // Third activation threshold.
+                                            //     trail_percent: 0.002,  // Third trailing distance.
+                                            // },
+                                        
+                                            // more realistic (fast)
+                                            TrailingStopLevel {
+                                                profit_percent: 0.0,  // Initial activation threshold.
+                                                trail_percent: 0.50,  // Initial trailing distance.
+                                            },
+                                            TrailingStopLevel {
+                                                profit_percent: 0.50, // Second activation threshold.
+                                                trail_percent: 0.30,  // Second trailing distance.
+                                            },
+                                            TrailingStopLevel {
+                                                profit_percent: 1.00, // Third activation threshold.
+                                                trail_percent: 0.15,  // Third trailing distance.
+                                            },
+                                        ],
+                                    }),
                                     ts_ms: trade.timestamp_ms,
                                 };
 
@@ -491,7 +527,38 @@ impl Strategy for ResearchV1BacktestStrategy {
                                     emergency_stop_percent: self.emergency_exit_percent,
                                     stop_loss_delay_secs: self.min_sl_delay,
                                     trade_duration_secs: self.trade_duration_secs,
-                                    trailing_stop: None,
+                                    // trailing_stop: None,
+                                    trailing_stop: Some(TrailingStopConfig {
+                                        levels: vec![
+                                            // super tight for testing (slow)
+                                            // TrailingStopLevel {
+                                            //     profit_percent: 0.0,   // Initial activation threshold.
+                                            //     trail_percent: 0.010,  // Initial trailing distance.
+                                            // },
+                                            // TrailingStopLevel {
+                                            //     profit_percent: 0.005, // Second activation threshold.
+                                            //     trail_percent: 0.005,  // Second trailing distance.
+                                            // },
+                                            // TrailingStopLevel {
+                                            //     profit_percent: 0.010, // Third activation threshold.
+                                            //     trail_percent: 0.002,  // Third trailing distance.
+                                            // },
+                                        
+                                            // more realistic (fast)
+                                            TrailingStopLevel {
+                                                profit_percent: 0.0,  // Initial activation threshold.
+                                                trail_percent: 0.50,  // Initial trailing distance.
+                                            },
+                                            TrailingStopLevel {
+                                                profit_percent: 0.50, // Second activation threshold.
+                                                trail_percent: 0.30,  // Second trailing distance.
+                                            },
+                                            TrailingStopLevel {
+                                                profit_percent: 1.00, // Third activation threshold.
+                                                trail_percent: 0.15,  // Third trailing distance.
+                                            },
+                                        ],
+                                    }),
                                     ts_ms: trade.timestamp_ms,
                                 };
 
