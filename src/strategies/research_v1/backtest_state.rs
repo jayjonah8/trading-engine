@@ -16,6 +16,7 @@ use crate::{
 
     market::candle_history::CandleHistory,
 
+    toolbox::MarketRegime,
     toolbox::price_window_ts::PriceWindowTs,
     toolbox::TradeCooldown,
     toolbox::TradeDurationWatchdog,
@@ -24,8 +25,6 @@ use crate::{
         EarlyProfitTaking,
     },
 };
-
-use super::shared::MarketRegime;
 
 
 pub struct ResearchV1BacktestStrategy {

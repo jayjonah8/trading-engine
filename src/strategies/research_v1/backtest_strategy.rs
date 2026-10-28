@@ -47,6 +47,7 @@ use crate::{
 
     strategies::Strategy,
 
+    toolbox::MarketRegime,
     toolbox::price_window_ts::PriceWindowTs,
     toolbox::TradeCooldown,
     toolbox::TradeDurationWatchdog,
@@ -61,15 +62,29 @@ use crate::{
 
 use super::backtest_state::ResearchV1BacktestStrategy;
 
-use super::shared::{
-    MarketRegime,
-    market_regime_manager,
-};
+
 
 /* 
 // TODO:
 
+  (Delete the current regime change logic, saving it first in old code)
+* Start implementing the continuous multi-sync logic as a toolbox feature only if you need to
+  since the goal is to be able to detect the trending mode without using multi-sync logic. 
+  - Make it change from MeanReversion -> Trending and vice-versa only for now
+  - Later you can detect slow markets though one of you 3 market wide indicators and try to dynamically
+    make the trade durations shorter. You will need to play around with with. Still only keep the 2 Mean Rev and Tredning regimes
+    handling this on the side.
+  - Later you can even test this like:
+    
+
+* - You have to fix the early profit timestamp feature that deletes after a trade is gone.
+    - Maybe you can save all trades for an few days and use that to search to the last timestamp for that trade it or something.
+
+
 * Test on 3 months of real data to see its performance.
+  - Test on a month of volatile trading lke when BTC when from 60k -> 80k, and when you get good results,
+    test on a month of non-volatile trading like when BTC was sideways at 60k for a while.
+    Then you will be able to decided what works better during which market movement behavior.   
   - Check your AWS bill first to make sure your currect data is not too expensive.
   - Create an engine helper function that grabs all the symbols used inside the backtest data to pass them through the backtest run.
     This way you are able to trade every assest inside the backtest run just like you would in real life.
@@ -86,8 +101,7 @@ use super::shared::{
 ---------------------------------------
 
 
-* Start implementing the continuous multi-sync logic as a toolbox feature only if you need to
-  since the goal is to be able to detect the trending mode without using multi-sync logic. 
+
 
 * When you have good initial results, add the weighted randomness to the bot
   for more dynamic behavior accross all settings. 
@@ -648,16 +662,6 @@ impl Strategy for ResearchV1BacktestStrategy {
                     current_ts,
                 );
 
-                // let symbols = {
-                //     let view = self.rx_view.borrow();
-                //     view.cfg.symbols.clone()
-                // };
-
-                // self.update_market_regime(
-                //     timeframe,
-                //     &symbols,
-                // );
-
                 if self.debug_mode {
                     print_log(
                         self.debug_mode,
@@ -1147,115 +1151,3 @@ impl ResearchV1BacktestStrategy {
 
 
 
-impl ResearchV1BacktestStrategy {
-
-    // ============================================================
-    // UPDATE MARKET REGIME
-    // ============================================================
-
-    /// Evaluates synchronized market-wide indicators and updates
-    /// the current market regime when conditions change.
-    fn update_market_regime(
-        &mut self,
-        timeframe: Timeframe,
-        symbols: &[String],
-    ) {
-        // ====================================================
-        // TIMEFRAME FILTER
-        // ====================================================
-
-        // Only evaluate market regimes using 1-minute candles.
-        if timeframe != Timeframe::ONE_MINUTE {
-            return;
-        }
-
-        // ====================================================
-        // MARKET-WIDE INDICATORS
-        // ====================================================
-
-        let expansion = market_volume_expansion(
-            &self.candle_history,
-            symbols,
-            timeframe,
-            20,    // Volume lookback period.
-            1.5,   // Individual asset RVOL expansion threshold.
-            80.0,  // Minimum synchronized asset percentage.
-        );
-
-        let acceleration = market_volume_acceleration(
-            &self.candle_history,
-            symbols,
-            timeframe,
-            20,    // Volume lookback period.
-            80.0,  // Minimum synchronized asset percentage.
-        );
-
-        let breadth = market_breadth(
-            &self.candle_history,
-            symbols,
-            timeframe,
-            5,     // Price movement lookback period.
-            80.0,  // Minimum synchronized asset percentage.
-        );
-
-
-        // ====================================================
-        // UPDATE MARKET REGIME
-        // ====================================================
-
-        if let (
-            Some(expansion),
-            Some(acceleration),
-            Some(breadth),
-        ) = (
-            expansion,
-            acceleration,
-            breadth,
-        ) {
-            if let Some(new_regime) = market_regime_manager(
-                &expansion,
-                &acceleration,
-                &breadth,
-
-                50.0, // At least 50% of assets have elevated RVOL.
-                60.0, // At least 60% of assets have increasing RVOL.
-                65.0, // At least 65% of assets move in the same direction.
-            ) {
-
-                // ====================================================
-                // REGIME CHANGE
-                // ====================================================
-
-                if new_regime != self.market_regime {
-
-                    if self.debug_mode {
-                        print_log(
-                            true,
-                            true,
-                            format_args!(
-                                "[RESEARCH V1 BACKTEST REGIME CHANGE] \
-                                {:?} -> {:?} | \
-                                timeframe={}s | \
-                                timestamp={} | \
-                                expansion={:.2}% | \
-                                acceleration={:.2}% | \
-                                bullish={:.2}% | \
-                                bearish={:.2}%",
-                                self.market_regime,
-                                new_regime,
-                                timeframe.as_secs(),
-                                expansion.snapshot_end,
-                                expansion.expanding_assets_pct,
-                                acceleration.accelerating_assets_pct,
-                                breadth.bullish_assets_pct,
-                                breadth.bearish_assets_pct,
-                            ),
-                        );
-                    }
-
-                    self.market_regime = new_regime;
-                }
-            }
-        }
-    }
-}
