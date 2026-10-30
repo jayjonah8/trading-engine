@@ -23,6 +23,13 @@ use super::{
 };
 
 
+// WARNING:
+// Multi-Sync relies on the engine retaining completed trade records
+// until their realized PnL has been processed and recorded.
+// Premature "Trade" removal or pruning from engine state may cause missed trades,
+// incorrect PnL accounting, and protection failures.
+
+
 // ============================================================
 // MULTI-SYNC TOOLBOX
 // ============================================================

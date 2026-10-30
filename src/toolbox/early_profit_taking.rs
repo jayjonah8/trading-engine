@@ -7,6 +7,13 @@ use crate::core::{
     trades::trades::Trades,
 };
 
+
+// WARNING:
+// Early Profit Taking relies on the engine retaining trade records
+// to accurately determine the latest trade-opening timestamp.
+// Premature "Trade" removal or pruning from engine state may cause incorrect behavior.
+
+
 // ============================================================
 // EARLY PROFIT TAKING TOOLBOX
 // ============================================================
