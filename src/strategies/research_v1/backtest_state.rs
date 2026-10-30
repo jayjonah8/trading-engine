@@ -41,6 +41,13 @@ pub struct ResearchV1BacktestStrategy {
     // Receiver providing the latest shared engine state.
     pub(crate) rx_view: watch::Receiver<Arc<EngineView>>,
 
+    /// Maximum number of simultaneous open trades allowed for this strategy.
+    pub max_trades_allowed: usize,
+
+    /// Strategy-level capital reference used to calculate Multi-Sync PnL percentages.
+    /// Can be updated during runtime to support automatic compounding.
+    pub reference_margin_usd: f64,
+
     // Amount of USD allocated to each trade before leverage (e.g. 100.0 = $100)
     pub trade_amount_usd: f64,
 

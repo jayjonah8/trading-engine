@@ -111,7 +111,10 @@ impl ResearchV1Strategy {
             tx_engine,
             rx_view,
 
-            trade_amount_usd: 100.0,
+            max_trades_allowed: 8,
+            reference_margin_usd: 1600.0,
+            trade_amount_usd: 200.0,
+
             leverage: None,
             entry_percent: Some(2.0),
             exit_profit_percent: Some(2.0),
@@ -290,17 +293,35 @@ impl Strategy for ResearchV1Strategy {
                 }
 
                 // ====================================================
-                // MULTI-SYNC MARKET REGIME UPDATE
+                // MULTI-SYNC CLOSED TRADE PROCESSING
                 // ====================================================
-                // Update the strategy's market regime before evaluating
-                // new trade entries.
                 //
-                // Active window: reverse the baseline regime.
-                // Expired window: restore the baseline regime.
-                self.multi_sync.on_timer_tick(
-                    quote.timestamp_ms,
-                    &mut self.market_regime,
-                );
+                // Poll the latest authoritative EngineView for completed
+                // trades belonging to this strategy.
+                //
+                // Multi-Sync:
+                // - Processes newly completed trades.
+                // - Calculates net realized PnL.
+                // - Prevents duplicate trade processing.
+                // - Evaluates Profit Protection thresholds.
+                // - Evaluates Drawdown Protection thresholds.
+                // - Activates or completes protection windows.
+                // - Updates the strategy's market regime.
+                //
+                // The backtest runner synchronizes engine commands,
+                // execution commands, and execution events before
+                // advancing to the next historical market event.
+                {
+                    let view = self.rx_view.borrow();
+
+                    self.multi_sync.process_closed_trades(
+                        &view.trades,
+                        self.name(),
+                        self.reference_margin_usd,
+                        quote.timestamp_ms,
+                        &mut self.market_regime,
+                    );
+                }
 
                 self.check_trade_duration_watchdog(
                     quote.timestamp_ms,

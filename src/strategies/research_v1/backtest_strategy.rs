@@ -74,6 +74,8 @@ use super::backtest_state::ResearchV1BacktestStrategy;
 /* 
 // TODO:
 
+* Must check max trades allowed before entering trades.
+
   (Delete the current regime change logic, saving it first in old code)
 * Start implementing the continuous multi-sync logic as a toolbox feature only if you need to
   since the goal is to be able to detect the trending mode without using multi-sync logic. 
@@ -183,7 +185,10 @@ impl ResearchV1BacktestStrategy {
             tx_engine,
             rx_view,
 
-            trade_amount_usd: 350.0,
+            max_trades_allowed: 8,
+            reference_margin_usd: 1600.0,
+            trade_amount_usd: 200.0, // maybe delete later in favor of (reference_margin_usd / max_trades_allowed) which devides trades evenly. Double check since it must work with leverage / early profit margit calculations.
+
             leverage: None,
             entry_percent: Some(0.05),
             exit_profit_percent: Some(2.0),
@@ -341,17 +346,35 @@ impl Strategy for ResearchV1BacktestStrategy {
                 }
 
                 // ====================================================
-                // MULTI-SYNC MARKET REGIME UPDATE
+                // MULTI-SYNC CLOSED TRADE PROCESSING
                 // ====================================================
-                // Update the strategy's market regime before evaluating
-                // new trade entries.
                 //
-                // Active window: reverse the baseline regime.
-                // Expired window: restore the baseline regime.
-                self.multi_sync.on_timer_tick(
-                    trade.timestamp_ms,
-                    &mut self.market_regime,
-                );
+                // Poll the latest authoritative EngineView for completed
+                // trades belonging to this strategy.
+                //
+                // Multi-Sync:
+                // - Processes newly completed trades.
+                // - Calculates net realized PnL.
+                // - Prevents duplicate trade processing.
+                // - Evaluates Profit Protection thresholds.
+                // - Evaluates Drawdown Protection thresholds.
+                // - Activates or completes protection windows.
+                // - Updates the strategy's market regime.
+                //
+                // The backtest runner synchronizes engine commands,
+                // execution commands, and execution events before
+                // advancing to the next historical market event.
+                {
+                    let view = self.rx_view.borrow();
+
+                    self.multi_sync.process_closed_trades(
+                        &view.trades,
+                        self.name(),
+                        self.reference_margin_usd,
+                        trade.timestamp_ms,
+                        &mut self.market_regime,
+                    );
+                }
 
                 self.check_trade_duration_watchdog(
                     trade.timestamp_ms,
