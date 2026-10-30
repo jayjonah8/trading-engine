@@ -74,17 +74,11 @@ use super::backtest_state::ResearchV1BacktestStrategy;
 /* 
 // TODO:
 
-* Must check max trades allowed before entering trades.
+* Must check max trades allowed before entering trades. The engine may alread have helpers for this or you can add them if not (but I think it does already).
 
-  (Delete the current regime change logic, saving it first in old code)
-* Start implementing the continuous multi-sync logic as a toolbox feature only if you need to
-  since the goal is to be able to detect the trending mode without using multi-sync logic. 
-  - Make it change from MeanReversion -> Trending and vice-versa only for now
-  - Later you can detect slow markets though one of you 3 market wide indicators and try to dynamically
-    make the trade durations shorter. You will need to play around with with. Still only keep the 2 Mean Rev and Tredning regimes
-    handling this on the side.
-  - Later you can even test this like:
-    
+* Check the early profit toolbox margin. 
+  - Should it work with reference_margin_usd, or is your new way better???
+
 
 * - You have to fix the early profit timestamp feature that deletes after a trade is gone.
     - Maybe you can save all trades for an few days and use that to search to the last timestamp for that trade it or something.
@@ -102,15 +96,12 @@ use super::backtest_state::ResearchV1BacktestStrategy;
     we in both markets. 
 
 
-* (Done!!) (Do a simple version first) 
-  Start adding the regime change logic. 
-  - Mabye add a market wide atr indicator if you need to. 
+* Later you can detect slow markets though one of you 3 market wide indicators and try to dynamically
+    make the trade durations shorter. You will need to play around with with. Still only keep the 2 Mean Rev and Tredning regimes
+    handling this on the side.
 
 
 ---------------------------------------
-
-
-
 
 * When you have good initial results, add the weighted randomness to the bot
   for more dynamic behavior accross all settings. 
@@ -190,7 +181,7 @@ impl ResearchV1BacktestStrategy {
             trade_amount_usd: 200.0, // maybe delete later in favor of (reference_margin_usd / max_trades_allowed) which devides trades evenly. Double check since it must work with leverage / early profit margit calculations.
 
             leverage: None,
-            entry_percent: Some(0.05),
+            entry_percent: Some(0.005),
             exit_profit_percent: Some(2.0),
             exit_loss_percent: Some(2.0),
             emergency_exit_percent: Some(5.0),
