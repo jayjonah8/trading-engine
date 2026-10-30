@@ -240,7 +240,7 @@ impl ResearchV1BacktestStrategy {
                         enabled: false,                               // Disable this rule.
                         min_open_trades: 2,                           // Require at least 2 open trades.
                         max_open_trades: Some(4),                     // Allow a maximum of 4 open trades.
-                        min_margin_usd: 200.0,                        // Require at least $200 total basket margin.
+                        min_margin_usd: 10.0,                        // Require at least $200 total basket margin.
                         min_profit_percent: 0.9,                      // Close basket when net profit reaches 0.9%.
                         no_new_trade_for_ms: Some(15 * 60 * 1000),    // Require 15 minutes without a new trade.
                     },

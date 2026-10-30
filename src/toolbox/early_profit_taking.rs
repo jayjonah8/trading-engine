@@ -15,52 +15,111 @@ use crate::core::{
 // for closing profitable baskets of trades.
 //
 // Each strategy owns its own EarlyProfitTaking instance and
-// defines any number of independent profit-taking rules.
+// can define multiple independent profit-taking rules.
 //
 // The toolbox evaluates only trades belonging to the specified
 // strategy, preventing interference with other strategies.
 //
+// ============================================================
+// BASKET PROFITABILITY
+// ============================================================
+//
 // Basket profitability is calculated using:
 //
-//     Basket Profit % = (Net Unrealized PnL / Total Margin) * 100
+//     Basket Profit % = (Net Unrealized PnL / Total Open Margin) * 100
 //
-// Margin represents strategy-allocated capital, not necessarily
-// the actual margin required by the execution venue.
+// Total Open Margin represents the combined margin assigned
+// to all currently open trades belonging to the strategy.
 //
-// EXAMPLE 1: STANDARD EARLY PROFIT
+// IMPORTANT / WARNING!!:
+// This calculation does NOT use the strategy's total reference
+// margin, capital allocation, or available account balance.
+//
+// Instead, profitability is measured against the margin
+// currently deployed across the strategy's open positions.
+//
+// Trade margin represents the capital assigned to each trade,
+// which may differ from the actual margin required by the
+// execution venue.
+//
+// ============================================================
+// AUTOMATIC SCALING
+// ============================================================
+//
+// Profit thresholds automatically scale with the combined
+// margin of currently open trades.
+//
+// As positions open or close, total basket margin changes,
+// and the dollar profit required to satisfy a rule adjusts
+// proportionally.
+//
+// Increasing individual trade sizes also increases the
+// required dollar profit without changing rule thresholds.
+//
+// This allows a configured profit percentage to represent
+// a consistent return on deployed margin, regardless of
+// the number or size of currently open positions.
+//
+// EXAMPLE: 1.5% PROFIT THRESHOLD
 // ------------------------------------------------------------
+//
+// Open Trades      Total Open Margin      Required Net Profit
+// ------------------------------------------------------------
+//      2                  $400                   $6
+//      4                  $800                  $12
+//      6                $1,200                  $18
+//      8                $1,600                  $24
+//
+// The profit threshold remains 1.5%, while the required
+// dollar profit scales with the current basket margin.
+//
+// ============================================================
+// EXAMPLE 1: STANDARD EARLY PROFIT
+// ============================================================
+//
 // Open trades:          4
-// Total margin:         $400
+// Total open margin:    $400
 // Net unrealized PnL:   $20
 // Basket profit:        5.0%
 // Profit threshold:     4.3%
 //
-// Result: Rule triggers because basket profit exceeds 4.3%.
+// Result:
+// Rule triggers because basket profit exceeds 4.3%,
+// assuming all other configured conditions are satisfied.
 //
+// ============================================================
 // EXAMPLE 2: SLOW MARKET EARLY PROFIT
-// ------------------------------------------------------------
+// ============================================================
+//
 // Open trades:          3
-// Total margin:         $300
+// Total open margin:    $300
 // Net unrealized PnL:   $3
 // Basket profit:        1.0%
 // Profit threshold:     0.9%
 // Last trade opened:    20 minutes ago
 // Required inactivity:  15 minutes
 //
-// Result: Rule triggers because all conditions are satisfied.
+// Result:
+// Rule triggers because all configured conditions
+// are satisfied.
 //
+// ============================================================
 // EXAMPLE 3: RULE NOT SATISFIED
-// ------------------------------------------------------------
+// ============================================================
+//
 // Open trades:          3
-// Total margin:         $300
+// Total open margin:    $300
 // Net unrealized PnL:   $6
 // Basket profit:        2.0%
 // Profit threshold:     4.3%
 //
-// Result: Rule does not trigger.
+// Result:
+// Rule does not trigger because basket profitability
+// remains below the configured threshold.
 //
+// ============================================================
 // EXECUTION FLOW
-// ------------------------------------------------------------
+// ============================================================
 //
 // Strategy
 //     -> EarlyProfitTaking::basket_snapshot()
@@ -71,10 +130,9 @@ use crate::core::{
 //     -> EarlyProfitTaking::record_exit_request()
 //
 // The toolbox only evaluates conditions and manages cooldown.
-// It does not submit orders, modify trades, or communicate
-// with exchanges.
 //
-// Supports Backtest, Simulation, Paper Trading, and Live modes.
+// It does not submit orders, modify trades, or communicate
+// directly with execution venues.
 //
 // ============================================================
 
@@ -102,7 +160,7 @@ pub struct EarlyProfitRule {
     /// Minimum total strategy-allocated margin.
     pub min_margin_usd: f64,
 
-    /// Minimum net basket profit percentage.
+    /// Minimum net basket profit percentage required to trigger early profit taking.
     pub min_profit_percent: f64,
 
     /// Optional minimum time since the latest confirmed
@@ -147,10 +205,19 @@ pub struct EarlyProfitTaking {
 /// Current basket statistics for one strategy.
 #[derive(Debug, Clone)]
 pub struct StrategyBasketSnapshot {
+    /// Number of currently open trades.
     pub open_trades: usize,
+
+    /// Combined margin of all open trades.
     pub total_margin_usd: f64,
+
+    /// Combined net unrealized PnL of all open trades.
     pub total_net_unrealized_pnl: f64,
+
+    /// Net basket profit as a percentage of total open margin.
     pub net_profit_percent: f64,
+
+    /// Timestamp of the most recently opened trade.
     pub last_open_ts_ms: Option<i64>,
 }
 
