@@ -180,7 +180,7 @@ impl ResearchV1Strategy {
                         no_new_trade_for_ms: Some(15 * 60 * 1000),    // Require 15 minutes without a new trade.
                     },
                 ],
-                5_000, // Minimum 5 seconds between early-profit exit requests.
+                2_000, // Minimum 2 seconds between early-profit exit requests.
             ),
 
             multi_sync: MultiSync::new(
@@ -348,7 +348,7 @@ impl Strategy for ResearchV1Strategy {
 
                 // Check whether this strategy already has an active
                 // trade for the current symbol.
-                let has_active_trade = {
+                let symbol_has_active_trade = {
                     let view = self.rx_view.borrow();
 
                     view.trades.has_active_trade_for_strategy_symbol(
@@ -357,13 +357,24 @@ impl Strategy for ResearchV1Strategy {
                     )
                 };
 
+                // Count active trades belonging to this strategy.
+                // Includes Opening, Open, and Closing trades.
+                let active_trade_count = {
+                    let view = self.rx_view.borrow();
+
+                    view.trades.count_active_for_strategy(
+                        self.name(),
+                    )
+                };
+
+
                 // ====================================================
                 // PRICE WINDOW TRACKING DURING ACTIVE TRADES
                 // ====================================================
 
                 // Clear the symbol's price history and stop tracking
                 // while this strategy has an active trade, if disabled.
-                if has_active_trade && !self.track_price_window_while_in_trade {
+                if symbol_has_active_trade && !self.track_price_window_while_in_trade {
 
                     let cleared =
                         self.price_window.clear_symbol(&ev.symbol);
@@ -427,12 +438,10 @@ impl Strategy for ResearchV1Strategy {
                         // TRADING ELIGIBILITY
                         // ====================================================
 
-                        // New entries require:
-                        // - Individual asset trading eligibility.
-                        // - Market-wide black swan protection is inactive.
                         if can_trade 
+                            && active_trade_count < self.max_trades_allowed
+                            && !symbol_has_active_trade
                             && !self.black_swan_protection.is_halted() 
-                            && !has_active_trade
                             && self.trade_cooldown.can_trade(
                                 &ev.symbol,
                                 quote.timestamp_ms,

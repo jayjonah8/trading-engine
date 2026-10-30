@@ -74,14 +74,7 @@ use super::backtest_state::ResearchV1BacktestStrategy;
 /* 
 // TODO:
 
-* Must check max trades allowed before entering trades. The engine may alread have helpers for this or you can add them if not (but I think it does already).
-
-* Check the early profit toolbox margin. 
-  - Should it work with reference_margin_usd, or is your new way better???
-
-
-* - You have to fix the early profit timestamp feature that deletes after a trade is gone.
-    - Maybe you can save all trades for an few days and use that to search to the last timestamp for that trade it or something.
+* Add to the engine to delete Trades olders that 10 days. (make sure you don't break metrics first. Check metrics)
 
 
 * Test on 3 months of real data to see its performance.
@@ -245,7 +238,7 @@ impl ResearchV1BacktestStrategy {
                         no_new_trade_for_ms: Some(15 * 60 * 1000),    // Require 15 minutes without a new trade.
                     },
                 ],
-                5_000, // Minimum 5 seconds between early-profit exit requests.
+                2_000, // Minimum 2 seconds between early-profit exit requests.
             ),
 
             multi_sync: MultiSync::new(
@@ -386,13 +379,9 @@ impl Strategy for ResearchV1BacktestStrategy {
                     true
                 };
 
-                // ====================================================
-                // ACTIVE STRATEGY TRADE CHECK
-                // ====================================================
-
                 // Check whether this strategy already has an active
                 // trade for the current symbol.
-                let has_active_trade = {
+                let symbol_has_active_trade = {
                     let view = self.rx_view.borrow();
 
                     view.trades.has_active_trade_for_strategy_symbol(
@@ -401,13 +390,19 @@ impl Strategy for ResearchV1BacktestStrategy {
                     )
                 };
 
-                // ====================================================
-                // PRICE WINDOW TRACKING DURING ACTIVE TRADES
-                // ====================================================
+                // Count active trades belonging to this strategy.
+                // Includes Opening, Open, and Closing trades.
+                let active_trade_count = {
+                    let view = self.rx_view.borrow();
+
+                    view.trades.count_active_for_strategy(
+                        self.name(),
+                    )
+                };
 
                 // Clear the symbol's price history and stop tracking
                 // while this strategy has an active trade, if disabled.
-                if has_active_trade && !self.track_price_window_while_in_trade {
+                if symbol_has_active_trade && !self.track_price_window_while_in_trade {
 
                     let cleared =
                         self.price_window.clear_symbol(&ev.symbol);
@@ -472,8 +467,9 @@ impl Strategy for ResearchV1BacktestStrategy {
                         // ====================================================
 
                         if can_trade 
+                            && active_trade_count < self.max_trades_allowed
+                            && !symbol_has_active_trade
                             && !self.black_swan_protection.is_halted() 
-                            && !has_active_trade
                             && self.trade_cooldown.can_trade(
                                 &ev.symbol,
                                 trade.timestamp_ms,
@@ -530,15 +526,15 @@ impl Strategy for ResearchV1BacktestStrategy {
                                     //         // more realistic (fast)
                                     //         TrailingStopLevel {
                                     //             profit_percent: 0.0,  // Initial activation threshold.
-                                    //             trail_percent: 0.50,  // Initial trailing distance.
+                                    //             trail_percent: 3.00,  // Initial trailing distance.
                                     //         },
                                     //         TrailingStopLevel {
                                     //             profit_percent: 0.50, // Second activation threshold.
-                                    //             trail_percent: 0.30,  // Second trailing distance.
+                                    //             trail_percent: 2.00,  // Second trailing distance.
                                     //         },
                                     //         TrailingStopLevel {
                                     //             profit_percent: 1.00, // Third activation threshold.
-                                    //             trail_percent: 0.15,  // Third trailing distance.
+                                    //             trail_percent: 1.00,  // Third trailing distance.
                                     //         },
                                     //     ],
                                     // }),
@@ -634,15 +630,15 @@ impl Strategy for ResearchV1BacktestStrategy {
                                     //         // more realistic (fast)
                                     //         TrailingStopLevel {
                                     //             profit_percent: 0.0,  // Initial activation threshold.
-                                    //             trail_percent: 0.50,  // Initial trailing distance.
+                                    //             trail_percent: 3.00,  // Initial trailing distance.
                                     //         },
                                     //         TrailingStopLevel {
                                     //             profit_percent: 0.50, // Second activation threshold.
-                                    //             trail_percent: 0.30,  // Second trailing distance.
+                                    //             trail_percent: 2.00,  // Second trailing distance.
                                     //         },
                                     //         TrailingStopLevel {
                                     //             profit_percent: 1.00, // Third activation threshold.
-                                    //             trail_percent: 0.15,  // Third trailing distance.
+                                    //             trail_percent: 1.00,  // Third trailing distance.
                                     //         },
                                     //     ],
                                     // }),

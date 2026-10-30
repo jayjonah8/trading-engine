@@ -142,13 +142,13 @@ impl Trades {
     // ITERATE TRADES WITH OPEN QUANTITY FOR STRATEGY
     // ============================================================
 
-    /// Iterates over trades belonging to a specific strategy
+    /// Iterates over active trades belonging to a specific strategy
     /// that still have remaining executed quantity.
     ///
-    /// Includes Opening, Open, and Closing trades with
-    /// positive remaining quantity.
+    /// Includes Opening, Open, and Closing trades with positive quantity.
     ///
-    /// Excludes trades belonging to other strategies.
+    /// Excludes Closed trades, trades without remaining quantity,
+    /// and trades belonging to other strategies.
     pub fn iter_with_open_quantity_for_strategy<'a>(
         &'a self,
         strategy_id: &'a str,
@@ -197,6 +197,19 @@ impl Trades {
     }
 
 
+    /// Returns the number of active trades belonging to a strategy.
+    /// Includes Opening, Open, and Closing trades.
+    pub fn count_active_for_strategy(&self, strategy_id: &str) -> usize {
+        self.trades
+            .values()
+            .filter(|trade| {
+                trade.strategy_id == strategy_id
+                    && trade.state.is_active()
+            })
+            .count()
+    }
+
+
     /// Returns the number of fully open strategy trades.
     ///
     /// Unlike `count_active()`, this only counts trades in the `Open` state.
@@ -210,11 +223,13 @@ impl Trades {
     // COUNT TRADES WITH OPEN QUANTITY FOR STRATEGY
     // ============================================================
 
-    /// Counts trades belonging to the specified strategy
-    /// that have remaining executed quantity.
+    /// Counts active trades belonging to the specified strategy
+    /// that still have remaining executed quantity.
     ///
-    /// Includes partially filled Opening trades and
-    /// partially exited Closing trades.
+    /// Includes partially filled Opening trades, fully Open trades,
+    /// and partially exited Closing trades.
+    ///
+    /// Excludes Closed trades and trades without remaining quantity.
     pub fn count_with_open_quantity_for_strategy(
         &self,
         strategy_id: &str,
@@ -224,14 +239,15 @@ impl Trades {
     }
 
 
-    /// Returns the number of logical trades with remaining
+    /// Returns the number of active logical trades with remaining
     /// executed quantity.
     ///
-    /// Includes partially filled Opening trades and partially
-    /// exited Closing trades.
+    /// Includes Opening, Open, and Closing trades with positive quantity.
     ///
-    /// Unlike count_open(), this measures remaining trade
-    /// exposure rather than lifecycle state.
+    /// Excludes Closed trades, even if they incorrectly retain quantity.
+    ///
+    /// Unlike count_open(), this measures remaining trade exposure
+    /// rather than only the Open lifecycle state.
     pub fn count_with_open_quantity(&self) -> usize {
         self.iter_with_open_quantity().count()
     }
@@ -358,18 +374,19 @@ impl Trades {
     }
 
   
-    /// Iterates over trades that still have remaining
+    /// Iterates over active trades that still have remaining
     /// executed quantity.
     ///
-    /// Includes Opening, Open, and Closing trades when
-    /// their remaining quantity is positive.
+    /// Includes Opening, Open, and Closing trades.
+    /// Excludes Closed trades.
     pub fn iter_with_open_quantity(
         &self,
     ) -> impl Iterator<Item = &Trade> {
         self.trades
             .values()
             .filter(|trade| {
-                trade.quantity > f64::EPSILON
+                trade.state.is_active()
+                    && trade.quantity > f64::EPSILON
             })
     }
 }
@@ -383,8 +400,11 @@ impl Trades {
     // TOTAL UNREALIZED PNL
     // ============================================================
 
-    /// Calculates gross unrealized PnL across all trades
-    /// with remaining open quantity.
+    /// Calculates gross unrealized PnL across all active trades
+    /// with remaining executed quantity.
+    ///
+    /// Includes Opening, Open, and Closing trades with positive quantity.
+    /// Excludes historical Closed trades.
     ///
     /// Uses each trade's individual unrealized_pnl() method.
     ///
@@ -411,10 +431,11 @@ impl Trades {
     // STRATEGY TOTAL UNREALIZED PNL
     // ============================================================
 
-    /// Calculates gross unrealized PnL across trades belonging
-    /// exclusively to the specified strategy.
+    /// Calculates gross unrealized PnL across active trades
+    /// belonging exclusively to the specified strategy.
     ///
-    /// Includes trades with remaining open quantity.
+    /// Includes Opening, Open, and Closing trades with remaining quantity.
+    /// Excludes historical Closed trades and other strategies.
     ///
     /// Trades without a known market price contribute zero.
     ///
@@ -440,8 +461,11 @@ impl Trades {
     // TOTAL NET UNREALIZED PNL
     // ============================================================
 
-    /// Calculates net unrealized PnL across all Trades
-    /// with remaining open quantity.
+    /// Calculates net unrealized PnL across all active trades
+    /// with remaining executed quantity.
+    ///
+    /// Includes Opening, Open, and Closing trades with positive quantity.
+    /// Excludes historical Closed trades.
     ///
     /// Net Unrealized PnL:
     ///
@@ -451,6 +475,8 @@ impl Trades {
     ///
     /// Estimated exit fees are assumed equal to the remaining
     /// entry fees. Actual exit fees are recorded when fills occur.
+    ///
+    /// Trades without a known market price contribute zero.
     pub fn total_net_unrealized_pnl(
         &self,
         last_px: &HashMap<String, LastPrice>,
@@ -471,10 +497,11 @@ impl Trades {
     // STRATEGY TOTAL NET UNREALIZED PNL
     // ============================================================
 
-    /// Calculates net unrealized PnL across trades belonging
-    /// exclusively to the specified strategy.
+    /// Calculates net unrealized PnL across active trades
+    /// belonging exclusively to the specified strategy.
     ///
-    /// Includes trades with remaining open quantity.
+    /// Includes Opening, Open, and Closing trades with remaining quantity.
+    /// Excludes historical Closed trades and other strategies.
     ///
     /// Uses each trade's net_unrealized_pnl() method.
     ///
@@ -500,10 +527,14 @@ impl Trades {
     // TOTAL OPEN MARGIN
     // ============================================================
 
-    /// Calculates total strategy-allocated margin across
-    /// trades with remaining executed quantity.
+    /// Calculates total strategy-allocated margin across all
+    /// active trades with remaining executed quantity.
+    ///
+    /// Includes Opening, Open, and Closing trades with positive quantity.
+    /// Excludes historical Closed trades.
     ///
     /// TODO: Adjust margin for partial fills and exits.
+    /// Currently uses each trade's full recorded margin_usd.
     pub fn total_open_margin(&self) -> f64 {
         self.iter_with_open_quantity()
             .map(|trade| trade.margin_usd)
@@ -515,10 +546,14 @@ impl Trades {
     // STRATEGY TOTAL OPEN MARGIN
     // ============================================================
 
-    /// Calculates total strategy-allocated margin across
+    /// Calculates total strategy-allocated margin across active
     /// trades belonging exclusively to the specified strategy.
     ///
+    /// Includes Opening, Open, and Closing trades with remaining quantity.
+    /// Excludes historical Closed trades and other strategies.
+    ///
     /// TODO: Adjust margin for partial fills and exits.
+    /// Currently uses each trade's full recorded margin_usd.
     pub fn total_open_margin_for_strategy(
         &self,
         strategy_id: &str,
