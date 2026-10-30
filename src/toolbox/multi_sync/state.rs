@@ -1,5 +1,8 @@
 #![allow(dead_code)]
 
+use std::collections::HashSet;
+use crate::core::trades::TradeId;
+
 use super::config::MultiSyncSetting;
 
 
@@ -164,6 +167,8 @@ pub struct MultiSyncState {
     /// windows once no remaining open trade can reference them,
     /// or by recording window classification at trade entry.
     pub historical_windows: Vec<MultiSyncWindow>,
+
+    pub processed_trade_ids: HashSet<TradeId>,
 
     pub profit_protection: MultiSyncProfitProtectionState,
 

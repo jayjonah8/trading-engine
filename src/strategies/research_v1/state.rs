@@ -17,6 +17,7 @@ use crate::{
     market::candle_history::CandleHistory,
 
     toolbox::MarketRegime,
+    toolbox::MultiSync,
     toolbox::price_window_ts::PriceWindowTs,
     toolbox::TradeCooldown,
     toolbox::TradeDurationWatchdog,
@@ -74,6 +75,11 @@ pub struct ResearchV1Strategy {
 
     // Current market regime determining trade direction.
     pub market_regime: MarketRegime,
+
+    /// Tracks strategy-specific realized PnL and manages
+    /// temporary regime reversals through Profit Protection
+    /// and Drawdown Protection.
+    pub multi_sync: MultiSync,
 
     // true  = keep tracking the symbol's rolling price window while a trade is open.
     // false = clear that symbol's rolling window and stop tracking it until the trade is closed.

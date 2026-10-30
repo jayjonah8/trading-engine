@@ -48,6 +48,7 @@ use crate::{
     strategies::Strategy,
 
     toolbox::MarketRegime,
+    toolbox::MultiSync,
     toolbox::price_window_ts::PriceWindowTs,
     toolbox::TradeCooldown,
     toolbox::TradeDurationWatchdog,
@@ -55,6 +56,12 @@ use crate::{
     toolbox::early_profit_taking::{
         EarlyProfitTaking,
         EarlyProfitRule,
+    },
+    toolbox::multi_sync::{
+        MultiSyncConfig,
+        MultiSyncSetting,
+        MultiSyncProfitProtectionConfig,
+        MultiSyncDrawdownProtectionConfig,
     },
 
     shared::print_log,
@@ -172,6 +179,37 @@ impl ResearchV1Strategy {
                 ],
                 5_000, // Minimum 5 seconds between early-profit exit requests.
             ),
+
+            multi_sync: MultiSync::new(
+                MultiSyncConfig {
+                    enabled: true,
+                    debug_mode: true,
+
+                    profit_protection: MultiSyncProfitProtectionConfig {
+                        enabled: true,
+
+                        default_settings: vec![
+                            MultiSyncSetting {
+                                threshold_pct: 0.98,
+                                window_ms: Some(90 * 60 * 1000), // 90 minutes.
+                            },
+                        ],
+                    },
+
+                    drawdown_protection: MultiSyncDrawdownProtectionConfig {
+                        enabled: true,
+
+                        default_settings: vec![
+                            MultiSyncSetting {
+                                threshold_pct: 0.24,
+                                window_ms: Some(240 * 60 * 1000), // 240 minutes.
+                            },
+                        ],
+                    },
+                },
+                MarketRegime::MeanReversion,
+            )
+            .expect("Invalid Multi-Sync configuration"),
         }
     }
 }
@@ -250,6 +288,19 @@ impl Strategy for ResearchV1Strategy {
                         ),
                     );
                 }
+
+                // ====================================================
+                // MULTI-SYNC MARKET REGIME UPDATE
+                // ====================================================
+                // Update the strategy's market regime before evaluating
+                // new trade entries.
+                //
+                // Active window: reverse the baseline regime.
+                // Expired window: restore the baseline regime.
+                self.multi_sync.on_timer_tick(
+                    quote.timestamp_ms,
+                    &mut self.market_regime,
+                );
 
                 self.check_trade_duration_watchdog(
                     quote.timestamp_ms,

@@ -236,6 +236,56 @@ impl Trades {
         self.iter_with_open_quantity().count()
     }
 
+    
+    // ============================================================
+    // ALL CLOSED TRADES
+    // ============================================================
+
+    /// Iterates over all fully closed trades.
+    ///
+    /// Only trades in TradeState::Closed are returned.
+    ///
+    /// Includes completed trades belonging to every strategy.
+    ///
+    /// Useful for:
+    /// - Global performance analysis.
+    /// - Trade history.
+    /// - Reporting.
+    /// - Monitoring.
+    pub fn closed_trades(
+        &self,
+    ) -> impl Iterator<Item = &Trade> {
+        self.trades
+            .values()
+            .filter(|trade| {
+                trade.state == TradeState::Closed
+            })
+    }
+
+
+    // ============================================================
+    // CLOSED TRADES FOR STRATEGY
+    // ============================================================
+
+    /// Iterates over fully closed trades belonging
+    /// exclusively to the specified strategy.
+    ///
+    /// Only trades in TradeState::Closed are returned.
+    ///
+    /// Useful for:
+    /// - Multi-Sync.
+    /// - Strategy-specific performance analysis.
+    /// - Historical strategy statistics.
+    pub fn closed_trades_for_strategy<'a>(
+        &'a self,
+        strategy_id: &'a str,
+    ) -> impl Iterator<Item = &'a Trade> + 'a {
+        self.closed_trades()
+            .filter(move |trade| {
+                trade.strategy_id == strategy_id
+            })
+    }
+
     /// Marks a trade as closed.
     ///
     /// This should only occur after confirmed fills have reduced the trade's

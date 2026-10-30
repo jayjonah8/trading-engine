@@ -1,6 +1,9 @@
 #![allow(dead_code)]
 
+use std::collections::HashSet;
+
 use crate::{
+    core::trades::Trades,
     shared::print_log,
     toolbox::MarketRegime,
 };
@@ -33,10 +36,12 @@ use super::{
 //
 // CORE BEHAVIOR:
 // - Accumulates strategy-specific realized PnL.
+// - Polls completed trades from authoritative EngineView state.
+// - Processes completed trades exactly once per MultiSync instance.
 // - Evaluates profit and drawdown thresholds.
 // - Activates temporary regime reversal windows.
 // - Restores the base regime at scheduled expiration.
-// - Completes accounting on the first TradeClosed event
+// - Completes accounting on the first completed trade
 //   at or after the scheduled expiration.
 // - Advances protection stages.
 // - Resets the opposite protection stage.
@@ -46,6 +51,9 @@ use super::{
 // Each strategy owns an independent MultiSync instance.
 //
 // Multi-Sync runs continuously without daily resets.
+//
+// No additional engine events or synchronization channels
+// are required.
 //
 // ============================================================
 
@@ -67,6 +75,7 @@ pub struct MultiSync {
 // ============================================================
 
 impl MultiSync {
+
     // ========================================================
     // INITIALIZATION
     // ========================================================
@@ -86,6 +95,16 @@ impl MultiSync {
 
             historical_windows: Vec::new(),
 
+            // ====================================================
+            // PROCESSED CLOSED TRADES
+            // ====================================================
+
+            processed_trade_ids: HashSet::new(),
+
+            // ====================================================
+            // PROFIT PROTECTION
+            // ====================================================
+
             profit_protection: MultiSyncProfitProtectionState {
                 enabled: config.enabled
                     && config.profit_protection.enabled,
@@ -101,6 +120,10 @@ impl MultiSync {
 
                 completed_cycles: 0,
             },
+
+            // ====================================================
+            // DRAWDOWN PROTECTION
+            // ====================================================
 
             drawdown_protection: MultiSyncDrawdownProtectionState {
                 enabled: config.enabled
@@ -311,6 +334,316 @@ impl MultiSync {
 
 
     // ========================================================
+    // PROCESS CLOSED TRADES
+    // ========================================================
+
+    /// Polls authoritative engine trade state and processes
+    /// newly completed trades belonging to one strategy.
+    ///
+    /// The engine remains authoritative for:
+    /// - Trade lifecycle.
+    /// - Execution prices.
+    /// - Entry and exit fees.
+    /// - Trade timestamps.
+    ///
+    /// Multi-Sync only consumes completed trade results.
+    ///
+    /// BEHAVIOR:
+    /// - Filters completed trades by strategy.
+    /// - Skips previously processed TradeIds.
+    /// - Skips trades closed after the current event timestamp.
+    /// - Processes trades in deterministic chronological order.
+    /// - Calculates final net realized PnL.
+    /// - Updates Multi-Sync protection state.
+    /// - Updates the effective market regime.
+    ///
+    /// No additional engine events or synchronization channels
+    /// are required.
+    ///
+    /// Returns the number of newly processed completed trades.
+    pub fn process_closed_trades(
+        &mut self,
+        trades: &Trades,
+        strategy_id: &str,
+        reference_margin_usd: f64,
+        current_ts_ms: i64,
+        market_regime: &mut MarketRegime,
+    ) -> usize {
+
+        // ====================================================
+        // DISABLED
+        // ====================================================
+
+        if !self.config.enabled {
+            self.on_timer_tick(
+                current_ts_ms,
+                market_regime,
+            );
+
+            return 0;
+        }
+
+        // ====================================================
+        // VALIDATE REFERENCE MARGIN
+        // ====================================================
+
+        if !reference_margin_usd.is_finite()
+            || reference_margin_usd <= 0.0
+        {
+            print_log(
+                self.debug_mode,
+                true,
+                format_args!(
+                    "[MULTI-SYNC] Invalid reference margin | margin={}",
+                    reference_margin_usd,
+                ),
+            );
+
+            self.on_timer_tick(
+                current_ts_ms,
+                market_regime,
+            );
+
+            return 0;
+        }
+
+        // ====================================================
+        // COLLECT NEW COMPLETED TRADES
+        // ====================================================
+
+        let mut completed_trades: Vec<_> = trades
+            .closed_trades_for_strategy(strategy_id)
+            .filter(|trade| {
+                !self.state
+                    .processed_trade_ids
+                    .contains(&trade.id)
+            })
+            .filter(|trade| {
+                trade.closed_ts_ms
+                    .map_or(false, |ts| ts <= current_ts_ms)
+            })
+            .collect();
+
+        // ====================================================
+        // DETERMINISTIC CHRONOLOGICAL ORDER
+        // ====================================================
+
+        // Sort by closure timestamp.
+        //
+        // When two trades close at the same timestamp,
+        // use the string representation of TradeId
+        // as a deterministic tie-breaker.
+        //
+        // This does not require TradeId to implement Ord.
+
+        completed_trades.sort_by(|a, b| {
+            a.closed_ts_ms
+                .cmp(&b.closed_ts_ms)
+                .then_with(|| {
+                    a.id.to_string()
+                        .cmp(&b.id.to_string())
+                })
+        });
+
+        // ====================================================
+        // PROCESS COMPLETED TRADES
+        // ====================================================
+
+        let mut processed_count = 0;
+
+        for trade in completed_trades {
+
+            // ====================================================
+            // VALIDATE TIMESTAMPS
+            // ====================================================
+
+            let Some(entry_ts_ms) =
+                trade.opened_ts_ms
+            else {
+                print_log(
+                    self.debug_mode,
+                    true,
+                    format_args!(
+                        "[MULTI-SYNC] Closed trade missing entry timestamp | trade_id={}",
+                        trade.id,
+                    ),
+                );
+
+                continue;
+            };
+
+            let Some(exit_ts_ms) =
+                trade.closed_ts_ms
+            else {
+                continue;
+            };
+
+            if entry_ts_ms > exit_ts_ms {
+                print_log(
+                    self.debug_mode,
+                    true,
+                    format_args!(
+                        "[MULTI-SYNC] Invalid trade timestamps | trade_id={} | entry={} | exit={}",
+                        trade.id,
+                        entry_ts_ms,
+                        exit_ts_ms,
+                    ),
+                );
+
+                continue;
+            }
+
+            // ====================================================
+            // VALIDATE EXECUTION PRICES
+            // ====================================================
+
+            let Some(entry_px) =
+                trade.avg_entry_px
+            else {
+                print_log(
+                    self.debug_mode,
+                    true,
+                    format_args!(
+                        "[MULTI-SYNC] Closed trade missing entry price | trade_id={}",
+                        trade.id,
+                    ),
+                );
+
+                continue;
+            };
+
+            let Some(exit_px) =
+                trade.avg_exit_px
+            else {
+                print_log(
+                    self.debug_mode,
+                    true,
+                    format_args!(
+                        "[MULTI-SYNC] Closed trade missing exit price | trade_id={}",
+                        trade.id,
+                    ),
+                );
+
+                continue;
+            };
+
+            if !entry_px.is_finite()
+                || !exit_px.is_finite()
+                || entry_px <= 0.0
+                || exit_px <= 0.0
+            {
+                print_log(
+                    self.debug_mode,
+                    true,
+                    format_args!(
+                        "[MULTI-SYNC] Invalid execution prices | trade_id={}",
+                        trade.id,
+                    ),
+                );
+
+                continue;
+            }
+
+            // ====================================================
+            // CALCULATE GROSS REALIZED PNL
+            // ====================================================
+
+            let gross_realized_pnl =
+                match trade.direction {
+                    crate::core::trades::Direction::Long => {
+                        (exit_px - entry_px)
+                            * trade.exited_quantity
+                    }
+
+                    crate::core::trades::Direction::Short => {
+                        (entry_px - exit_px)
+                            * trade.exited_quantity
+                    }
+                };
+
+            // ====================================================
+            // CALCULATE NET REALIZED PNL
+            // ====================================================
+
+            // Mirrors the completed-trade calculation in
+            // core/engine/exec_handler/fill.rs.
+            //
+            // Do not subtract allocated_entry_fees separately.
+            // They are already included in total entry_fees.
+
+            let net_realized_pnl =
+                gross_realized_pnl
+                    - trade.entry_fees
+                    - trade.exit_fees;
+
+            if !net_realized_pnl.is_finite() {
+                print_log(
+                    self.debug_mode,
+                    true,
+                    format_args!(
+                        "[MULTI-SYNC] Non-finite realized PnL | trade_id={}",
+                        trade.id,
+                    ),
+                );
+
+                continue;
+            }
+
+            // ====================================================
+            // UPDATE MULTI-SYNC
+            // ====================================================
+
+            match self.on_trade_closed(
+                net_realized_pnl,
+                reference_margin_usd,
+                entry_ts_ms,
+                exit_ts_ms,
+                market_regime,
+            ) {
+                Ok(()) => {
+
+                    // Mark the trade as processed only after
+                    // Multi-Sync successfully accounts for it.
+
+                    self.state
+                        .processed_trade_ids
+                        .insert(trade.id);
+
+                    processed_count += 1;
+                }
+
+                Err(err) => {
+                    print_log(
+                        self.debug_mode,
+                        true,
+                        format_args!(
+                            "[MULTI-SYNC] Failed to process closed trade | trade_id={} | error={}",
+                            trade.id,
+                            err,
+                        ),
+                    );
+                }
+            }
+        }
+
+        // ====================================================
+        // APPLY CURRENT MARKET REGIME
+        // ====================================================
+
+        // The final regime must reflect the current market
+        // event timestamp, not the timestamp of the last
+        // completed trade.
+
+        self.on_timer_tick(
+            current_ts_ms,
+            market_regime,
+        );
+
+        processed_count
+    }
+
+
+    // ========================================================
     // TRADE CLOSED
     // ========================================================
 
@@ -331,6 +664,7 @@ impl MultiSync {
         exit_ts_ms: i64,
         market_regime: &mut MarketRegime,
     ) -> Result<(), &'static str> {
+
         // ====================================================
         // VALIDATION
         // ====================================================
@@ -502,6 +836,7 @@ impl MultiSync {
         ts_ms: i64,
         pnl_pct: f64,
     ) -> Result<(), &'static str> {
+
         // ====================================================
         // CURRENT WINDOW SETTING
         // ====================================================
