@@ -70,11 +70,10 @@ use crate::{
 use super::backtest_state::ResearchV1BacktestStrategy;
 
 
-
 /* 
 // TODO:
 
-* Add to the engine to delete Trades olders that 10 days. Also, never prune Opening, Open, or Closing trades, regardless of age.
+* Handle margin calculations for early profit taking, and in general in this strategy. All margin logic should be sound.
 
 
 * Test on 3 months of real data to see its performance.
@@ -124,6 +123,8 @@ use super::backtest_state::ResearchV1BacktestStrategy;
 
 * Consider adding another price window for BTC only and not trading when BTC is making sharp moves.
   - The point is to try to prevent market vacuum. Try other things also etc. 
+
+* Make early profit toolbox only check every 2 seconds for efficiency rather than every tick.
 
 */
 
