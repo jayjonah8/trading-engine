@@ -88,11 +88,6 @@ use super::backtest_state::ResearchV1BacktestStrategy;
     we in both markets. 
 
 
-* Later you can detect slow markets though one of you 3 market wide indicators and try to dynamically
-    make the trade durations shorter. You will need to play around with with. Still only keep the 2 Mean Rev and Tredning regimes
-    handling this on the side.
-
-
 ---------------------------------------
 
 * When you have good initial results, add the weighted randomness to the bot
@@ -104,6 +99,10 @@ use super::backtest_state::ResearchV1BacktestStrategy;
   - Add a helper api function that does this on bot start.
   - The toolbox feature should show a boolean when ready to trade ie the asset already had its leverage updated.
     Put this toolbox feature inside /toolbox/hyperliquid for organization.
+
+* Later you can detect slow markets though one of you 3 market wide indicators and try to dynamically
+    make the trade durations shorter. You will need to play around with with. Still only keep the 2 Mean Rev and Tredning regimes
+    handling this on the side.
 
 * Add an auto compounding toolbox that takes in the trade_amount_usd etc and performs
   auto compounding as the "real" avenue ccount account is growing. See old bot for logic details.
@@ -220,26 +219,32 @@ impl ResearchV1BacktestStrategy {
             early_profit_taking: EarlyProfitTaking::new(
                 vec![
                     EarlyProfitRule {
-                        name: "Standard Early Profit".to_string(),  // Rule identifier.
-                        enabled: false,                              // Enable this rule.
-                        min_open_trades: 2,                         // Require at least 2 open trade.
-                        max_open_trades: None,                      // No maximum open trade limit.
-                        min_margin_usd: 10.0,                      // Require at least $10 total basket margin.
-                        min_profit_percent: 0.005,                   // Close basket when net profit reaches the %.
-                        no_new_trade_for_ms: None,                  // No minimum inactivity period.
+                        name: "Small Basket Early Profit".to_string(),
+                        enabled: true,
+                        min_open_trades: 2,
+                        max_open_trades: Some(4),
+                        min_margin_usd: 0.0,
+                        min_profit_percent: 2.5, // Margin return
+                        // min_profit_percent: 2.5 * 5.0, // Underlying movement (5x)
+                        no_new_trade_for_ms: None,
                     },
 
+                    // ====================================================
+                    // LARGE BASKET EARLY PROFIT (5–8 TRADES)
+                    // ====================================================
+
                     EarlyProfitRule {
-                        name: "Slow Market Early Profit".to_string(), // Rule identifier.
-                        enabled: false,                               // Disable this rule.
-                        min_open_trades: 2,                           // Require at least 2 open trades.
-                        max_open_trades: Some(4),                     // Allow a maximum of 4 open trades.
-                        min_margin_usd: 10.0,                        // Require at least $200 total basket margin.
-                        min_profit_percent: 0.9,                      // Close basket when net profit reaches 0.9%.
-                        no_new_trade_for_ms: Some(15 * 60 * 1000),    // Require 15 minutes without a new trade.
+                        name: "Large Basket Early Profit".to_string(),
+                        enabled: true,
+                        min_open_trades: 5,
+                        max_open_trades: None,
+                        min_margin_usd: 0.0,
+                        min_profit_percent: 2.0, // Margin return
+                        // min_profit_percent: 2.0 * 5.0, // Underlying movement (5x)
+                        no_new_trade_for_ms: None,
                     },
                 ],
-                2_000, // Minimum 2 seconds between early-profit exit requests.
+                2000,
             ),
 
             multi_sync: MultiSync::new(
