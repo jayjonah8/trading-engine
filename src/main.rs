@@ -178,6 +178,8 @@ async fn main() -> Result<()> {
 
         enable_discord_notifications: true,
         enable_slack_notifications: true,
+
+        closed_trade_retention_ms: Some(10 * 24 * 60 * 60 * 1000), // 10 days.
     };
 
 

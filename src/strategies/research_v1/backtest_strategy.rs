@@ -74,7 +74,7 @@ use super::backtest_state::ResearchV1BacktestStrategy;
 /* 
 // TODO:
 
-* Add to the engine to delete Trades olders that 10 days. (make sure you don't break metrics first. Check metrics)
+* Add to the engine to delete Trades olders that 10 days. Also, never prune Opening, Open, or Closing trades, regardless of age.
 
 
 * Test on 3 months of real data to see its performance.

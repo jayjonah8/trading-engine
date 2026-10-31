@@ -119,4 +119,20 @@ pub struct Config {
 
     /// Enable/disable Slack remote notifications.
     pub enable_slack_notifications: bool,
+
+    /// Maximum time to retain completed trades in engine state.
+    ///
+    /// - None: Never automatically remove closed trades.
+    /// - Some(0): Remove closed trades on the next pruning pass.
+    /// - Some(ms): Remove closed trades once they reach the specified age.
+    ///
+    /// WARNING:
+    /// Strategies and toolbox features may rely on historical closed trades
+    /// for realized PnL accounting, protection windows, trade history,
+    /// or other strategy-specific calculations.
+    ///
+    /// Removing completed trades before consumers have processed them
+    /// may cause missed events, incorrect calculations, or unexpected
+    /// strategy behavior.
+    pub closed_trade_retention_ms: Option<i64>,
 }

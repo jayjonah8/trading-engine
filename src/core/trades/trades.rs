@@ -302,6 +302,7 @@ impl Trades {
             })
     }
 
+
     /// Marks a trade as closed.
     ///
     /// This should only occur after confirmed fills have reduced the trade's
@@ -317,6 +318,60 @@ impl Trades {
         true
     }
 
+
+    /// Removes closed trades that have reached the configured
+    /// retention period.
+    ///
+    /// Retention is measured from each trade's closing timestamp.
+    ///
+    /// - None: Disable automatic pruning.
+    /// - Some(0): Remove all eligible closed trades.
+    /// - Some(ms): Remove closed trades at least ms old.
+    ///
+    /// Opening, Open, and Closing trades are never removed.
+    ///
+    /// Closed trades without a closing timestamp are retained.
+    ///
+    /// Returns the number of removed trades.
+    pub fn prune_closed_trades(
+        &mut self,
+        current_ts_ms: i64,
+        retention_ms: Option<i64>,
+    ) -> usize {
+        let Some(retention_ms) = retention_ms else {
+            return 0;
+        };
+
+        // Reject invalid negative retention periods.
+        if retention_ms < 0 {
+            return 0;
+        }
+
+        let before = self.trades.len();
+
+        self.trades.retain(|_, trade| {
+            // Never prune trades that are not fully closed.
+            if trade.state != TradeState::Closed {
+                return true;
+            }
+
+            let Some(closed_ts_ms) = trade.closed_ts_ms else {
+                return true;
+            };
+
+            // Retain trades whose age is below the configured limit.
+            // Also retain trades with future closing timestamps.
+            let Some(age_ms) = current_ts_ms.checked_sub(closed_ts_ms) else {
+                return true;
+            };
+
+            age_ms < 0 || age_ms < retention_ms
+        });
+
+        before - self.trades.len()
+    }
+
+    
     /// Removes a trade from the collection.
     ///
     /// Normally closed trades should remain available until they have been

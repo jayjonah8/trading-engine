@@ -1151,6 +1151,37 @@ impl Engine {
                                 fill.ts_ms,
                             ),
                         );
+
+
+                        // ============================================================
+                        // PRUNE HISTORICAL CLOSED TRADES
+                        // ============================================================
+
+                        // Called only after a trade fully closes.
+                        // The completed trade has already been recorded in Metrics.
+                        //
+                        // WARNING:
+                        // Strategies may depend on historical closed trades.
+                        // Configure cfg.closed_trade_retention_ms to preserve the required trade history.
+
+                        let removed = self.state.trades.prune_closed_trades(
+                            fill.ts_ms,
+                            self.cfg.closed_trade_retention_ms,
+                        );
+
+                        if removed > 0 {
+                            print_log(
+                                self.debug_mode,
+                                true,
+                                format!(
+                                    "[ENGINE] CLOSED TRADES PRUNED | removed={} | retention_ms={:?} | ts_ms={}",
+                                    removed,
+                                    self.cfg.closed_trade_retention_ms,
+                                    fill.ts_ms,
+                                ),
+                            );
+                        }
+
                     } else {
                         // Some exposure remains after this confirmed exit.
                         trade.state =

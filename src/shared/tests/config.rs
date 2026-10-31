@@ -35,5 +35,6 @@ pub fn default_test_config() -> Config {
         close_trades_on_startup: false,
         enable_discord_notifications: false,
         enable_slack_notifications: false,
+        closed_trade_retention_ms: None,
     }
 }
