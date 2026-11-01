@@ -73,7 +73,7 @@ use super::backtest_state::ResearchV1BacktestStrategy;
 /* 
 // TODO:
 
-* Handle margin calculations for early profit taking, and in general in this strategy. All margin logic should be sound.
+* Make a function to get all symbols inside the backtest data and use it for the symbols array to pass it in.
 
 
 * Test on 3 months of real data to see its performance.
@@ -323,7 +323,7 @@ impl Strategy for ResearchV1BacktestStrategy {
                 if self.debug_mode {
                     print_log(
                         self.debug_mode,
-                        false,
+                        true,
                         format_args!(
                             "[RESEARCH V1 BACKTEST TRADE][{}] \
                             price=${:.4} | size={} | timestamp_ms={}",

@@ -95,6 +95,11 @@ use crate::exchange::{
 
 use crate::storage::backtest::save_backtest_report;
 
+use crate::data::historical::hyperliquid::symbols::{
+    discover_hyperliquid_historical_symbols,
+    HyperliquidSymbolFilter,
+};
+
 use crate::strategies::{
     make_backtest_strategy,
     make_strategy,
@@ -117,7 +122,7 @@ async fn main() -> Result<()> {
     // CONFIG
     // ============================================================
 
-    let cfg = Config {
+    let mut cfg = Config {
         // ============================================================
         // EXECUTION / MARKET DATA
         // ============================================================
@@ -182,6 +187,29 @@ async fn main() -> Result<()> {
         closed_trade_retention_ms: Some(10 * 24 * 60 * 60 * 1000), // 10 days.
     };
 
+
+    // ============================================================
+    // DISCOVER HYPERLIQUID HISTORICAL SYMBOLS
+    // ============================================================
+
+    if matches!(cfg.execution_mode, ExecutionMode::Backtest)
+        && matches!(cfg.historical_data_provider, HistoricalDataProvider::Hyperliquid)
+    {
+        let start = "2026-10-15T10:00:00Z";
+        let end = "2026-10-15T11:00:00Z";
+
+        cfg.symbols = discover_hyperliquid_historical_symbols(
+            start,
+            end,
+            HyperliquidSymbolFilter::NativePerps,
+        )?;
+
+        println!(
+            "[BACKTEST] discovered {} historical symbols | symbols={:?}",
+            cfg.symbols.len(),
+            cfg.symbols,
+        );
+    }
 
     // ============================================================
     // STARTUP POSITION CLEANUP
@@ -1399,6 +1427,7 @@ async fn main() -> Result<()> {
                     &tx_exec_evt,
                     &backtest_market_state,
                     cfg.execution_venue,
+                    &cfg.symbols,
                 )
                 .await
                 .map_err(|error| anyhow::anyhow!(error.to_string()))?;

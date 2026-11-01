@@ -55,6 +55,7 @@ pub async fn run_hyperliquid_backtest_feed(
     tx_exec_evt: &UnboundedSender<ExecEvent>,
     market_state: &SharedBacktestMarketState,
     execution_venue: Venue,
+    symbols: &[String],
 ) -> Result<(), Box<dyn std::error::Error>> {
     // TODO:
     // Move backtest replay settings into the shared Config so every historical
@@ -69,29 +70,40 @@ pub async fn run_hyperliquid_backtest_feed(
     // BACKTEST TIME RANGE
     // ============================================================
 
-    // let symbols = ["BTC", "ETH", "SOL", "HYPE", "NEAR"];
-    // let start = "2025-07-27T10:00:00Z";
-    // let end = "2025-07-27T11:00:00Z";
-
-    let symbols = ["BTC", "ETH", "SOL", "HYPE", "NEAR"];
     let start = "2026-10-15T10:00:00Z";
     let end = "2026-10-15T11:00:00Z";
+
+    // ============================================================
+    // VALIDATE HISTORICAL SYMBOLS
+    // ============================================================
+
+    if symbols.is_empty() {
+        return Err("Hyperliquid backtest symbols cannot be empty".into());
+    }
 
     // ============================================================
     // FETCH RAW HISTORICAL TRADES
     // ============================================================
 
-    // Keep the raw trades untouched here because candles need every
-    // trade to calculate accurate OHLCV and trade-count information.
+    // Convert configured symbols into borrowed string slices
+    // expected by the historical trade fetcher.
+    let symbol_refs: Vec<&str> = symbols
+        .iter()
+        .map(String::as_str)
+        .collect();
+
+    // Keep raw trades untouched because candles require the
+    // complete trade stream for accurate OHLCV calculations.
     let raw_trades = fetch_hyperliquid_historical_trades(
-        &symbols,
+        &symbol_refs,
         start,
         end,
     )?;
 
     println!(
-        "[BACKTEST] fetched {} raw Hyperliquid historical trades",
-        raw_trades.len()
+        "[BACKTEST] fetched {} raw Hyperliquid historical trades | symbols={}",
+        raw_trades.len(),
+        symbols.len(),
     );
 
     // ============================================================

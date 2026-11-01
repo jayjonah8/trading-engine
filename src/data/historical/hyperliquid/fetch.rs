@@ -120,6 +120,8 @@ fn read_historical_hour(
     let decoder = FrameDecoder::new(file);
     let reader = BufReader::new(decoder);
 
+    let mut skipped_invalid_fills = 0usize;
+
     for line in reader.lines() {
         let line = line?;
         let block: HyperliquidFillBlock = serde_json::from_str(&line)?;
@@ -130,7 +132,10 @@ fn read_historical_hour(
             }
 
             let timestamp = DateTime::<Utc>::from_timestamp_millis(fill.time)
-                .ok_or_else(|| format!("Invalid Hyperliquid historical timestamp | time={}", fill.time))?;
+                .ok_or_else(|| format!(
+                    "Invalid Hyperliquid historical timestamp | time={}",
+                    fill.time,
+                ))?;
 
             if timestamp < start || timestamp >= end {
                 continue;
@@ -139,12 +144,15 @@ fn read_historical_hour(
             let price = fill.px.parse::<f64>()?;
             let size = fill.sz.parse::<f64>()?;
 
-            if !price.is_finite() || price <= 0.0 {
-                return Err(format!("Invalid Hyperliquid historical price | coin={} | px={}", fill.coin, fill.px).into());
-            }
+            // ============================================================
+            // SKIP INVALID HISTORICAL FILLS
+            // ============================================================
 
-            if !size.is_finite() || size <= 0.0 {
-                return Err(format!("Invalid Hyperliquid historical size | coin={} | sz={}", fill.coin, fill.sz).into());
+            if !price.is_finite() || price <= 0.0
+                || !size.is_finite() || size <= 0.0
+            {
+                skipped_invalid_fills += 1;
+                continue;
             }
 
             let trade = HistoricalTrade {
@@ -161,6 +169,18 @@ fn read_historical_hour(
 
             trades_by_tid.insert(fill.tid, trade);
         }
+    }
+
+    // ============================================================
+    // INVALID FILL SUMMARY
+    // ============================================================
+
+    if skipped_invalid_fills > 0 {
+        println!(
+            "[HYPERLIQUID HISTORICAL] skipped {} invalid fills | file={}",
+            skipped_invalid_fills,
+            path.display(),
+        );
     }
 
     Ok(())

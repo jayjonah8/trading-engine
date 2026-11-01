@@ -7,14 +7,14 @@
 Bot Name:              test-bot-1
 Execution Venue:       Hyperliquid
 Data Provider:         Hyperliquid
-Total Symbols:         5
+Total Symbols:         178
 
 ------------------------------------------------------------
 BACKTEST PERIOD
 ------------------------------------------------------------
 
 Starting Date:         2026-10-15 10:00:00.054 UTC
-Ending Date:           2026-10-15 10:59:59.068 UTC
+Ending Date:           2026-10-15 10:59:59.726 UTC
 Elapsed Calendar Days: 0.0417
 
 ------------------------------------------------------------
@@ -22,43 +22,43 @@ ACCOUNT PERFORMANCE
 ------------------------------------------------------------
 
 Starting Balance:      $10,000.0000
-Ending Balance:        $10,003.8362
-Ending Equity:         $10,002.7711
+Ending Balance:        $9,999.0763
+Ending Equity:         $9,996.1008
 
-Realized PnL:          $+3.8362
-Unrealized PnL:        $-0.1651
-Net Unrealized PnL:    $-1.0651
+Realized PnL:          $-0.9237
+Unrealized PnL:        $-1.5355
+Net Unrealized PnL:    $-2.9755
 
-Total Return:          +0.0277%
+Total Return:          -0.0390%
 
 ------------------------------------------------------------
 PERFORMANCE METRICS
 ------------------------------------------------------------
 
 Sharpe Ratio:          0.0000
-Profit Factor:         0.0000
-Expected Value:        $+3.8362
-Expected Value (%):    +1.9181%
+Profit Factor:         0.9277
+Expected Value:        $-0.1540
+Expected Value (%):    -0.0770%
 
-Win Rate:              100.0000%
-Loss Rate:             0.0000%
+Win Rate:              50.0000%
+Loss Rate:             50.0000%
 
-Max Drawdown:          0.0283%
+Max Drawdown:          0.0857%
 
 ------------------------------------------------------------
 EXECUTION FEES
 ------------------------------------------------------------
 
-Entry Fees:            $0.5400
-Exit Fees:             $0.0882
-Total Fees:            $0.6282
+Entry Fees:            $1.2600
+Exit Fees:             $0.5326
+Total Fees:            $1.7926
 
 ------------------------------------------------------------
 TRADING ACTIVITY
 ------------------------------------------------------------
 
-Closed Trades:         1
-Open Trades:           5
-Active Trades:         5
+Closed Trades:         6
+Open Trades:           8
+Active Trades:         8
 
 ============================================================
