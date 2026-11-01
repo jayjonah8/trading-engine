@@ -36,6 +36,25 @@ hyperliquid-download-test-hour:
 hyperliquid-delete-history:
 	rm -rf ~/trading-data/hyperliquid/node_fills_by_block
 
+# Move data into backup folder (for small testing data / not deleted what I already have)
+# mv ~/trading-data/hyperliquid/node_fills_by_block \
+#   ~/trading-data/hyperliquid/test_data_backup
+
+
+# ============================================================
+# HYPERLIQUID HISTORICAL ARCHIVE SIZE
+# ============================================================
+
+# Estimates the compressed size and AWS download cost of one
+# year of Hyperliquid historical fills without downloading data.
+#
+# Period: November 1, 2025 through October 31, 2026.
+#
+# Uses AWS S3 metadata requests with Requester Pays enabled.
+hyperliquid-history-year-size:
+	python3 scripts/hyperliquid_history_size.py
+
+
 
 ###################################################
 ###################################################
@@ -90,3 +109,5 @@ identity :; aws sts get-caller-identity --profile admin
 
 ###################################################
 ###################################################
+
+

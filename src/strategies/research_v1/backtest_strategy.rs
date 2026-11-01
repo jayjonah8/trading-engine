@@ -82,11 +82,9 @@ use super::backtest_state::ResearchV1BacktestStrategy;
     test on a month of non-volatile trading like when BTC was sideways at 60k for a while.
     Then you will be able to decided what works better during which market movement behavior.   
   - Check your AWS bill first to make sure your currect data is not too expensive.
-  - Create an engine helper function that grabs all the symbols used inside the backtest data to pass them through the backtest run.
-    This way you are able to trade every assest inside the backtest run just like you would in real life.
-  - Then get another 3 months for a total of 6 months. 
   - Try to get another different 6 months of older data during a bear market so we can backtest bull and bear markets and see if the bot performs
-    we in both markets. 
+    we in both markets.  
+  - Run the bot on unseen data sets separating the data to see the the strategy is consistent against new data. 
 
 ---------------------------------------
 
