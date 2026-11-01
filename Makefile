@@ -55,6 +55,22 @@ hyperliquid-history-year-size:
 	python3 scripts/hyperliquid_history_size.py
 
 
+# ============================================================
+# HYPERLIQUID HISTORICAL DATE-RANGE DOWNLOAD
+# ============================================================
+
+# Downloads Hyperliquid historical fills for the UTC date range
+# configured in scripts/hyperliquid_history_download.py.
+#
+# Existing archives are preserved and verified before skipping.
+# Missing archives are downloaded automatically.
+# Interrupted downloads can be restarted using the same command.
+#
+# Estimated AWS cost depends on the total compressed data size.
+hyperliquid-download-range:
+	python3 scripts/hyperliquid_history_download.py
+
+
 
 ###################################################
 ###################################################
