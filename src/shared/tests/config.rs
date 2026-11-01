@@ -1,5 +1,7 @@
 #![allow(dead_code)]
 
+use std::time::Duration;
+
 use crate::{
     core::{
         config::Config,
@@ -24,6 +26,9 @@ pub fn default_test_config() -> Config {
         live_market_data_provider: LiveMarketDataProvider::Alpaca,
         historical_data_provider: HistoricalDataProvider::Alpaca,
         symbols: vec!["AAPL".to_string(), "MSFT".to_string(), "NVDA".to_string()],
+        backtest_start: "2026-10-15T10:00:00Z".to_string(),
+        backtest_end: "2026-10-15T11:00:00Z".to_string(),
+        backtest_min_trade_interval: Duration::from_millis(300),
         max_active_trades: Some(20),
         max_active_assets: Some(20),
         max_active_trades_per_symbol: Some(20),

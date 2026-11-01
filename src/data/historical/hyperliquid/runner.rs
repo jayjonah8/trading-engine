@@ -56,22 +56,14 @@ pub async fn run_hyperliquid_backtest_feed(
     market_state: &SharedBacktestMarketState,
     execution_venue: Venue,
     symbols: &[String],
+    start: &str,
+    end: &str,
+    min_trade_interval: Duration,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    // TODO:
-    // Move backtest replay settings into the shared Config so every historical
-    // data provider uses the same configurable trade downsampling interval.
-    let min_trade_interval = Duration::from_millis(300);
-
+    
     // Uses the default candle setting timeframes and prune duration.
     // You can change this to a custom config if you want.
     let candle_config = CandleConfig::default();
-
-    // ============================================================
-    // BACKTEST TIME RANGE
-    // ============================================================
-
-    let start = "2026-10-15T10:00:00Z";
-    let end = "2026-10-15T11:00:00Z";
 
     // ============================================================
     // VALIDATE HISTORICAL SYMBOLS

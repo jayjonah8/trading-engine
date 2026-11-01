@@ -11,6 +11,7 @@ mod fees;
 mod storage;
 
 use std::sync::Arc;
+use std::time::Duration;
 use anyhow::Result;
 use anyhow::Context;
 use chrono::{DateTime, Utc};
@@ -162,6 +163,14 @@ async fn main() -> Result<()> {
         // ],
 
         // ============================================================
+        // BACKTEST SETTINGS
+        // ============================================================
+
+        backtest_start: "2026-10-15T10:00:00Z".to_string(),
+        backtest_end: "2026-10-15T11:00:00Z".to_string(),
+        backtest_min_trade_interval: Duration::from_millis(300),
+
+        // ============================================================
         // RISK LIMITS
         // ============================================================
         max_active_trades: Some(20),
@@ -193,14 +202,14 @@ async fn main() -> Result<()> {
     // ============================================================
 
     if matches!(cfg.execution_mode, ExecutionMode::Backtest)
-        && matches!(cfg.historical_data_provider, HistoricalDataProvider::Hyperliquid)
+        && matches!(
+            cfg.historical_data_provider,
+            HistoricalDataProvider::Hyperliquid
+        )
     {
-        let start = "2026-10-15T10:00:00Z";
-        let end = "2026-10-15T11:00:00Z";
-
         cfg.symbols = discover_hyperliquid_historical_symbols(
-            start,
-            end,
+            &cfg.backtest_start,
+            &cfg.backtest_end,
             HyperliquidSymbolFilter::NativePerps,
         )?;
 
@@ -1423,11 +1432,14 @@ async fn main() -> Result<()> {
                 data::historical::hyperliquid::runner::run_hyperliquid_backtest_feed(
                     &backtest_senders,
                     &tx_engine,
-                    &tx_exec,       // NEW: Engine -> Execution Router
+                    &tx_exec,       // Engine -> Execution Router
                     &tx_exec_evt,
                     &backtest_market_state,
                     cfg.execution_venue,
                     &cfg.symbols,
+                    &cfg.backtest_start,
+                    &cfg.backtest_end,
+                    cfg.backtest_min_trade_interval,
                 )
                 .await
                 .map_err(|error| anyhow::anyhow!(error.to_string()))?;

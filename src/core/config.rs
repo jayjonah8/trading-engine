@@ -1,5 +1,7 @@
 #![allow(dead_code)]
 
+use std::time::Duration;
+
 use crate::{
     core::{
         execution::Venue,
@@ -43,6 +45,20 @@ pub struct Config {
 
     /// List of market symbols/assets the bot is allowed to trade.
     pub symbols: Vec<String>,
+
+    // ============================================================
+    // BACKTEST SETTINGS
+    // ============================================================
+
+    /// Inclusive starting timestamp for historical backtests (RFC3339 UTC).
+    pub backtest_start: String,
+
+    /// Exclusive ending timestamp for historical backtests (RFC3339 UTC).
+    pub backtest_end: String,
+
+    // Minimum time interval between replayed trades per symbol during backtesting.
+    // Used to downsample historical trade data and reduce processing overhead.
+    pub backtest_min_trade_interval: Duration,
 
     // ============================================================
     // TRADE / ASSET LIMITS

@@ -73,13 +73,9 @@ use super::backtest_state::ResearchV1BacktestStrategy;
 /* 
 // TODO:
 
-* Upgrade candle history data to use global prunning every configured interval (once a day maybe)
-
 * Get a year of data download, clearing the old data before you do so.
 
 * Try to test longer backtests. 1 week, 1 month, 3 months, 6 months, 1 year
-
-
 
 * Test on 3 months of real data to see its performance.
   - Test on a month of volatile trading lke when BTC when from 60k -> 80k, and when you get good results,
@@ -91,8 +87,6 @@ use super::backtest_state::ResearchV1BacktestStrategy;
   - Then get another 3 months for a total of 6 months. 
   - Try to get another different 6 months of older data during a bear market so we can backtest bull and bear markets and see if the bot performs
     we in both markets. 
-
-* Add the filtering dates to the config and pass them to the runners (all venues).
 
 ---------------------------------------
 
