@@ -179,7 +179,7 @@ async fn main() -> Result<()> {
 
         close_trades_on_startup: false,
     
-        custom_starting_balance: 10_000.0,
+        custom_starting_balance: 1_600.0,
 
         enable_discord_notifications: true,
         enable_slack_notifications: true,

@@ -21,44 +21,44 @@ Elapsed Calendar Days: 0.0417
 ACCOUNT PERFORMANCE
 ------------------------------------------------------------
 
-Starting Balance:      $10,000.0000
-Ending Balance:        $10,003.0586
-Ending Equity:         $10,006.8356
+Starting Balance:      $2,000.0000
+Ending Balance:        $2,005.7035
+Ending Equity:         $2,006.5781
 
-Realized PnL:          $+3.0586
-Unrealized PnL:        $+5.2170
-Net Unrealized PnL:    $+3.7770
+Realized PnL:          $+5.7035
+Unrealized PnL:        $+2.6746
+Net Unrealized PnL:    $+0.8746
 
-Total Return:          +0.0684%
+Total Return:          +0.3289%
 
 ------------------------------------------------------------
 PERFORMANCE METRICS
 ------------------------------------------------------------
 
 Sharpe Ratio:          0.0000
-Profit Factor:         1.2391
-Expected Value:        $+0.4369
-Expected Value (%):    +0.2185%
+Profit Factor:         1.8935
+Expected Value:        $+0.6337
+Expected Value (%):    +0.6337%
 
-Win Rate:              57.1429%
-Loss Rate:             42.8571%
+Win Rate:              66.6667%
+Loss Rate:             33.3333%
 
-Max Drawdown:          0.0908%
+Max Drawdown:          0.2515%
 
 ------------------------------------------------------------
 EXECUTION FEES
 ------------------------------------------------------------
 
-Entry Fees:            $1.3500
-Exit Fees:             $0.6246
-Total Fees:            $1.9746
+Entry Fees:            $1.3050
+Exit Fees:             $0.4043
+Total Fees:            $1.7093
 
 ------------------------------------------------------------
 TRADING ACTIVITY
 ------------------------------------------------------------
 
-Closed Trades:         7
-Open Trades:           8
-Active Trades:         8
+Closed Trades:         9
+Open Trades:           20
+Active Trades:         20
 
 ============================================================

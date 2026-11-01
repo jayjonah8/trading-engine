@@ -175,8 +175,8 @@ impl ResearchV1BacktestStrategy {
             tx_engine,
             rx_view,
 
-            max_trades_allowed: 8,
-            reference_margin_usd: 1600.0,
+            max_trades_allowed: 8, // 8 
+            reference_margin_usd: 1_600.0, //1600 (200 per trade)
             trade_amount_usd: 200.0, // maybe delete later in favor of (reference_margin_usd / max_trades_allowed) which devides trades evenly. Double check since it must work with leverage / early profit margit calculations.
 
             leverage: None,
