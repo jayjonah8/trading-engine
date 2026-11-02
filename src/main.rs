@@ -174,13 +174,18 @@ async fn main() -> Result<()> {
         // BACKTEST SETTINGS
         // ============================================================
 
+        // First 28 hours of October 2026 (crosses into second chunk).
+        // backtest_start: "2026-10-01T00:00:00Z".to_string(),
+        // backtest_end: "2026-10-02T04:00:00Z".to_string(),
+
         // First two days of October 2026.
         backtest_start: "2026-10-01T00:00:00Z".to_string(),
         backtest_end: "2026-10-03T00:00:00Z".to_string(),
 
-        backtest_min_trade_interval: Duration::from_millis(300),
+        backtest_min_trade_interval: Duration::from_millis(300), 
 
-        backtest_chunk_days: Some(10),
+        backtest_chunk_days: None,
+        // backtest_chunk_days: Some(1),
 
         // ============================================================
         // RISK LIMITS

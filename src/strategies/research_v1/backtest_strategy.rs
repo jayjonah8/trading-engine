@@ -197,7 +197,9 @@ impl ResearchV1BacktestStrategy {
 
             // false = bypass can_trade check, 
             // true = enforce can_trade check.
-            enable_trading_eligibility_check: false, 
+            // Must remain on to prevent wild undefined
+            // behavior due to ultra volatile assets
+            enable_trading_eligibility_check: true, 
             can_trade: HashMap::new(),
 
             black_swan_protection: BlackSwanProtection::new(
@@ -323,7 +325,7 @@ impl Strategy for ResearchV1BacktestStrategy {
                 if self.debug_mode {
                     print_log(
                         self.debug_mode,
-                        true,
+                        false,
                         format_args!(
                             "[RESEARCH V1 BACKTEST TRADE][{}] \
                             price=${:.4} | size={} | timestamp_ms={}",
@@ -416,7 +418,7 @@ impl Strategy for ResearchV1BacktestStrategy {
                     if cleared {
                         print_log(
                             self.debug_mode,
-                            false,
+                            true,
                             format!(
                                 "[RESEARCH V1 BACKTEST] PRICE WINDOW CLEARED | symbol={} | active_trade=true",
                                 ev.symbol,
@@ -554,7 +556,7 @@ impl Strategy for ResearchV1BacktestStrategy {
                                 if self.debug_mode {
                                     print_log(
                                         self.debug_mode,
-                                        false,
+                                        true,
                                         format_args!(
                                             "[RESEARCH V1 BACKTEST {:?} ENTRY][{}] \
                                             price=${:.4} | \
@@ -658,7 +660,7 @@ impl Strategy for ResearchV1BacktestStrategy {
                                 if self.debug_mode {
                                     print_log(
                                         self.debug_mode,
-                                        false,
+                                        true,
                                         format_args!(
                                             "[RESEARCH V1 BACKTEST {:?} ENTRY][{}] \
                                             price=${:.4} | \

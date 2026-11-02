@@ -114,11 +114,9 @@ impl StatefulTradeDownsampler {
 
         // Completed buckets may be emitted out of order
         // because symbols are downsampled independently.
-        filtered.sort_by(|a, b| {
-            a.timestamp
-                .cmp(&b.timestamp)
-                .then_with(|| a.symbol.cmp(&b.symbol))
-        });
+        //
+        // Sort only by timestamp, matching downsample.rs.
+        filtered.sort_by_key(|trade| trade.timestamp);
 
         filtered
     }
@@ -140,16 +138,13 @@ impl StatefulTradeDownsampler {
             remaining.push(trade);
         }
 
-        remaining.sort_by(|a, b| {
-            a.timestamp
-                .cmp(&b.timestamp)
-                .then_with(|| a.symbol.cmp(&b.symbol))
-        });
+        // Sort only by timestamp, matching downsample.rs.
+        remaining.sort_by_key(|trade| trade.timestamp);
 
         remaining
     }
 
-    
+
     // ============================================================
     // FLUSH COMPLETED BUCKETS
     // ============================================================
@@ -165,6 +160,7 @@ impl StatefulTradeDownsampler {
         &mut self,
         timestamp: chrono::DateTime<chrono::Utc>,
     ) -> Vec<HistoricalTrade> {
+
         if self.interval.is_zero() {
             return Vec::new();
         }
@@ -196,11 +192,8 @@ impl StatefulTradeDownsampler {
             }
         }
 
-        completed.sort_by(|a, b| {
-            a.timestamp
-                .cmp(&b.timestamp)
-                .then_with(|| a.symbol.cmp(&b.symbol))
-        });
+        // Sort only by timestamp, matching downsample.rs.
+        completed.sort_by_key(|trade| trade.timestamp);
 
         completed
     }

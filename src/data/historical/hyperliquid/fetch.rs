@@ -239,3 +239,33 @@ fn historical_hour_path(
         .join(hour.format("%Y%m%d").to_string())
         .join(format!("{}.lz4", hour.hour()))
 }
+
+
+
+
+// cargo test print_btc_trade_timestamps -- --nocapture
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn print_btc_trade_timestamps() {
+        let trades = fetch_hyperliquid_historical_trades(
+            &["TRUMP"],
+            "2026-10-01T00:00:00Z",
+            "2026-10-01T01:00:00Z",
+        )
+        .expect("Failed to fetch BTC historical trades");
+
+        println!("\nBTC historical trade timestamps:\n");
+
+        for trade in trades.iter().take(20) {
+            println!(
+                "{} | price={} | size={}",
+                trade.timestamp.format("%Y-%m-%dT%H:%M:%S%.9fZ"),
+                trade.price,
+                trade.size,
+            );
+        }
+    }
+}

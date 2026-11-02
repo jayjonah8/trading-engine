@@ -139,6 +139,8 @@ impl ResearchV1Strategy {
 
             // false = bypass can_trade check, 
             // true = enforce can_trade check.
+            // Must remain on to prevent wild undefined
+            // behavior due to ultra volatile assets
             enable_trading_eligibility_check: true, 
             can_trade: HashMap::new(),
 
