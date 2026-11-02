@@ -166,8 +166,9 @@ async fn main() -> Result<()> {
         // BACKTEST SETTINGS
         // ============================================================
 
-        backtest_start: "2026-10-15T10:00:00Z".to_string(),
-        backtest_end: "2026-10-15T11:00:00Z".to_string(),
+        // first three days of October 2026 (October 1–3)
+        backtest_start: "2026-10-01T00:00:00Z".to_string(),
+        backtest_end: "2026-10-04T00:00:00Z".to_string(),
         backtest_min_trade_interval: Duration::from_millis(300),
 
         // ============================================================
