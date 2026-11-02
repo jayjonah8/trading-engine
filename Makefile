@@ -51,8 +51,9 @@ hyperliquid-delete-history:
 # Period: November 1, 2025 through October 31, 2026.
 #
 # Uses AWS S3 metadata requests with Requester Pays enabled.
+# "caffinate" prevents macOS from sleeping while scanning historical S3 metadata.
 hyperliquid-history-year-size:
-	python3 scripts/hyperliquid_history_size.py
+	caffeinate -i python3 scripts/hyperliquid_history_size.py
 
 
 # ============================================================
@@ -67,8 +68,9 @@ hyperliquid-history-year-size:
 # Interrupted downloads can be restarted using the same command.
 #
 # Estimated AWS cost depends on the total compressed data size.
+# "caffeinate" prevents macOS from sleeping while downloading historical data.
 hyperliquid-download-range:
-	python3 scripts/hyperliquid_history_download.py
+	caffeinate -i python3 scripts/hyperliquid_history_download.py
 
 
 

@@ -86,12 +86,12 @@ AWS_PROFILE = "admin"
 # END_DATE   = "2026-09-01"
 
 # [ ] Batch 11: September 2026
-# START_DATE = "2026-09-01"
-# END_DATE   = "2026-10-01"
+START_DATE = "2026-09-01"
+END_DATE   = "2026-10-01"
 
-# [ ] Batch 12: October 2026
-START_DATE = "2026-10-01"
-END_DATE   = "2026-11-01"
+# [✅] Batch 12: October 2026
+# START_DATE = "2026-10-01"
+# END_DATE   = "2026-11-01"
 
 # ============================================================
 # COMPLETION STATUS
@@ -108,7 +108,7 @@ END_DATE   = "2026-11-01"
 # [ ] Batch 9  - July 2026
 # [ ] Batch 10 - August 2026
 # [ ] Batch 11 - September 2026
-# [ ] Batch 12 - October 2026
+# [✅] Batch 12 - October 2026
 
 # [ ] FULL YEAR DOWNLOADED (8,760 hourly archives)
 

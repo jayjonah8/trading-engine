@@ -73,6 +73,8 @@ use super::backtest_state::ResearchV1BacktestStrategy;
 /* 
 // TODO:
 
+* Processing historical data in smaller chunks or streaming it is necessary for efficient large-scale backtesting.
+
 * Get a year of data download, clearing the old data before you do so.
 
 * Try to test longer backtests. 1 week, 1 month, 3 months, 6 months, 1 year
