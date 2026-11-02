@@ -179,7 +179,7 @@ impl ResearchV1BacktestStrategy {
             exit_loss_percent: Some(0.5),
             emergency_exit_percent: Some(5.0),
             min_sl_delay: Some(1800), // 1800 = 30 min
-            trade_duration_secs: None, // 600 = 10 minutes, 3600 = 1hr
+            trade_duration_secs: Some(3600), // 600 = 10 minutes, 3600 = 1hr
             min_volume_usd: Some(350_000.0), 
             max_24h_move_pct: Some(15.00),
 
@@ -197,7 +197,7 @@ impl ResearchV1BacktestStrategy {
 
             // false = bypass can_trade check, 
             // true = enforce can_trade check.
-            enable_trading_eligibility_check: true, 
+            enable_trading_eligibility_check: false, 
             can_trade: HashMap::new(),
 
             black_swan_protection: BlackSwanProtection::new(

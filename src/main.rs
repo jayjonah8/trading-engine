@@ -98,6 +98,7 @@ use crate::storage::backtest::save_backtest_report;
 
 use crate::data::historical::hyperliquid::symbols::{
     discover_hyperliquid_historical_symbols,
+    known_hyperliquid_historical_symbols,
     HyperliquidSymbolFilter,
 };
 
@@ -138,13 +139,16 @@ async fn main() -> Result<()> {
         // Used only when execution_mode = ExecutionMode::Backtest.
         historical_data_provider: HistoricalDataProvider::Hyperliquid,
 
-        symbols: vec![
-            "BTC".to_string(),
-            "ETH".to_string(),
-            "SOL".to_string(),
-            "HYPE".to_string(),
-            "NEAR".to_string(),
-        ],
+
+        symbols: known_hyperliquid_historical_symbols(),
+
+        // symbols: vec![
+        //     "BTC".to_string(),
+        //     "ETH".to_string(),
+        //     "SOL".to_string(),
+        //     "HYPE".to_string(),
+        //     "NEAR".to_string(),
+        // ],
 
         // Example equity configuration:
         //
@@ -166,10 +170,17 @@ async fn main() -> Result<()> {
         // BACKTEST SETTINGS
         // ============================================================
 
-        // first three days of October 2026 (October 1–3)
+        // ============================================================
+        // BACKTEST SETTINGS
+        // ============================================================
+
+        // First two days of October 2026.
         backtest_start: "2026-10-01T00:00:00Z".to_string(),
-        backtest_end: "2026-10-04T00:00:00Z".to_string(),
+        backtest_end: "2026-10-03T00:00:00Z".to_string(),
+
         backtest_min_trade_interval: Duration::from_millis(300),
+
+        backtest_chunk_days: Some(10),
 
         // ============================================================
         // RISK LIMITS
@@ -199,27 +210,27 @@ async fn main() -> Result<()> {
 
 
     // ============================================================
-    // DISCOVER HYPERLIQUID HISTORICAL SYMBOLS
+    // DISCOVER HYPERLIQUID HISTORICAL SYMBOLS (move this some where as a read only helper function to only run one time to get the backtest symbols and hard code them after)
     // ============================================================
 
-    if matches!(cfg.execution_mode, ExecutionMode::Backtest)
-        && matches!(
-            cfg.historical_data_provider,
-            HistoricalDataProvider::Hyperliquid
-        )
-    {
-        cfg.symbols = discover_hyperliquid_historical_symbols(
-            &cfg.backtest_start,
-            &cfg.backtest_end,
-            HyperliquidSymbolFilter::NativePerps,
-        )?;
+    // if matches!(cfg.execution_mode, ExecutionMode::Backtest)
+    //     && matches!(
+    //         cfg.historical_data_provider,
+    //         HistoricalDataProvider::Hyperliquid
+    //     )
+    // {
+    //     cfg.symbols = discover_hyperliquid_historical_symbols(
+    //         &cfg.backtest_start,
+    //         &cfg.backtest_end,
+    //         HyperliquidSymbolFilter::NativePerps,
+    //     )?;
 
-        println!(
-            "[BACKTEST] discovered {} historical symbols | symbols={:?}",
-            cfg.symbols.len(),
-            cfg.symbols,
-        );
-    }
+    //     println!(
+    //         "[BACKTEST] discovered {} historical symbols | symbols={:?}",
+    //         cfg.symbols.len(),
+    //         cfg.symbols,
+    //     );
+    // }
 
     // ============================================================
     // STARTUP POSITION CLEANUP
@@ -1441,6 +1452,7 @@ async fn main() -> Result<()> {
                     &cfg.backtest_start,
                     &cfg.backtest_end,
                     cfg.backtest_min_trade_interval,
+                    cfg.backtest_chunk_days,
                 )
                 .await
                 .map_err(|error| anyhow::anyhow!(error.to_string()))?;

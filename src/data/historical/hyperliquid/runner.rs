@@ -1,6 +1,11 @@
 #![allow(dead_code)]
 
-use chrono::{DateTime, Utc};
+use chrono::{
+    DateTime,
+    Duration as ChronoDuration,
+    Utc,
+};
+
 use std::time::Duration;
 
 use tokio::{
@@ -26,6 +31,7 @@ use crate::{
 
     data::historical::{
         downsample::downsample_trades,
+        downsample_stateful::StatefulTradeDownsampler,
         event_mapper::map_app_to_backtest_engine_event,
         hyperliquid::fetch::fetch_hyperliquid_historical_trades,
         strategy_event::BacktestStrategyEvent,
@@ -39,15 +45,24 @@ use crate::{
 };
 
 
-// Fetches raw Hyperliquid historical trades from the local archive, builds
-// accurate candles from the full trade stream, downsamples the trades for
-// strategy replay, then merges trades and closed candles into one
-// chronological backtest event stream.
+// ============================================================
+// HYPERLIQUID HISTORICAL BACKTEST RUNNER
+// ============================================================
+
+// Supports optional configurable day-based chunking.
+//
+// None:
+//     Uses the existing full-range historical loading behavior.
+//
+// Some(days):
+//     Loads historical data in chronological chunks while
+//     preserving candle, downsampling, strategy, and engine state.
+//
+// Only historical input data is released between chunks.
 //
 // TODO:
-// The Alpaca and Hyperliquid backtest runners intentionally remain separate
-// for now. Later, extract their common candle/replay pipeline into a shared
-// provider-independent historical backtest runner.
+// Extract common historical replay functionality into a
+// provider-independent runner shared by future data providers.
 pub async fn run_hyperliquid_backtest_feed(
     tx_backtest_strategies: &[Sender<BacktestStrategyEvent>],
     tx_engine: &UnboundedSender<EngineEvent>,
@@ -59,74 +74,48 @@ pub async fn run_hyperliquid_backtest_feed(
     start: &str,
     end: &str,
     min_trade_interval: Duration,
+    chunk_days: Option<u32>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    
-    // Uses the default candle setting timeframes and prune duration.
-    // You can change this to a custom config if you want.
-    let candle_config = CandleConfig::default();
 
     // ============================================================
-    // VALIDATE HISTORICAL SYMBOLS
+    // VALIDATE CONFIGURATION
     // ============================================================
 
     if symbols.is_empty() {
-        return Err("Hyperliquid backtest symbols cannot be empty".into());
+        return Err(
+            "Hyperliquid backtest symbols cannot be empty".into()
+        );
     }
 
-    // ============================================================
-    // FETCH RAW HISTORICAL TRADES
-    // ============================================================
+    if matches!(chunk_days, Some(0)) {
+        return Err(
+            "Backtest chunk days must be greater than zero".into()
+        );
+    }
 
-    // Convert configured symbols into borrowed string slices
-    // expected by the historical trade fetcher.
-    let symbol_refs: Vec<&str> = symbols
-        .iter()
-        .map(String::as_str)
-        .collect();
+    let start_time =
+        DateTime::parse_from_rfc3339(start)?.with_timezone(&Utc);
 
-    // Keep raw trades untouched because candles require the
-    // complete trade stream for accurate OHLCV calculations.
-    let raw_trades = fetch_hyperliquid_historical_trades(
-        &symbol_refs,
-        start,
-        end,
-    )?;
+    let end_time =
+        DateTime::parse_from_rfc3339(end)?.with_timezone(&Utc);
 
-    println!(
-        "[BACKTEST] fetched {} raw Hyperliquid historical trades | symbols={}",
-        raw_trades.len(),
-        symbols.len(),
-    );
-
-    // ============================================================
-    // BUILD MULTI-TIMEFRAME CANDLES FROM RAW TRADES
-    // ============================================================
-
-    // Candles are created BEFORE downsampling so their open, high,
-    // low, close, volume, and trade count use the full trade stream.
-    let mut candle_manager = CandleManager::new(&candle_config.timeframes);
-    let mut bars = Vec::new();
-
-    for trade in &raw_trades {
-        bars.extend(
-            candle_manager.on_trade(
-                &trade.symbol,
-                trade.timestamp,
-                trade.price,
-                trade.size,
-            )
+    if start_time >= end_time {
+        return Err(
+            "Invalid Hyperliquid backtest date range".into()
         );
     }
 
     // ============================================================
-    // CLOSE FINAL COMPLETED CANDLES
+    // INITIALIZE HISTORICAL COMPONENTS
     // ============================================================
 
-    let end_time = DateTime::parse_from_rfc3339(end)?.with_timezone(&Utc);
+    let candle_config = CandleConfig::default();
 
-    bars.extend(
-        candle_manager.close_through(end_time)
-    );
+    let mut candle_manager =
+        CandleManager::new(&candle_config.timeframes);
+
+    let symbol_refs: Vec<&str> =
+        symbols.iter().map(String::as_str).collect();
 
     let timeframe_minutes: Vec<u64> = candle_config
         .timeframes
@@ -135,63 +124,21 @@ pub async fn run_hyperliquid_backtest_feed(
         .collect();
 
     println!(
-        "[BACKTEST] built {} historical candles | timeframes={:?} minutes",
-        bars.len(),
+        "[BACKTEST] Hyperliquid historical replay | start={} | end={} | symbols={} | chunk_days={:?}",
+        start_time,
+        end_time,
+        symbols.len(),
+        chunk_days,
+    );
+
+    println!(
+        "[BACKTEST] candle timeframes={:?} minutes",
         timeframe_minutes,
     );
 
     // ============================================================
-    // DOWNSAMPLE STRATEGY TRADE STREAM
+    // INITIALIZE REPLAY
     // ============================================================
-
-    // Only the trade stream sent to the strategy is downsampled.
-    // Candles were already built above using every raw trade.
-    let original_trade_count = raw_trades.len();
-
-    let trades = downsample_trades(
-        raw_trades,
-        min_trade_interval,
-    );
-
-    println!(
-        "[BACKTEST] downsampled | original={} | kept={} | removed={} | interval={}ms",
-        original_trade_count,
-        trades.len(),
-        original_trade_count - trades.len(),
-        min_trade_interval.as_millis(),
-    );
-
-    // ============================================================
-    // BUILD HISTORICAL REPLAY TIMELINE
-    // ============================================================
-
-    let mut replay_events = Vec::with_capacity(trades.len() + bars.len());
-
-    for trade in trades {
-        replay_events.push(BacktestReplayEvent::Trade(trade));
-    }
-
-    for bar in bars {
-        replay_events.push(BacktestReplayEvent::Bar(bar));
-    }
-
-    // ============================================================
-    // SORT REPLAY EVENTS
-    // ============================================================
-
-    // If a candle close and trade have the exact same timestamp,
-    // process the closed candle first so the previous candle is
-    // available before processing the new interval's trade.
-    replay_events.sort_by(|a, b| {
-        a.timestamp()
-            .cmp(&b.timestamp())
-            .then_with(|| a.replay_priority().cmp(&b.replay_priority()))
-    });
-
-    println!(
-        "[BACKTEST] replaying {} Hyperliquid historical market events",
-        replay_events.len()
-    );
 
     println!(
         "[BACKTEST] starting Hyperliquid historical replay in 3 seconds..."
@@ -200,11 +147,476 @@ pub async fn run_hyperliquid_backtest_feed(
     sleep(Duration::from_secs(3)).await;
 
     // ============================================================
-    // REPLAY HISTORICAL MARKET EVENTS
+    // UNCHUNKED BACKTEST
     // ============================================================
 
+    // Preserve the existing full-range loading and downsampling
+    // behavior when chunking is disabled.
+    if chunk_days.is_none() {
+
+        let raw_trades =
+            fetch_hyperliquid_historical_trades(
+                &symbol_refs,
+                start,
+                end,
+            )?;
+
+        let original_trade_count = raw_trades.len();
+
+        println!(
+            "[BACKTEST] fetched {} raw Hyperliquid historical trades",
+            original_trade_count,
+        );
+
+        // ========================================================
+        // BUILD CANDLES
+        // ========================================================
+
+        let mut bars = Vec::new();
+
+        for trade in &raw_trades {
+            bars.extend(
+                candle_manager.on_trade(
+                    &trade.symbol,
+                    trade.timestamp,
+                    trade.price,
+                    trade.size,
+                )
+            );
+        }
+
+        bars.extend(
+            candle_manager.close_through(end_time)
+        );
+
+        println!(
+            "[BACKTEST] built {} historical candles",
+            bars.len(),
+        );
+
+        // ========================================================
+        // DOWNSAMPLE TRADES
+        // ========================================================
+
+        let trades = downsample_trades(
+            raw_trades,
+            min_trade_interval,
+        );
+
+        println!(
+            "[BACKTEST] downsampled | original={} | kept={} | removed={} | interval={}ms",
+            original_trade_count,
+            trades.len(),
+            original_trade_count - trades.len(),
+            min_trade_interval.as_millis(),
+        );
+
+        // ========================================================
+        // BUILD REPLAY EVENTS
+        // ========================================================
+
+        let mut replay_events =
+            build_replay_events(trades, bars);
+
+        sort_replay_events(&mut replay_events);
+
+        println!(
+            "[BACKTEST] replaying {} Hyperliquid historical market events",
+            replay_events.len(),
+        );
+
+        // ========================================================
+        // REPLAY
+        // ========================================================
+
+        replay_historical_events(
+            replay_events,
+            tx_backtest_strategies,
+            tx_engine,
+            tx_exec,
+            tx_exec_evt,
+            market_state,
+            execution_venue,
+        )
+        .await?;
+
+    } else {
+
+        // ========================================================
+        // CHUNKED BACKTEST
+        // ========================================================
+
+        let days = chunk_days.ok_or(
+            "Missing Hyperliquid chunk configuration"
+        )?;
+
+        let chunk_duration =
+            ChronoDuration::days(i64::from(days));
+
+        // Persistent downsampling state across every chunk.
+        let mut downsampler =
+            StatefulTradeDownsampler::new(min_trade_interval);
+
+        // Events not yet safe to replay remain buffered.
+        let mut pending_events: Vec<BacktestReplayEvent> =
+            Vec::new();
+
+        let mut chunk_start = start_time;
+
+        let mut chunk_number = 0usize;
+
+        let mut total_raw_trades = 0usize;
+        let mut total_replayed_events = 0usize;
+
+        // ========================================================
+        // PROCESS HISTORICAL CHUNKS
+        // ========================================================
+
+        while chunk_start < end_time {
+
+            chunk_number += 1;
+
+            let chunk_end =
+                (chunk_start + chunk_duration).min(end_time);
+
+            println!(
+                "\n[BACKTEST CHUNK {}] loading | start={} | end={}",
+                chunk_number,
+                chunk_start,
+                chunk_end,
+            );
+
+            // ====================================================
+            // FETCH CHUNK
+            // ====================================================
+
+            let raw_trades =
+                fetch_hyperliquid_historical_trades(
+                    &symbol_refs,
+                    &chunk_start.to_rfc3339(),
+                    &chunk_end.to_rfc3339(),
+                )?;
+
+            let raw_trade_count = raw_trades.len();
+
+            total_raw_trades += raw_trade_count;
+
+            println!(
+                "[BACKTEST CHUNK {}] fetched {} raw trades",
+                chunk_number,
+                raw_trade_count,
+            );
+
+            // ====================================================
+            // BUILD CANDLES FROM FULL RAW STREAM
+            // ====================================================
+
+            let mut bars = Vec::new();
+
+            for trade in &raw_trades {
+                bars.extend(
+                    candle_manager.on_trade(
+                        &trade.symbol,
+                        trade.timestamp,
+                        trade.price,
+                        trade.size,
+                    )
+                );
+            }
+
+            // Close only candles that have actually completed.
+            //
+            // CandleManager preserves any active candles whose
+            // end timestamps are beyond this chunk boundary.
+            //
+            // This does not reset candle state.
+            bars.extend(
+                candle_manager.close_through(chunk_end)
+            );
+
+            // ====================================================
+            // STATEFUL DOWNSAMPLING
+            // ====================================================
+
+            let mut trades =
+                downsampler.process_chunk(raw_trades);
+
+            // Release completed buckets at the chunk boundary.
+            //
+            // This prevents inactive symbols from retaining
+            // historical trades indefinitely.
+            trades.extend(
+                downsampler.flush_completed_through(chunk_end)
+            );
+
+            // ====================================================
+            // BUILD CHUNK REPLAY EVENTS
+            // ====================================================
+
+            pending_events.extend(
+                build_replay_events(trades, bars)
+            );
+
+            // ====================================================
+            // DETERMINE SAFE REPLAY BOUNDARY
+            // ====================================================
+
+            // For zero downsampling interval, every raw trade
+            // is immediately available.
+            //
+            // Otherwise, retain events from the time bucket
+            // overlapping the chunk boundary.
+            //
+            // This guarantees that a later chunk cannot
+            // introduce an older downsampled trade.
+            let safe_replay_end =
+                safe_replay_boundary(
+                    chunk_end,
+                    min_trade_interval,
+                )?;
+
+            // ====================================================
+            // SEPARATE READY AND PENDING EVENTS
+            // ====================================================
+
+            let mut ready_events = Vec::new();
+            let mut remaining_events = Vec::new();
+
+            for event in pending_events.drain(..) {
+                if event.timestamp() < safe_replay_end {
+                    ready_events.push(event);
+                } else {
+                    remaining_events.push(event);
+                }
+            }
+
+            pending_events = remaining_events;
+
+            // ====================================================
+            // SORT READY EVENTS
+            // ====================================================
+
+            sort_replay_events(&mut ready_events);
+
+            let ready_count = ready_events.len();
+
+            println!(
+                "[BACKTEST CHUNK {}] replaying {} events | pending={}",
+                chunk_number,
+                ready_count,
+                pending_events.len(),
+            );
+
+            // ====================================================
+            // REPLAY CHUNK
+            // ====================================================
+
+            replay_historical_events(
+                ready_events,
+                tx_backtest_strategies,
+                tx_engine,
+                tx_exec,
+                tx_exec_evt,
+                market_state,
+                execution_venue,
+            )
+            .await?;
+
+            total_replayed_events += ready_count;
+
+            println!(
+                "[BACKTEST CHUNK {}] complete | raw_trades={} | replayed={}",
+                chunk_number,
+                raw_trade_count,
+                ready_count,
+            );
+
+            // ====================================================
+            // ADVANCE CHUNK
+            // ====================================================
+
+            chunk_start = chunk_end;
+
+            // The raw trade vector has already been consumed.
+            // The completed replay events have also been consumed.
+            //
+            // Only persistent candle, downsampling, and pending
+            // replay state remains in memory.
+        }
+
+        // ========================================================
+        // FINALIZE HISTORICAL DATA
+        // ========================================================
+
+        // Release the final retained trade for each symbol.
+        let remaining_trades =
+            downsampler.finish();
+
+        // Finalize any remaining completed candles.
+        let remaining_bars =
+            candle_manager.close_through(end_time);
+
+        pending_events.extend(
+            build_replay_events(
+                remaining_trades,
+                remaining_bars,
+            )
+        );
+
+        sort_replay_events(&mut pending_events);
+
+        let final_event_count = pending_events.len();
+
+        println!(
+            "[BACKTEST] replaying {} final buffered events",
+            final_event_count,
+        );
+
+        replay_historical_events(
+            pending_events,
+            tx_backtest_strategies,
+            tx_engine,
+            tx_exec,
+            tx_exec_evt,
+            market_state,
+            execution_venue,
+        )
+        .await?;
+
+        total_replayed_events += final_event_count;
+
+        println!(
+            "[BACKTEST] chunked replay complete | chunks={} | raw_trades={} | replayed_events={}",
+            chunk_number,
+            total_raw_trades,
+            total_replayed_events,
+        );
+    }
+
+    println!(
+        "[BACKTEST] finished publishing Hyperliquid historical events"
+    );
+
+    Ok(())
+}
+
+
+// ============================================================
+// SAFE REPLAY BOUNDARY
+// ============================================================
+
+// Determines the earliest possible timestamp belonging to an
+// unfinished downsampling bucket.
+//
+// Events strictly before this timestamp are safe to replay.
+//
+// This keeps chronological ordering intact across chunks.
+fn safe_replay_boundary(
+    timestamp: DateTime<Utc>,
+    interval: Duration,
+) -> Result<DateTime<Utc>, Box<dyn std::error::Error>> {
+
+    if interval.is_zero() {
+        return Ok(timestamp);
+    }
+
+    let timestamp_ns =
+        (timestamp.timestamp() as i128 * 1_000_000_000)
+            + timestamp.timestamp_subsec_nanos() as i128;
+
+    let interval_ns = interval.as_nanos() as i128;
+
+    let bucket_start_ns =
+        timestamp_ns.div_euclid(interval_ns) * interval_ns;
+
+    let seconds =
+        bucket_start_ns.div_euclid(1_000_000_000);
+
+    let nanos =
+        bucket_start_ns.rem_euclid(1_000_000_000);
+
+    let seconds = i64::try_from(seconds)?;
+
+    DateTime::<Utc>::from_timestamp(
+        seconds,
+        nanos as u32,
+    )
+    .ok_or_else(|| {
+        "Failed to calculate historical replay boundary".into()
+    })
+}
+
+
+// ============================================================
+// BUILD HISTORICAL REPLAY EVENTS
+// ============================================================
+
+fn build_replay_events(
+    trades: Vec<HistoricalTrade>,
+    bars: Vec<Bar>,
+) -> Vec<BacktestReplayEvent> {
+
+    let mut events =
+        Vec::with_capacity(trades.len() + bars.len());
+
+    for trade in trades {
+        events.push(
+            BacktestReplayEvent::Trade(trade)
+        );
+    }
+
+    for bar in bars {
+        events.push(
+            BacktestReplayEvent::Bar(bar)
+        );
+    }
+
+    events
+}
+
+
+// ============================================================
+// SORT HISTORICAL REPLAY EVENTS
+// ============================================================
+
+fn sort_replay_events(
+    events: &mut [BacktestReplayEvent],
+) {
+    // Closed candles are processed before trades when both
+    // have the same historical timestamp.
+    events.sort_by(|a, b| {
+        a.timestamp()
+            .cmp(&b.timestamp())
+            .then_with(|| {
+                a.replay_priority()
+                    .cmp(&b.replay_priority())
+            })
+    });
+}
+
+
+// ============================================================
+// REPLAY HISTORICAL MARKET EVENTS
+// ============================================================
+
+// Preserves the existing historical event-processing sequence.
+//
+// Every event must complete all Engine, strategy, and execution
+// synchronization barriers before the next event is processed.
+async fn replay_historical_events(
+    replay_events: Vec<BacktestReplayEvent>,
+    tx_backtest_strategies: &[Sender<BacktestStrategyEvent>],
+    tx_engine: &UnboundedSender<EngineEvent>,
+    tx_exec: &UnboundedSender<ExecCommand>,
+    tx_exec_evt: &UnboundedSender<ExecEvent>,
+    market_state: &SharedBacktestMarketState,
+    execution_venue: Venue,
+) -> Result<(), Box<dyn std::error::Error>> {
+
     for replay_event in replay_events {
+
         let event = match replay_event {
+
             BacktestReplayEvent::Trade(trade) => {
                 let symbol = trade.symbol.clone();
 
@@ -215,7 +627,8 @@ pub async fn run_hyperliquid_backtest_feed(
                             symbol,
                             price: trade.price,
                             size: trade.size,
-                            timestamp_ms: trade.timestamp.timestamp_millis(),
+                            timestamp_ms:
+                                trade.timestamp.timestamp_millis(),
                         }
                     ),
                 }
@@ -230,21 +643,13 @@ pub async fn run_hyperliquid_backtest_feed(
         };
 
 
-        // ============================================================
+        // ========================================================
         // 1. UPDATE BACKTEST EXECUTION MARKET STATE
-        // ============================================================
+        // ========================================================
 
-        // The execution simulator must observe the current historical market
-        // state before the Engine or strategies process this event.
-        //
-        // If a strategy generates an order from this event, the backtest
-        // execution adapter can therefore execute against the same historical
-        // market price and timestamp that caused the strategy decision.
-        if let AppEvent::TapeTrade(trade) =
-            &event.event
-        {
-            let mut state =
-                market_state.write().await;
+        if let AppEvent::TapeTrade(trade) = &event.event {
+
+            let mut state = market_state.write().await;
 
             state.update_price(
                 trade.symbol.clone(),
@@ -254,46 +659,32 @@ pub async fn run_hyperliquid_backtest_feed(
         }
 
 
-        // ============================================================
+        // ========================================================
         // 2. PROCESS HISTORICAL PRICE IN ENGINE
-        // ============================================================
+        // ========================================================
 
-        // Historical trades update engine prices and run deterministic
-        // risk checks before strategies process the same market event.
         if let Some(engine_event) =
-            map_app_to_backtest_engine_event(
-                &event
-            )
+            map_app_to_backtest_engine_event(&event)
         {
             tx_engine
-                .send(
-                    engine_event
-                )
-                .map_err(
-                    |_| {
-                        "Engine event channel closed"
-                    }
-                )?;
+                .send(engine_event)
+                .map_err(|_| {
+                    "Engine event channel closed"
+                })?;
 
-            wait_for_engine(
-                tx_engine
-            )
-            .await?;
+            wait_for_engine(tx_engine).await?;
         }
 
 
-        // ============================================================
+        // ========================================================
         // 3. SEND EVENT TO ALL BACKTEST STRATEGIES
-        // ============================================================
+        // ========================================================
 
         let mut acknowledgements =
-            Vec::with_capacity(
-                tx_backtest_strategies.len()
-            );
+            Vec::with_capacity(tx_backtest_strategies.len());
 
-        for tx_strategy in
-            tx_backtest_strategies
-        {
+        for tx_strategy in tx_backtest_strategies {
+
             let (tx_done, rx_done) =
                 oneshot::channel();
 
@@ -305,59 +696,38 @@ pub async fn run_hyperliquid_backtest_feed(
                     }
                 )
                 .await
-                .map_err(
-                    |_| {
-                        "Backtest strategy channel closed"
-                    }
-                )?;
+                .map_err(|_| {
+                    "Backtest strategy channel closed"
+                })?;
 
-            acknowledgements.push(
-                rx_done
-            );
+            acknowledgements.push(rx_done);
         }
 
 
-        // ============================================================
+        // ========================================================
         // 4. WAIT FOR ALL BACKTEST STRATEGIES
-        // ============================================================
+        // ========================================================
 
-        // Do not advance until every enabled strategy has completely
-        // processed this historical market event.
         for done in acknowledgements {
             done
                 .await
-                .map_err(
-                    |_| {
-                        "Backtest strategy acknowledgement dropped"
-                    }
-                )?;
+                .map_err(|_| {
+                    "Backtest strategy acknowledgement dropped"
+                })?;
         }
 
 
-        // ============================================================
+        // ========================================================
         // 5. WAIT FOR STRATEGY ENGINE EVENTS
-        // ============================================================
+        // ========================================================
 
-        // Strategies may have generated EngineEvents while processing this
-        // historical market event.
-        //
-        // Once this barrier completes, those events have been processed and
-        // any resulting ExecCommands have been sent into execution.
-        wait_for_engine(
-            tx_engine
-        )
-        .await?;
+        wait_for_engine(tx_engine).await?;
 
 
-        // ============================================================
+        // ========================================================
         // 6. WAIT FOR BACKTEST EXECUTION COMMANDS
-        // ============================================================
+        // ========================================================
 
-        // Wait until the execution router has forwarded all previously
-        // queued commands and the backtest adapter has processed them.
-        //
-        // The adapter acknowledges this barrier after emitting the
-        // corresponding ExecEvents, including order fills.
         wait_for_execution_commands(
             tx_exec,
             execution_venue,
@@ -365,50 +735,32 @@ pub async fn run_hyperliquid_backtest_feed(
         .await?;
 
 
-        // ============================================================
+        // ========================================================
         // 7. WAIT FOR BACKTEST EXECUTION EVENTS
-        // ============================================================
+        // ========================================================
 
-        // The execution-command barrier guarantees the backtest adapter
-        // has emitted all ExecEvents for preceding execution commands.
-        //
-        // This barrier then guarantees the Engine has processed those
-        // execution events before historical replay advances.
-        wait_for_execution(
-            tx_exec_evt
-        )
-        .await?;
+        wait_for_execution(tx_exec_evt).await?;
 
 
-        // ============================================================
-        // DEBUG: HISTORICAL REPLAY SPEED (DELETE LATER)
-        // ============================================================
-        // Slow down historical replay to inspect the execution sequence.
-        // This only affects wall-clock speed, not historical timestamps.
-        // 100 ms is a good value
+        // ========================================================
+        // DEBUG: HISTORICAL REPLAY SPEED
+        // ========================================================
+
         const DEBUG_REPLAY_DELAY_MS: u64 = 0;
 
-
-        // ============================================================
-        // DEBUG: HISTORICAL STEP COMPLETE (DELETE LATER)
-        // ============================================================
         if DEBUG_REPLAY_DELAY_MS > 0 {
+
             println!(
                 "[BACKTEST DEBUG] HISTORICAL STEP COMPLETE | symbol={}",
                 event.symbol,
             );
-        }
-        if DEBUG_REPLAY_DELAY_MS > 0 {
+
             sleep(
                 Duration::from_millis(DEBUG_REPLAY_DELAY_MS)
             )
             .await;
         }
     }
-
-    println!(
-        "[BACKTEST] finished publishing Hyperliquid historical events"
-    );
 
     Ok(())
 }
@@ -418,11 +770,12 @@ pub async fn run_hyperliquid_backtest_feed(
 // ENGINE SYNCHRONIZATION
 // ============================================================
 
-/// Waits until the engine has processed every EngineEvent that was
+/// Waits until the engine has processed every EngineEvent
 /// queued before this synchronization point.
 async fn wait_for_engine(
     tx_engine: &UnboundedSender<EngineEvent>,
 ) -> Result<(), String> {
+
     let (tx_done, rx_done) =
         oneshot::channel();
 
@@ -432,19 +785,15 @@ async fn wait_for_engine(
                 done: tx_done,
             }
         )
-        .map_err(
-            |_| {
-                "engine event channel closed".to_string()
-            }
-        )?;
+        .map_err(|_| {
+            "engine event channel closed".to_string()
+        })?;
 
     rx_done
         .await
-        .map_err(
-            |_| {
-                "engine barrier was dropped".to_string()
-            }
-        )?;
+        .map_err(|_| {
+            "engine barrier was dropped".to_string()
+        })?;
 
     Ok(())
 }
@@ -454,15 +803,13 @@ async fn wait_for_engine(
 // EXECUTION COMMAND SYNCHRONIZATION
 // ============================================================
 
-/// Waits until the backtest execution adapter has processed every
-/// execution command queued before this synchronization point.
-///
-/// The venue identifies the backtest adapter that should receive
-/// the barrier, allowing the same helper to support all venues.
+/// Waits until the backtest execution adapter has processed
+/// every execution command queued before this point.
 async fn wait_for_execution_commands(
     tx_exec: &UnboundedSender<ExecCommand>,
     venue: Venue,
 ) -> Result<(), String> {
+
     let (tx_done, rx_done) =
         oneshot::channel();
 
@@ -473,19 +820,15 @@ async fn wait_for_execution_commands(
                 done: tx_done,
             }
         )
-        .map_err(
-            |_| {
-                "execution command channel closed".to_string()
-            }
-        )?;
+        .map_err(|_| {
+            "execution command channel closed".to_string()
+        })?;
 
     rx_done
         .await
-        .map_err(
-            |_| {
-                "execution command barrier was dropped".to_string()
-            }
-        )?;
+        .map_err(|_| {
+            "execution command barrier was dropped".to_string()
+        })?;
 
     Ok(())
 }
@@ -495,11 +838,12 @@ async fn wait_for_execution_commands(
 // EXECUTION EVENT SYNCHRONIZATION
 // ============================================================
 
-/// Waits until the engine has processed every ExecEvent that was
+/// Waits until the engine has processed every ExecEvent
 /// queued before this synchronization point.
 async fn wait_for_execution(
     tx_exec_evt: &UnboundedSender<ExecEvent>,
 ) -> Result<(), String> {
+
     let (tx_done, rx_done) =
         oneshot::channel();
 
@@ -509,19 +853,15 @@ async fn wait_for_execution(
                 done: tx_done,
             }
         )
-        .map_err(
-            |_| {
-                "execution event channel closed".to_string()
-            }
-        )?;
+        .map_err(|_| {
+            "execution event channel closed".to_string()
+        })?;
 
     rx_done
         .await
-        .map_err(
-            |_| {
-                "execution barrier was dropped".to_string()
-            }
-        )?;
+        .map_err(|_| {
+            "execution barrier was dropped".to_string()
+        })?;
 
     Ok(())
 }
@@ -531,33 +871,24 @@ async fn wait_for_execution(
 // BACKTEST REPLAY EVENT
 // ============================================================
 
-// Internal backtest-only event used to combine historical trades and
-// completed candles into one chronological Hyperliquid replay timeline.
+// Internal backtest-only event used to combine historical trades
+// and completed candles into one chronological replay timeline.
 enum BacktestReplayEvent {
     Trade(HistoricalTrade),
     Bar(Bar),
 }
 
 impl BacktestReplayEvent {
-    fn timestamp(
-        &self,
-    ) -> DateTime<Utc> {
-        match self {
-            Self::Trade(trade) => {
-                trade.timestamp
-            }
 
-            Self::Bar(bar) => {
-                bar.end
-            }
+    fn timestamp(&self) -> DateTime<Utc> {
+        match self {
+            Self::Trade(trade) => trade.timestamp,
+            Self::Bar(bar) => bar.end,
         }
     }
 
-    // Closed candles are processed before trades when both become
-    // available at exactly the same historical timestamp.
-    fn replay_priority(
-        &self,
-    ) -> u8 {
+    // Closed candles take priority over trades when timestamps match.
+    fn replay_priority(&self) -> u8 {
         match self {
             Self::Bar(_) => 0,
             Self::Trade(_) => 1,

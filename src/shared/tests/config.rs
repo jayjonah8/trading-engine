@@ -29,6 +29,7 @@ pub fn default_test_config() -> Config {
         backtest_start: "2026-10-15T10:00:00Z".to_string(),
         backtest_end: "2026-10-15T11:00:00Z".to_string(),
         backtest_min_trade_interval: Duration::from_millis(300),
+        backtest_chunk_days: Some(1),
         max_active_trades: Some(20),
         max_active_assets: Some(20),
         max_active_trades_per_symbol: Some(20),

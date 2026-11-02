@@ -60,6 +60,13 @@ pub struct Config {
     // Used to downsample historical trade data and reduce processing overhead.
     pub backtest_min_trade_interval: Duration,
 
+    /// Number of days to load per historical backtest chunk.
+    ///
+    /// None disables chunking and preserves existing behavior.
+    /// Some(1) loads one day at a time.
+    /// Some(5) loads five days at a time.
+    pub backtest_chunk_days: Option<u32>,
+
     // ============================================================
     // TRADE / ASSET LIMITS
     // ============================================================

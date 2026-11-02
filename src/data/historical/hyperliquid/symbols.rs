@@ -183,3 +183,48 @@ pub fn discover_hyperliquid_historical_symbols(
 
 
 
+// ============================================================
+// KNOWN HYPERLIQUID HISTORICAL SYMBOLS
+// ============================================================
+
+// Returns the known Hyperliquid historical symbols without
+// scanning local historical archives.
+//
+// Useful for backtesting large symbol universes without
+// running historical symbol discovery.
+//
+// This is a static snapshot and may not represent every
+// symbol available during a particular historical period.
+pub fn known_hyperliquid_historical_symbols() -> Vec<String> {
+    [
+        "0G", "2Z", "AAVE", "ACE", "ADA", "AERO", "AIXBT", "ALGO",
+        "ALT", "ANIME", "APE", "APEX", "APT", "AR", "ARB", "ASTER",
+        "ATOM", "AVAX", "AVNT", "AXS", "AZTEC", "BABY", "BANANA",
+        "BCH", "BERA", "BIGTIME", "BIO", "BLUR", "BNB", "BOME",
+        "BRETT", "BSV", "BTC", "CAKE", "CASHCAT", "CC", "CELO",
+        "CFX", "CHIP", "COMP", "CRV", "DASH", "DOGE", "DOT",
+        "DYDX", "DYM", "EIGEN", "ENA", "ENS", "ETC", "ETH",
+        "ETHFI", "FARTCOIN", "FET", "FIL", "FOGO", "GALA", "GAS",
+        "GMT", "GMX", "GOAT", "GRAM", "GRASS", "GRIFFAIN", "HBAR",
+        "HEMI", "HMSTR", "HYPE", "HYPER", "ICP", "IMX", "INIT",
+        "INJ", "IO", "IOTA", "JTO", "JUP", "KAITO", "KAS", "LAYER",
+        "LDO", "LINEA", "LINK", "LIT", "LTC", "MANTA", "ME",
+        "MEGA", "MELANIA", "MEME", "MERL", "MET", "MINA", "MNT",
+        "MON", "MOODENG", "MORPHO", "MOVE", "NEAR", "NEO", "NIL",
+        "NOT", "NXPC", "ONDO", "OP", "ORDI", "PAXG", "PENDLE",
+        "PENGU", "PEOPLE", "PNUT", "POL", "POLYX", "PONS",
+        "POPCAT", "PROVE", "PUMP", "PURR", "PYTH", "RENDER",
+        "RESOLV", "REZ", "RSR", "RUNE", "S", "SAGA", "SAND",
+        "SEI", "SKR", "SKY", "SNX", "SOL", "SOPH", "SPX",
+        "STABLE", "STBL", "STRK", "STX", "SUI", "SUPER", "SUSHI",
+        "SYRUP", "TAO", "TIA", "TNSR", "TRB", "TRUMP", "TRX",
+        "TURBO", "UMA", "UNI", "USELESS", "USUAL", "VIRTUAL",
+        "VVV", "W", "WCT", "WIF", "WLD", "WLFI", "XAI", "XLM",
+        "XMR", "XPL", "XRP", "YGG", "ZEC", "ZEN", "ZETA", "ZK",
+        "ZORA", "ZRO", "kBONK", "kFLOKI", "kLUNC", "kNEIRO",
+        "kPEPE", "kSHIB",
+    ]
+    .into_iter()
+    .map(str::to_string)
+    .collect()
+}
