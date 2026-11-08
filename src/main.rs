@@ -179,13 +179,17 @@ async fn main() -> Result<()> {
         // backtest_end: "2026-10-02T04:00:00Z".to_string(),
 
         // First two days of October 2026.
+        // backtest_start: "2026-10-01T00:00:00Z".to_string(),
+        // backtest_end: "2026-10-03T00:00:00Z".to_string(),
+
+        // Full month of October 2026 (31 days).
         backtest_start: "2026-10-01T00:00:00Z".to_string(),
-        backtest_end: "2026-10-03T00:00:00Z".to_string(),
+        backtest_end: "2026-11-01T00:00:00Z".to_string(),
 
-        backtest_min_trade_interval: Duration::from_millis(300), 
+        backtest_min_trade_interval: Duration::from_millis(500), 
 
-        backtest_chunk_days: None,
-        // backtest_chunk_days: Some(1),
+        // backtest_chunk_days: None,
+        backtest_chunk_days: Some(2),
 
         // ============================================================
         // RISK LIMITS
@@ -1207,9 +1211,10 @@ async fn main() -> Result<()> {
     // The same StrategyKind identifies a strategy family while the factory
     // chooses the live or historical implementation.
     let enabled = vec![
-        StrategyKind::ResearchV1,
+        // StrategyKind::ResearchV1,
         // StrategyKind::ResearchV2,
         // StrategyKind:: ResearchV3,
+        StrategyKind::ResearchV4
         // StrategyKind::Base,
         // StrategyKind::Indicator,
         // StrategyKind::MeanReversion,

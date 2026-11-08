@@ -418,7 +418,7 @@ impl Strategy for ResearchV1BacktestStrategy {
                     if cleared {
                         print_log(
                             self.debug_mode,
-                            true,
+                            false,
                             format!(
                                 "[RESEARCH V1 BACKTEST] PRICE WINDOW CLEARED | symbol={} | active_trade=true",
                                 ev.symbol,

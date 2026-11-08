@@ -9,6 +9,7 @@ mod mean_reversion;
 mod research_v1;
 mod research_v2;
 mod research_v3;
+mod research_v4;
 
 pub use base::BaseStrategy;
 pub use limit_order::LimitOrderStrategy;
@@ -37,6 +38,7 @@ pub enum StrategyKind {
     ResearchV1,
     ResearchV2,
     ResearchV3,
+    ResearchV4,
     MarketOrder,
     LimitOrder,
     LimitOrderAdvanced,
@@ -103,6 +105,13 @@ pub fn make_strategy(
 
         StrategyKind::ResearchV3 => {
             research_v3::make_research_v3(
+                tx_engine,
+                rx_view,
+            )
+        }
+
+        StrategyKind::ResearchV4 => {
+            research_v4::make_research_v4(
                 tx_engine,
                 rx_view,
             )
@@ -185,6 +194,13 @@ pub fn make_backtest_strategy(
 
         StrategyKind::ResearchV3 => {
             research_v3::make_research_v3_backtest(
+                tx_engine,
+                rx_view,
+            )
+        }
+
+        StrategyKind::ResearchV4 => {
+            research_v4::make_research_v4_backtest(
                 tx_engine,
                 rx_view,
             )
