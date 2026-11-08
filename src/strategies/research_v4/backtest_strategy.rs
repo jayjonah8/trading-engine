@@ -1207,7 +1207,8 @@ impl ResearchV4BacktestStrategy {
     // Reversal confirmation is calculated as a percentage
     // of the observed extreme price.
     //
-    // This function detects and confirms potential entries.
+    // Confirmations must occur inside the validated range.
+    //
     // Trade execution is handled separately.
     fn monitor_mean_reversion_boundaries(
         &mut self,
@@ -1239,13 +1240,17 @@ impl ResearchV4BacktestStrategy {
             || config.confirmation_pct <= 0.0
             || !config.boundary_proximity_pct.is_finite()
             || !(0.0..=50.0).contains(&config.boundary_proximity_pct)
+            || !config.boundary_break_buffer_pct.is_finite()
+            || config.boundary_break_buffer_pct < 0.0
         {
+            self.mean_reversion_boundary_monitors.remove(symbol);
             return;
         }
 
         let confirmation_pct = config.confirmation_pct;
         let enable_confirmations = config.enable_confirmations;
         let boundary_proximity_pct = config.boundary_proximity_pct;
+        let breakout_buffer_pct = config.boundary_break_buffer_pct;
 
         // ====================================================
         // GET PRESERVED RANGE
@@ -1278,6 +1283,52 @@ impl ResearchV4BacktestStrategy {
         let upper_zone = upper_boundary - proximity;
 
         // ====================================================
+        // CALCULATE BREAKOUT LIMITS
+        // ====================================================
+
+        let breakout_buffer = breakout_buffer_pct / 100.0;
+
+        let upper_breakout_price =
+            upper_boundary * (1.0 + breakout_buffer);
+
+        let lower_breakout_price =
+            lower_boundary * (1.0 - breakout_buffer);
+
+        // ====================================================
+        // CANCEL SETUP ON EXCESSIVE BREAKOUT
+        // ====================================================
+
+        // An intrabar breakout cancels the pending setup.
+        // The validated range itself remains active until
+        // candle-level invalidation confirms the breakout.
+
+        if price > upper_breakout_price
+            || price < lower_breakout_price
+        {
+            if self.mean_reversion_boundary_monitors
+                .remove(symbol)
+                .is_some()
+                && self.debug_mode
+            {
+                print_log(
+                    self.debug_mode,
+                    true,
+                    format_args!(
+                        "[RESEARCH V4 BACKTEST SETUP CANCELLED][{}] \
+                         REASON=TICK_BREAKOUT | PRICE=${:.4} | \
+                         LOW=${:.4} | HIGH=${:.4}",
+                        symbol,
+                        price,
+                        lower_boundary,
+                        upper_boundary,
+                    ),
+                );
+            }
+
+            return;
+        }
+
+        // ====================================================
         // DETERMINE CURRENT BOUNDARY
         // ====================================================
 
@@ -1303,6 +1354,31 @@ impl ResearchV4BacktestStrategy {
             // range is invalidated or expires.
             if monitor.confirmed {
                 return;
+            }
+
+            // ====================================================
+            // CANCEL IF OPPOSITE BOUNDARY IS REACHED
+            // ====================================================
+
+            if let Some(boundary) = current_boundary {
+                if boundary != monitor.boundary {
+                    if self.debug_mode {
+                        print_log(
+                            self.debug_mode,
+                            true,
+                            format_args!(
+                                "[RESEARCH V4 BACKTEST SETUP CANCELLED][{}] \
+                                 REASON=OPPOSITE_BOUNDARY | \
+                                 PRICE=${:.4}",
+                                symbol,
+                                price,
+                            ),
+                        );
+                    }
+
+                    self.mean_reversion_boundary_monitors.remove(symbol);
+                    return;
+                }
             }
 
             // ====================================================
@@ -1337,8 +1413,17 @@ impl ResearchV4BacktestStrategy {
                 }
             };
 
-            if !enable_confirmations
-                || reversal_pct >= confirmation_pct
+            // ====================================================
+            // REQUIRE CONFIRMATION INSIDE RANGE
+            // ====================================================
+
+            let inside_range =
+                price >= lower_boundary
+                    && price <= upper_boundary;
+
+            if inside_range
+                && (!enable_confirmations
+                    || reversal_pct >= confirmation_pct)
             {
                 monitor.confirmed = true;
 
