@@ -79,7 +79,9 @@ pub struct MeanReversionConfig {
     // across the two observation windows.
     pub max_range_boundary_diff_pct: f64,
 
-    // Percentage distance from a boundary to consider entry.
+    // Percentage of the total range width used to define
+    // proximity to the upper and lower boundaries.
+    // Example: 20.0 = outer 20% of each side of the range.
     pub boundary_proximity_pct: f64,
 
     // Minimum number of confirmed alternating boundary reversals.
@@ -106,6 +108,32 @@ pub struct MeanReversionConfig {
 
     // Maximum trade duration.
     pub trade_duration_secs: Option<u64>,
+}
+
+
+// ============================================================
+// MEAN REVERSION BOUNDARY STATE
+// ============================================================
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MeanReversionBoundary {
+    Lower,
+    Upper,
+}
+
+#[derive(Clone, Debug)]
+pub struct MeanReversionBoundaryMonitor {
+
+    // Boundary currently being monitored.
+    // Lower = potential long setup.
+    // Upper = potential short setup.
+    pub boundary: MeanReversionBoundary,
+
+    // Timestamp when price first entered the proximity zone.
+    pub detected_ts_ms: i64,
+
+    // Price when the boundary approach was first detected.
+    pub detected_price: f64,
 }
 
 
@@ -140,8 +168,8 @@ pub struct MeanReversionRange {
     // Lowest price observed within the longer rolling window.
     pub long_range_low: f64,
 
-    // Timestamp in milliseconds when this range was last validated.
-    // Updated whenever a completed candle confirms a valid range.
+    // Timestamp when the range was first validated.
+    // This remains unchanged while the range is active.
     pub detected_ts_ms: i64,
 }
 
@@ -222,10 +250,18 @@ pub struct ResearchV4BacktestStrategy {
     pub mean_reversion_configs: Vec<MeanReversionConfig>,
 
     // Cached validated trading ranges for each symbol.
-    // Updated on completed one-minute candles.
+    // Boundaries remain fixed until invalidation or expiration.
     // TODO: Track by (symbol, config_id) to support multiple
     // independent configurations per asset.
     pub mean_reversion_ranges: HashMap<String, MeanReversionRange>,
+
+    // Tracks tick-level price approaches to preserved boundaries.
+    // Lower boundary = potential long setup.
+    // Upper boundary = potential short setup.
+    // TODO: Track by (symbol, config_id) when supporting
+    // multiple independent configurations per asset.
+    pub mean_reversion_boundary_monitors:
+        HashMap<String, MeanReversionBoundaryMonitor>,
 
     // ========================================================
     // MARKET DATA

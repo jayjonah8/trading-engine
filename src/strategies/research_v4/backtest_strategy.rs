@@ -49,6 +49,8 @@ use super::backtest_state::{
     TrendingConfig,
     MeanReversionConfig,
     MeanReversionRange,
+    MeanReversionBoundary,
+    MeanReversionBoundaryMonitor,
 };
 
 // ============================================================
@@ -187,7 +189,7 @@ impl ResearchV4BacktestStrategy {
                     max_range_boundary_diff_pct: 0.5,
                     min_confirmed_reversals: 2,
                     min_reversal_fraction: 0.25,
-                    boundary_proximity_pct: 0.8,
+                    boundary_proximity_pct: 20.0,
                     confirmation_pct: 0.3,
                     enable_confirmations: true,
                     range_profit_target_fraction: 0.75,
@@ -198,6 +200,8 @@ impl ResearchV4BacktestStrategy {
             ],
 
             mean_reversion_ranges: HashMap::new(),
+
+            mean_reversion_boundary_monitors: HashMap::new(),
 
             // ====================================================
             // MARKET DATA
@@ -288,14 +292,6 @@ impl Strategy for ResearchV4BacktestStrategy {
                     );
                 }
 
-                // TODO:
-                // 1. Check cached market qualification.
-                // 2. Update active trending setups.
-                // 3. Update active mean-reversion setups.
-                // 4. Evaluate entry confirmations.
-                // 5. Validate risk/reward.
-                // 6. Submit trade intent.
-
                 // ====================================================
                 // TRADING ELIGIBILITY
                 // ====================================================
@@ -312,9 +308,30 @@ impl Strategy for ResearchV4BacktestStrategy {
                     true
                 };
 
+                // ====================================================
+                // MONITOR MEAN REVERSION BOUNDARIES
+                // ====================================================
+
+                // Monitor tick prices approaching preserved
+                // range boundaries.
+                //
+                // Lower boundary -> Potential LONG setup.
+                // Upper boundary -> Potential SHORT setup.
+                //
+                // No trade execution occurs at this stage.
+                self.monitor_mean_reversion_boundaries(
+                    &ev.symbol,
+                    trade.price,
+                    trade.timestamp_ms,
+                );
+
                 // TODO:
-                // Use can_trade when evaluating trending and
-                // mean-reversion entry confirmations.
+                // 1. Update active trending setups.
+                // 2. Confirm mean-reversion reversals.
+                // 3. Evaluate entry confirmations.
+                // 4. Apply trading eligibility (can_trade).
+                // 5. Validate risk/reward.
+                // 6. Submit trade intent.
             }
 
             // ====================================================
@@ -637,15 +654,18 @@ impl ResearchV4BacktestStrategy {
     // UPDATE MEAN REVERSION RANGES
     // ============================================================
 
-    // Detects established trading ranges using two rolling windows.
+    // Detects and preserves established mean-reversion ranges.
     //
-    // Validation:
-    // - Requires sufficient completed one-minute candles.
-    // - Calculates highs and lows for both observation windows.
-    // - Validates the longer window's range width.
-    // - Compares short and long window boundaries.
-    // - Rejects ranges with inconsistent boundaries.
-    // - Caches valid ranges for future entry confirmation.
+    // Range lifecycle:
+    // 1. Discover a valid range using rolling candle history.
+    // 2. Validate range width and boundary consistency.
+    // 3. Validate confirmed oscillations and reversals.
+    // 4. Preserve the validated range boundaries.
+    // 5. Monitor the preserved range for breakouts.
+    // 6. Expire the range after its configured lifetime.
+    //
+    // Once validated, boundaries remain fixed until the range
+    // expires or is invalidated by a breakout.
     //
     // Runs once per completed one-minute candle.
     fn update_mean_reversion_ranges(
@@ -665,6 +685,7 @@ impl ResearchV4BacktestStrategy {
             .find(|config| config.enabled)
         else {
             self.mean_reversion_ranges.remove(symbol);
+            self.mean_reversion_boundary_monitors.remove(symbol);
             return;
         };
 
@@ -679,6 +700,7 @@ impl ResearchV4BacktestStrategy {
             || short_period > long_period
         {
             self.mean_reversion_ranges.remove(symbol);
+            self.mean_reversion_boundary_monitors.remove(symbol);
             return;
         }
 
@@ -691,15 +713,119 @@ impl ResearchV4BacktestStrategy {
             Timeframe::ONE_MINUTE,
         ) else {
             self.mean_reversion_ranges.remove(symbol);
+            self.mean_reversion_boundary_monitors.remove(symbol);
             return;
         };
 
         if bars.len() < long_period {
             self.mean_reversion_ranges.remove(symbol);
+            self.mean_reversion_boundary_monitors.remove(symbol);
             return;
         }
 
-        // Collect only the latest long-window candles.
+        // ====================================================
+        // CHECK EXISTING VALIDATED RANGE
+        // ====================================================
+
+        if let Some(existing_range) =
+            self.mean_reversion_ranges.get(symbol)
+        {
+            let latest_bar = bars.back().unwrap();
+
+            // ====================================================
+            // CHECK RANGE EXPIRATION
+            // ====================================================
+
+            let elapsed_ms =
+                current_ts.saturating_sub(
+                    existing_range.detected_ts_ms,
+                );
+
+            let max_lifetime_ms =
+                (config.long_window_secs as i64)
+                    .saturating_mul(1000);
+
+            let expired =
+                elapsed_ms >= max_lifetime_ms;
+
+            // ====================================================
+            // CHECK RANGE BREAKOUT
+            // ====================================================
+
+            let breakout_buffer =
+                config.boundary_break_buffer_pct / 100.0;
+
+            let upper_breakout_price =
+                existing_range.upper_boundary
+                    * (1.0 + breakout_buffer);
+
+            let lower_breakout_price =
+                existing_range.lower_boundary
+                    * (1.0 - breakout_buffer);
+
+            // Use completed candle close to confirm a breakout.
+            // Temporary intrabar wicks do not invalidate a range.
+            let breakout_above =
+                latest_bar.close > upper_breakout_price;
+
+            let breakout_below =
+                latest_bar.close < lower_breakout_price;
+
+            let breakout =
+                breakout_above || breakout_below;
+
+            // ====================================================
+            // PRESERVE VALID RANGE
+            // ====================================================
+
+            if !expired && !breakout {
+                // The validated range remains active.
+                // Its original boundaries are preserved.
+                return;
+            }
+
+            // ====================================================
+            // INVALIDATE EXISTING RANGE
+            // ====================================================
+
+            if self.debug_mode {
+                print_log(
+                    self.debug_mode,
+                    true,
+                    format_args!(
+                        "[RESEARCH V4 BACKTEST RANGE INVALIDATED][{}] \
+                         REASON={} | \
+                         LOW=${:.4} | HIGH=${:.4} | \
+                         AGE={}s",
+                        symbol,
+                        if breakout {
+                            "BREAKOUT"
+                        } else {
+                            "EXPIRED"
+                        },
+                        existing_range.lower_boundary,
+                        existing_range.upper_boundary,
+                        elapsed_ms / 1000,
+                    ),
+                );
+            }
+
+            // Remove the validated range and any pending
+            // boundary approach associated with that range.
+            self.mean_reversion_ranges.remove(symbol);
+            self.mean_reversion_boundary_monitors.remove(symbol);
+
+            // Do not immediately establish a replacement range
+            // using the same candle that invalidated the old one.
+            //
+            // The next completed candle can initiate discovery.
+            return;
+        }
+
+        // ====================================================
+        // COLLECT ROLLING CANDLE HISTORY
+        // ====================================================
+
         let bars_vec: Vec<Bar> = bars
             .iter()
             .rev()
@@ -751,7 +877,6 @@ impl ResearchV4BacktestStrategy {
             || long_range_low <= 0.0
             || long_range_high <= long_range_low
         {
-            self.mean_reversion_ranges.remove(symbol);
             return;
         }
 
@@ -766,7 +891,6 @@ impl ResearchV4BacktestStrategy {
         if range_width_pct < config.min_range_width_pct
             || range_width_pct > config.max_range_width_pct
         {
-            self.mean_reversion_ranges.remove(symbol);
             return;
         }
 
@@ -789,7 +913,6 @@ impl ResearchV4BacktestStrategy {
                 <= config.max_range_boundary_diff_pct;
 
         if !boundaries_match {
-            self.mean_reversion_ranges.remove(symbol);
             return;
         }
 
@@ -797,8 +920,6 @@ impl ResearchV4BacktestStrategy {
         // VALIDATE RANGE OSCILLATIONS
         // ====================================================
 
-        // Require genuine price reversals from both established
-        // boundaries before accepting the range as mean-reverting.
         let valid_oscillations =
             Self::validate_mean_reversion_oscillations(
                 &bars_vec,
@@ -810,12 +931,11 @@ impl ResearchV4BacktestStrategy {
             );
 
         if !valid_oscillations {
-            self.mean_reversion_ranges.remove(symbol);
             return;
         }
 
         // ====================================================
-        // CACHE VALID RANGE
+        // CACHE VALIDATED RANGE
         // ====================================================
 
         let detected_range = MeanReversionRange {
@@ -834,6 +954,9 @@ impl ResearchV4BacktestStrategy {
             detected_range,
         );
 
+        // Clear any stale boundary monitoring state.
+        self.mean_reversion_boundary_monitors.remove(symbol);
+
         // ====================================================
         // RANGE DETECTION DEBUG
         // ====================================================
@@ -843,11 +966,12 @@ impl ResearchV4BacktestStrategy {
                 self.debug_mode,
                 true,
                 format_args!(
-                    "[RESEARCH V4 BACKTEST RANGE DETECTED][{}] \
+                    "[RESEARCH V4 BACKTEST RANGE VALIDATED][{}] \
                      LOW=${:.4} | HIGH=${:.4} | \
                      WIDTH={:.3}% | \
                      SHORT_LOW=${:.4} | SHORT_HIGH=${:.4} | \
-                     LONG_LOW=${:.4} | LONG_HIGH=${:.4}",
+                     LONG_LOW=${:.4} | LONG_HIGH=${:.4} | \
+                     LIFETIME={}s",
                     symbol,
                     long_range_low,
                     long_range_high,
@@ -856,6 +980,7 @@ impl ResearchV4BacktestStrategy {
                     short_range_high,
                     long_range_low,
                     long_range_high,
+                    config.long_window_secs,
                 ),
             );
         }
@@ -882,6 +1007,9 @@ impl ResearchV4BacktestStrategy {
     // - Prevents repeated counting of the same boundary interaction.
     // - Rejects directional movement without sufficient reversals.
     //
+    // Boundary proximity is calculated as a percentage of the
+    // established range width rather than the asset price.
+    //
     // Uses completed one-minute candles in chronological order.
     fn validate_mean_reversion_oscillations(
         bars: &[Bar],
@@ -897,7 +1025,7 @@ impl ResearchV4BacktestStrategy {
             || lower_boundary <= 0.0
             || upper_boundary <= lower_boundary
             || !boundary_proximity_pct.is_finite()
-            || boundary_proximity_pct < 0.0
+            || !(0.0..=50.0).contains(&boundary_proximity_pct)
             || !min_reversal_fraction.is_finite()
             || min_reversal_fraction <= 0.0
             || min_reversal_fraction > 1.0
@@ -914,11 +1042,18 @@ impl ResearchV4BacktestStrategy {
         let required_reversal =
             range_width * min_reversal_fraction;
 
-        let lower_proximity =
-            lower_boundary * (boundary_proximity_pct / 100.0);
-
-        let upper_proximity =
-            upper_boundary * (boundary_proximity_pct / 100.0);
+        // Calculate boundary proximity as a percentage
+        // of the established range width.
+        //
+        // Example:
+        // Range: $100 - $106
+        // Width: $6
+        // Proximity: 20%
+        //
+        // Lower zone: $100 - $101.20
+        // Upper zone: $104.80 - $106
+        let boundary_proximity =
+            range_width * (boundary_proximity_pct / 100.0);
 
         // ====================================================
         // TRACK BOUNDARY INTERACTIONS
@@ -947,17 +1082,21 @@ impl ResearchV4BacktestStrategy {
         for bar in bars {
             if !bar.high.is_finite()
                 || !bar.low.is_finite()
+                || !bar.close.is_finite()
                 || bar.low <= 0.0
                 || bar.high < bar.low
+                || bar.close <= 0.0
+                || bar.close < bar.low
+                || bar.close > bar.high
             {
                 return false;
             }
 
             let near_lower =
-                bar.low <= lower_boundary + lower_proximity;
+                bar.low <= lower_boundary + boundary_proximity;
 
             let near_upper =
-                bar.high >= upper_boundary - upper_proximity;
+                bar.high >= upper_boundary - boundary_proximity;
 
             match active_boundary {
 
@@ -1044,5 +1183,158 @@ impl ResearchV4BacktestStrategy {
         confirmed_reversals >= min_confirmed_reversals
             && lower_reversals >= 1
             && upper_reversals >= 1
+    }
+}
+
+
+
+
+impl ResearchV4BacktestStrategy {
+
+    // ============================================================
+    // MONITOR MEAN REVERSION RANGE BOUNDARIES
+    // ============================================================
+
+    // Monitors tick prices approaching preserved range boundaries.
+    //
+    // Lower boundary -> Potential LONG setup.
+    // Upper boundary -> Potential SHORT setup.
+    //
+    // Boundary proximity is calculated as a percentage of the
+    // established range width.
+    //
+    // This function only identifies potential setups.
+    // Reversal confirmation and trade execution are handled later.
+    fn monitor_mean_reversion_boundaries(
+        &mut self,
+        symbol: &str,
+        price: f64,
+        current_ts: i64,
+    ) {
+        // ====================================================
+        // VALIDATE PRICE
+        // ====================================================
+
+        if !price.is_finite() || price <= 0.0 {
+            return;
+        }
+
+        // ====================================================
+        // GET ENABLED CONFIGURATION
+        // ====================================================
+
+        let Some(config) = self.mean_reversion_configs
+            .iter()
+            .find(|config| config.enabled)
+        else {
+            return;
+        };
+
+        // ====================================================
+        // GET PRESERVED RANGE
+        // ====================================================
+
+        let Some(range) = self.mean_reversion_ranges.get(symbol)
+        else {
+            self.mean_reversion_boundary_monitors.remove(symbol);
+            return;
+        };
+
+        // ====================================================
+        // CALCULATE BOUNDARY PROXIMITY
+        // ====================================================
+
+        let range_width =
+            range.upper_boundary - range.lower_boundary;
+
+        if range_width <= 0.0
+            || !config.boundary_proximity_pct.is_finite()
+            || !(0.0..=50.0).contains(&config.boundary_proximity_pct)
+        {
+            return;
+        }
+
+        let proximity =
+            range_width * (config.boundary_proximity_pct / 100.0);
+
+        let lower_zone =
+            range.lower_boundary + proximity;
+
+        let upper_zone =
+            range.upper_boundary - proximity;
+
+        // ====================================================
+        // DETERMINE CURRENT BOUNDARY
+        // ====================================================
+
+        // Only monitor prices within the preserved range.
+        // Breakout invalidation is handled by completed candles.
+        let current_boundary =
+            if price < range.lower_boundary
+                || price > range.upper_boundary
+            {
+                None
+            } else if price <= lower_zone {
+                Some(MeanReversionBoundary::Lower)
+            } else if price >= upper_zone {
+                Some(MeanReversionBoundary::Upper)
+            } else {
+                None
+            };
+
+        // ====================================================
+        // UPDATE BOUNDARY MONITOR
+        // ====================================================
+
+        match current_boundary {
+            Some(boundary) => {
+                // Avoid repeatedly logging the same boundary.
+                if let Some(existing) =
+                    self.mean_reversion_boundary_monitors.get(symbol)
+                {
+                    if existing.boundary == boundary {
+                        return;
+                    }
+                }
+
+                self.mean_reversion_boundary_monitors.insert(
+                    symbol.to_string(),
+                    MeanReversionBoundaryMonitor {
+                        boundary,
+                        detected_ts_ms: current_ts,
+                        detected_price: price,
+                    },
+                );
+
+                // ====================================================
+                // DEBUG
+                // ====================================================
+
+                if self.debug_mode {
+                    print_log(
+                        self.debug_mode,
+                        true,
+                        format_args!(
+                            "[RESEARCH V4 BACKTEST BOUNDARY APPROACH][{}] \
+                             SIDE={:?} | PRICE=${:.4} | \
+                             LOW=${:.4} | HIGH=${:.4} | \
+                             PROXIMITY={:.1}%",
+                            symbol,
+                            boundary,
+                            price,
+                            range.lower_boundary,
+                            range.upper_boundary,
+                            config.boundary_proximity_pct,
+                        ),
+                    );
+                }
+            }
+
+            None => {
+                // Price moved away from both boundary zones.
+                // Clear the monitor so another approach can be detected.
+                self.mean_reversion_boundary_monitors.remove(symbol);
+            }
+        }
     }
 }
