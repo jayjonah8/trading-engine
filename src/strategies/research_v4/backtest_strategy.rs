@@ -48,6 +48,7 @@ use super::backtest_state::{
     ResearchV4BacktestStrategy,
     TrendingConfig,
     MeanReversionConfig,
+    MeanReversionRange,
 };
 
 // ============================================================
@@ -133,6 +134,7 @@ impl ResearchV4BacktestStrategy {
             max_trades_allowed: 8,
             reference_margin_usd: 1_600.0,
             trade_amount_usd: 200.0,
+            
             leverage: None,
             emergency_exit_percent: Some(5.0),
             min_sl_delay: Some(0),
@@ -192,6 +194,8 @@ impl ResearchV4BacktestStrategy {
                     trade_duration_secs: Some(4800),
                 },
             ],
+
+            mean_reversion_ranges: HashMap::new(),
 
             // ====================================================
             // MARKET DATA
@@ -352,11 +356,20 @@ impl Strategy for ResearchV4BacktestStrategy {
                     current_ts,
                 );
 
+                // ====================================================
+                // UPDATE MEAN REVERSION RANGES
+                // ====================================================
+
+                self.update_mean_reversion_ranges(
+                    &ev.symbol,
+                    timeframe,
+                    current_ts,
+                );
+
                 // TODO:
                 // 1. Update trend indicators.
-                // 2. Update range indicators.
-                // 3. Update BTC volatility protection.
-                // 4. Detect and invalidate setups.
+                // 2. Update BTC volatility protection.
+                // 3. Detect and invalidate entry setups.
 
                 if self.debug_mode {
                     print_log(
@@ -364,7 +377,7 @@ impl Strategy for ResearchV4BacktestStrategy {
                         false,
                         format_args!(
                             "[RESEARCH V4 BACKTEST CANDLE][{}][{}s] \
-                            stored={} | can_trade={}",
+                            stored={} | can_trade={} | range_detected={}",
                             ev.symbol,
                             timeframe.as_secs(),
                             self.candle_history.len(
@@ -375,6 +388,8 @@ impl Strategy for ResearchV4BacktestStrategy {
                                 .get(&ev.symbol)
                                 .copied()
                                 .unwrap_or(false),
+                            self.mean_reversion_ranges
+                                .contains_key(&ev.symbol),
                         ),
                     );
                 }
@@ -605,6 +620,219 @@ impl ResearchV4BacktestStrategy {
                      can_trade={}",
                     symbol,
                     requirements_met,
+                ),
+            );
+        }
+    }
+}
+
+
+
+
+impl ResearchV4BacktestStrategy {
+
+    // ============================================================
+    // UPDATE MEAN REVERSION RANGES
+    // ============================================================
+
+    // Detects established trading ranges using two rolling windows.
+    //
+    // Validation:
+    // - Requires sufficient completed one-minute candles.
+    // - Calculates highs and lows for both observation windows.
+    // - Validates the longer window's range width.
+    // - Compares short and long window boundaries.
+    // - Rejects ranges with inconsistent boundaries.
+    // - Caches valid ranges for future entry confirmation.
+    //
+    // Runs once per completed one-minute candle.
+    fn update_mean_reversion_ranges(
+        &mut self,
+        symbol: &str,
+        timeframe: Timeframe,
+        current_ts: i64,
+    ) {
+        if timeframe != Timeframe::ONE_MINUTE {
+            return;
+        }
+
+        // Baseline: use the first enabled configuration.
+        // TODO: Evaluate all enabled configurations independently.
+        let Some(config) = self.mean_reversion_configs
+            .iter()
+            .find(|config| config.enabled)
+        else {
+            self.mean_reversion_ranges.remove(symbol);
+            return;
+        };
+
+        let short_period =
+            (config.short_window_secs / 60) as usize;
+
+        let long_period =
+            (config.long_window_secs / 60) as usize;
+
+        if short_period == 0
+            || long_period == 0
+            || short_period > long_period
+        {
+            self.mean_reversion_ranges.remove(symbol);
+            return;
+        }
+
+        // ====================================================
+        // GET CANDLE HISTORY
+        // ====================================================
+
+        let Some(bars) = self.candle_history.get(
+            symbol,
+            Timeframe::ONE_MINUTE,
+        ) else {
+            self.mean_reversion_ranges.remove(symbol);
+            return;
+        };
+
+        if bars.len() < long_period {
+            self.mean_reversion_ranges.remove(symbol);
+            return;
+        }
+
+        // Collect only the latest long-window candles.
+        let bars_vec: Vec<Bar> = bars
+            .iter()
+            .rev()
+            .take(long_period)
+            .cloned()
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rev()
+            .collect();
+
+        // ====================================================
+        // CALCULATE LONG-WINDOW BOUNDARIES
+        // ====================================================
+
+        let long_range_high = bars_vec
+            .iter()
+            .map(|bar| bar.high)
+            .fold(f64::NEG_INFINITY, f64::max);
+
+        let long_range_low = bars_vec
+            .iter()
+            .map(|bar| bar.low)
+            .fold(f64::INFINITY, f64::min);
+
+        // ====================================================
+        // CALCULATE SHORT-WINDOW BOUNDARIES
+        // ====================================================
+
+        let short_bars = &bars_vec[
+            bars_vec.len() - short_period..
+        ];
+
+        let short_range_high = short_bars
+            .iter()
+            .map(|bar| bar.high)
+            .fold(f64::NEG_INFINITY, f64::max);
+
+        let short_range_low = short_bars
+            .iter()
+            .map(|bar| bar.low)
+            .fold(f64::INFINITY, f64::min);
+
+        // ====================================================
+        // VALIDATE PRICE BOUNDARIES
+        // ====================================================
+
+        if !long_range_high.is_finite()
+            || !long_range_low.is_finite()
+            || long_range_low <= 0.0
+            || long_range_high <= long_range_low
+        {
+            self.mean_reversion_ranges.remove(symbol);
+            return;
+        }
+
+        // ====================================================
+        // CALCULATE RANGE WIDTH
+        // ====================================================
+
+        let range_width_pct =
+            ((long_range_high - long_range_low)
+                / long_range_low) * 100.0;
+
+        if range_width_pct < config.min_range_width_pct
+            || range_width_pct > config.max_range_width_pct
+        {
+            self.mean_reversion_ranges.remove(symbol);
+            return;
+        }
+
+        // ====================================================
+        // COMPARE RANGE BOUNDARIES
+        // ====================================================
+
+        let upper_boundary_diff_pct =
+            ((short_range_high - long_range_high).abs()
+                / long_range_high) * 100.0;
+
+        let lower_boundary_diff_pct =
+            ((short_range_low - long_range_low).abs()
+                / long_range_low) * 100.0;
+
+        let boundaries_match =
+            upper_boundary_diff_pct
+                <= config.max_range_boundary_diff_pct
+            && lower_boundary_diff_pct
+                <= config.max_range_boundary_diff_pct;
+
+        if !boundaries_match {
+            self.mean_reversion_ranges.remove(symbol);
+            return;
+        }
+
+        // ====================================================
+        // CACHE VALID RANGE
+        // ====================================================
+
+        let detected_range = MeanReversionRange {
+            upper_boundary: long_range_high,
+            lower_boundary: long_range_low,
+            range_width_pct,
+            short_range_high,
+            short_range_low,
+            long_range_high,
+            long_range_low,
+            detected_ts_ms: current_ts,
+        };
+
+        self.mean_reversion_ranges.insert(
+            symbol.to_string(),
+            detected_range,
+        );
+
+        // ====================================================
+        // RANGE DETECTION DEBUG
+        // ====================================================
+
+        if self.debug_mode {
+            print_log(
+                self.debug_mode,
+                false,
+                format_args!(
+                    "[RESEARCH V4 BACKTEST RANGE DETECTED][{}] \
+                     LOW=${:.4} | HIGH=${:.4} | \
+                     WIDTH={:.3}% | \
+                     SHORT_LOW=${:.4} | SHORT_HIGH=${:.4} | \
+                     LONG_LOW=${:.4} | LONG_HIGH=${:.4}",
+                    symbol,
+                    long_range_low,
+                    long_range_high,
+                    range_width_pct,
+                    short_range_low,
+                    short_range_high,
+                    long_range_low,
+                    long_range_high,
                 ),
             );
         }

@@ -104,6 +104,43 @@ pub struct MeanReversionConfig {
 
 
 // ============================================================
+// MEAN REVERSION RANGE STATE
+// ============================================================
+
+#[derive(Clone, Debug)]
+pub struct MeanReversionRange {
+
+    // Established upper price boundary of the trading range.
+    // Represents potential resistance for short entries.
+    pub upper_boundary: f64,
+
+    // Established lower price boundary of the trading range.
+    // Represents potential support for long entries.
+    pub lower_boundary: f64,
+
+    // Percentage distance between the upper and lower boundaries.
+    // Example: $100 low and $106 high = 6% range width.
+    pub range_width_pct: f64,
+
+    // Highest price observed within the shorter rolling window.
+    pub short_range_high: f64,
+
+    // Lowest price observed within the shorter rolling window.
+    pub short_range_low: f64,
+
+    // Highest price observed within the longer rolling window.
+    pub long_range_high: f64,
+
+    // Lowest price observed within the longer rolling window.
+    pub long_range_low: f64,
+
+    // Timestamp in milliseconds when this range was last validated.
+    // Updated whenever a completed candle confirms a valid range.
+    pub detected_ts_ms: i64,
+}
+
+
+// ============================================================
 // RESEARCH V4 BACKTEST STRATEGY
 // ============================================================
 
@@ -177,6 +214,12 @@ pub struct ResearchV4BacktestStrategy {
 
     // Supports multiple independent range configurations.
     pub mean_reversion_configs: Vec<MeanReversionConfig>,
+
+    // Cached validated trading ranges for each symbol.
+    // Updated on completed one-minute candles.
+    // TODO: Track by (symbol, config_id) to support multiple
+    // independent configurations per asset.
+    pub mean_reversion_ranges: HashMap<String, MeanReversionRange>,
 
     // ========================================================
     // MARKET DATA
