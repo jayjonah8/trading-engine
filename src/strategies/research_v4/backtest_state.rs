@@ -139,6 +139,9 @@ pub struct MeanReversionBoundaryMonitor {
 
     // Prevents repeated confirmations from the same setup.
     pub confirmed: bool,
+
+    // Prevent duplicate trade submissions.
+    pub trade_submitted: bool,
 }
 
 

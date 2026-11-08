@@ -44,6 +44,18 @@ use crate::{
     shared::print_log,
 };
 
+use crate::{
+    core::{
+        trade_intent::TradeIntent,
+        trades::Direction,
+       
+        execution::order::{
+            OrderType,
+            TimeInForce,
+        },
+    },
+};
+
 use super::backtest_state::{
     ResearchV4BacktestStrategy,
     TrendingConfig,
@@ -192,7 +204,7 @@ impl ResearchV4BacktestStrategy {
                     boundary_proximity_pct: 20.0,
                     confirmation_pct: 0.3,
                     enable_confirmations: true,
-                    range_profit_target_fraction: 0.75,
+                    range_profit_target_fraction: 0.70,
                     boundary_break_buffer_pct: 0.5,
                     stop_loss_pct: Some(2.0),
                     trade_duration_secs: Some(4800),
@@ -323,6 +335,17 @@ impl Strategy for ResearchV4BacktestStrategy {
                     &ev.symbol,
                     trade.price,
                     trade.timestamp_ms,
+                );
+
+                // ====================================================
+                // EXECUTE CONFIRMED MEAN REVERSION ENTRY
+                // ====================================================
+
+                self.execute_mean_reversion_entry(
+                    &ev.symbol,
+                    trade.price,
+                    trade.timestamp_ms,
+                    can_trade,
                 );
 
                 // TODO:
@@ -1473,6 +1496,7 @@ impl ResearchV4BacktestStrategy {
                 detected_price: price,
                 extreme_price: price,
                 confirmed: false,
+                trade_submitted: false,
             },
         );
 
@@ -1497,6 +1521,219 @@ impl ResearchV4BacktestStrategy {
                     boundary_proximity_pct,
                 ),
             );
+        }
+    }
+}
+
+
+
+
+impl ResearchV4BacktestStrategy {
+
+    // ============================================================
+    // EXECUTE MEAN REVERSION ENTRY
+    // ============================================================
+
+    fn execute_mean_reversion_entry(
+        &mut self,
+        symbol: &str,
+        price: f64,
+        current_ts: i64,
+        can_trade: bool,
+    ) {
+        // ====================================================
+        // VALIDATE PRICE AND TRADING ELIGIBILITY
+        // ====================================================
+
+        if !can_trade
+            || !price.is_finite()
+            || price <= 0.0
+            || self.black_swan_protection.is_halted()
+            || !self.trade_cooldown.can_trade(symbol, current_ts)
+        {
+            return;
+        }
+
+        // ====================================================
+        // GET ENABLED CONFIGURATION
+        // ====================================================
+
+        let Some(config) = self.mean_reversion_configs
+            .iter()
+            .find(|config| config.enabled)
+        else {
+            return;
+        };
+
+        let profit_fraction = config.range_profit_target_fraction;
+
+        if !profit_fraction.is_finite()
+            || profit_fraction <= 0.0
+            || profit_fraction > 1.0
+        {
+            return;
+        }
+
+        // ====================================================
+        // GET CONFIRMED SETUP
+        // ====================================================
+
+        let Some(monitor) =
+            self.mean_reversion_boundary_monitors.get(symbol)
+        else {
+            return;
+        };
+
+        if !monitor.confirmed || monitor.trade_submitted {
+            return;
+        }
+
+        let direction = match monitor.boundary {
+            MeanReversionBoundary::Lower => Direction::Long,
+            MeanReversionBoundary::Upper => Direction::Short,
+        };
+
+        // ====================================================
+        // GET VALIDATED RANGE
+        // ====================================================
+
+        let Some(range) = self.mean_reversion_ranges.get(symbol)
+        else {
+            return;
+        };
+
+        let range_width =
+            range.upper_boundary - range.lower_boundary;
+
+        if !range_width.is_finite() || range_width <= 0.0 {
+            return;
+        }
+
+        // ====================================================
+        // CALCULATE TAKE PROFIT AND STOP LOSS
+        // ====================================================
+
+        // Target a price movement equal to 75% of the
+        // validated range width, measured from entry.
+
+        let target_distance = range_width * profit_fraction;
+
+        let take_profit_percent =
+            (target_distance / price) * 100.0;
+
+        // Initial risk/reward ratio: 1:1.5.
+        let stop_loss_percent =
+            take_profit_percent / 1.5;
+
+        if !take_profit_percent.is_finite()
+            || !stop_loss_percent.is_finite()
+            || take_profit_percent <= 0.0
+            || stop_loss_percent <= 0.0
+        {
+            return;
+        }
+
+        // ====================================================
+        // CHECK EXISTING TRADES
+        // ====================================================
+
+        let (symbol_has_active_trade, active_trade_count) = {
+            let view = self.rx_view.borrow();
+
+            (
+                view.trades.has_active_trade_for_strategy_symbol(
+                    self.name(),
+                    symbol,
+                ),
+                view.trades.count_active_for_strategy(
+                    self.name(),
+                ),
+            )
+        };
+
+        if symbol_has_active_trade
+            || active_trade_count >= self.max_trades_allowed
+        {
+            return;
+        }
+
+        // ====================================================
+        // CONSTRUCT TRADE INTENT
+        // ====================================================
+
+        let intent = TradeIntent {
+            strategy_id: self.name().to_string(),
+            symbol: symbol.to_string(),
+            direction,
+            signal_px: price,
+
+            target_notional: self.trade_amount_usd,
+            margin_usd: self.trade_amount_usd,
+
+            order_type: OrderType::Market,
+            time_in_force: TimeInForce::Day,
+            limit_px: None,
+            stop_px: None,
+            post_only: false,
+
+            take_profit_percent: Some(take_profit_percent),
+            stop_loss_percent: Some(stop_loss_percent),
+
+            emergency_stop_percent: Some(5.0),
+            stop_loss_delay_secs: Some(0),
+            trade_duration_secs: Some(86_400),
+
+            trailing_stop: None,
+            ts_ms: current_ts,
+        };
+
+        // ====================================================
+        // SUBMIT TRADE INTENT
+        // ====================================================
+
+        if self.tx_engine.send(
+            EngineEvent::OpenTrade(intent)
+        ).is_ok() {
+
+            // Mark setup as consumed.
+            if let Some(monitor) =
+                self.mean_reversion_boundary_monitors.get_mut(symbol)
+            {
+                monitor.trade_submitted = true;
+            }
+
+            // Record submission cooldown.
+            self.trade_cooldown.record_trade(
+                symbol,
+                current_ts,
+            );
+
+            // ====================================================
+            // ENTRY DEBUG
+            // ====================================================
+
+            if self.debug_mode {
+                print_log(
+                    self.debug_mode,
+                    true,
+                    format_args!(
+                        "[RESEARCH V4 BACKTEST {:?} ENTRY][{}] \
+                         PRICE=${:.4} | \
+                         RANGE_WIDTH=${:.4} | \
+                         TP={:.3}% | SL={:.3}% | \
+                         TARGET_FRACTION={:.2} | \
+                         AMOUNT=${:.2}",
+                        direction,
+                        symbol,
+                        price,
+                        range_width,
+                        take_profit_percent,
+                        stop_loss_percent,
+                        profit_fraction,
+                        self.trade_amount_usd,
+                    ),
+                );
+            }
         }
     }
 }
