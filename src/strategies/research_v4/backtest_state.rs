@@ -124,16 +124,21 @@ pub enum MeanReversionBoundary {
 #[derive(Clone, Debug)]
 pub struct MeanReversionBoundaryMonitor {
 
-    // Boundary currently being monitored.
-    // Lower = potential long setup.
-    // Upper = potential short setup.
+    // Boundary responsible for the potential entry.
     pub boundary: MeanReversionBoundary,
 
-    // Timestamp when price first entered the proximity zone.
+    // Timestamp when the setup was first detected.
     pub detected_ts_ms: i64,
 
-    // Price when the boundary approach was first detected.
+    // Price when the setup was first detected.
     pub detected_price: f64,
+
+    // Lowest price for LONG setups.
+    // Highest price for SHORT setups.
+    pub extreme_price: f64,
+
+    // Prevents repeated confirmations from the same setup.
+    pub confirmed: bool,
 }
 
 

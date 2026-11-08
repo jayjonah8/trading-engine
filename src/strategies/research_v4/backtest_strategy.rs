@@ -1195,7 +1195,8 @@ impl ResearchV4BacktestStrategy {
     // MONITOR MEAN REVERSION RANGE BOUNDARIES
     // ============================================================
 
-    // Monitors tick prices approaching preserved range boundaries.
+    // Monitors tick prices approaching preserved range boundaries
+    // and confirms reversals from observed price extremes.
     //
     // Lower boundary -> Potential LONG setup.
     // Upper boundary -> Potential SHORT setup.
@@ -1203,8 +1204,11 @@ impl ResearchV4BacktestStrategy {
     // Boundary proximity is calculated as a percentage of the
     // established range width.
     //
-    // This function only identifies potential setups.
-    // Reversal confirmation and trade execution are handled later.
+    // Reversal confirmation is calculated as a percentage
+    // of the observed extreme price.
+    //
+    // This function detects and confirms potential entries.
+    // Trade execution is handled separately.
     fn monitor_mean_reversion_boundaries(
         &mut self,
         symbol: &str,
@@ -1227,8 +1231,21 @@ impl ResearchV4BacktestStrategy {
             .iter()
             .find(|config| config.enabled)
         else {
+            self.mean_reversion_boundary_monitors.remove(symbol);
             return;
         };
+
+        if !config.confirmation_pct.is_finite()
+            || config.confirmation_pct <= 0.0
+            || !config.boundary_proximity_pct.is_finite()
+            || !(0.0..=50.0).contains(&config.boundary_proximity_pct)
+        {
+            return;
+        }
+
+        let confirmation_pct = config.confirmation_pct;
+        let enable_confirmations = config.enable_confirmations;
+        let boundary_proximity_pct = config.boundary_proximity_pct;
 
         // ====================================================
         // GET PRESERVED RANGE
@@ -1240,39 +1257,32 @@ impl ResearchV4BacktestStrategy {
             return;
         };
 
+        let lower_boundary = range.lower_boundary;
+        let upper_boundary = range.upper_boundary;
+
         // ====================================================
         // CALCULATE BOUNDARY PROXIMITY
         // ====================================================
 
-        let range_width =
-            range.upper_boundary - range.lower_boundary;
+        let range_width = upper_boundary - lower_boundary;
 
-        if range_width <= 0.0
-            || !config.boundary_proximity_pct.is_finite()
-            || !(0.0..=50.0).contains(&config.boundary_proximity_pct)
-        {
+        if !range_width.is_finite() || range_width <= 0.0 {
+            self.mean_reversion_boundary_monitors.remove(symbol);
             return;
         }
 
         let proximity =
-            range_width * (config.boundary_proximity_pct / 100.0);
+            range_width * (boundary_proximity_pct / 100.0);
 
-        let lower_zone =
-            range.lower_boundary + proximity;
-
-        let upper_zone =
-            range.upper_boundary - proximity;
+        let lower_zone = lower_boundary + proximity;
+        let upper_zone = upper_boundary - proximity;
 
         // ====================================================
         // DETERMINE CURRENT BOUNDARY
         // ====================================================
 
-        // Only monitor prices within the preserved range.
-        // Breakout invalidation is handled by completed candles.
         let current_boundary =
-            if price < range.lower_boundary
-                || price > range.upper_boundary
-            {
+            if price < lower_boundary || price > upper_boundary {
                 None
             } else if price <= lower_zone {
                 Some(MeanReversionBoundary::Lower)
@@ -1283,31 +1293,57 @@ impl ResearchV4BacktestStrategy {
             };
 
         // ====================================================
-        // UPDATE BOUNDARY MONITOR
+        // UPDATE EXISTING SETUP
         // ====================================================
 
-        match current_boundary {
-            Some(boundary) => {
-                // Avoid repeatedly logging the same boundary.
-                if let Some(existing) =
-                    self.mean_reversion_boundary_monitors.get(symbol)
-                {
-                    if existing.boundary == boundary {
-                        return;
-                    }
+        if let Some(monitor) =
+            self.mean_reversion_boundary_monitors.get_mut(symbol)
+        {
+            // Preserve confirmed setups until the validated
+            // range is invalidated or expires.
+            if monitor.confirmed {
+                return;
+            }
+
+            // ====================================================
+            // TRACK PRICE EXTREME
+            // ====================================================
+
+            match monitor.boundary {
+                MeanReversionBoundary::Lower => {
+                    monitor.extreme_price =
+                        monitor.extreme_price.min(price);
                 }
 
-                self.mean_reversion_boundary_monitors.insert(
-                    symbol.to_string(),
-                    MeanReversionBoundaryMonitor {
-                        boundary,
-                        detected_ts_ms: current_ts,
-                        detected_price: price,
-                    },
-                );
+                MeanReversionBoundary::Upper => {
+                    monitor.extreme_price =
+                        monitor.extreme_price.max(price);
+                }
+            }
+
+            // ====================================================
+            // CHECK REVERSAL CONFIRMATION
+            // ====================================================
+
+            let reversal_pct = match monitor.boundary {
+                MeanReversionBoundary::Lower => {
+                    ((price - monitor.extreme_price)
+                        / monitor.extreme_price) * 100.0
+                }
+
+                MeanReversionBoundary::Upper => {
+                    ((monitor.extreme_price - price)
+                        / monitor.extreme_price) * 100.0
+                }
+            };
+
+            if !enable_confirmations
+                || reversal_pct >= confirmation_pct
+            {
+                monitor.confirmed = true;
 
                 // ====================================================
-                // DEBUG
+                // CONFIRMATION DEBUG
                 // ====================================================
 
                 if self.debug_mode {
@@ -1315,26 +1351,67 @@ impl ResearchV4BacktestStrategy {
                         self.debug_mode,
                         true,
                         format_args!(
-                            "[RESEARCH V4 BACKTEST BOUNDARY APPROACH][{}] \
-                             SIDE={:?} | PRICE=${:.4} | \
-                             LOW=${:.4} | HIGH=${:.4} | \
-                             PROXIMITY={:.1}%",
+                            "[RESEARCH V4 BACKTEST REVERSAL CONFIRMED][{}] \
+                             SIDE={} | PRICE=${:.4} | \
+                             EXTREME=${:.4} | REVERSAL={:.3}% | \
+                             REQUIRED={:.3}%",
                             symbol,
-                            boundary,
+                            match monitor.boundary {
+                                MeanReversionBoundary::Lower => "LONG",
+                                MeanReversionBoundary::Upper => "SHORT",
+                            },
                             price,
-                            range.lower_boundary,
-                            range.upper_boundary,
-                            config.boundary_proximity_pct,
+                            monitor.extreme_price,
+                            reversal_pct,
+                            confirmation_pct,
                         ),
                     );
                 }
             }
 
-            None => {
-                // Price moved away from both boundary zones.
-                // Clear the monitor so another approach can be detected.
-                self.mean_reversion_boundary_monitors.remove(symbol);
-            }
+            return;
+        }
+
+        // ====================================================
+        // DETECT NEW BOUNDARY APPROACH
+        // ====================================================
+
+        let Some(boundary) = current_boundary else {
+            return;
+        };
+
+        self.mean_reversion_boundary_monitors.insert(
+            symbol.to_string(),
+            MeanReversionBoundaryMonitor {
+                boundary,
+                detected_ts_ms: current_ts,
+                detected_price: price,
+                extreme_price: price,
+                confirmed: false,
+            },
+        );
+
+        // ====================================================
+        // BOUNDARY APPROACH DEBUG
+        // ====================================================
+
+        if self.debug_mode {
+            print_log(
+                self.debug_mode,
+                true,
+                format_args!(
+                    "[RESEARCH V4 BACKTEST BOUNDARY APPROACH][{}] \
+                     SIDE={:?} | PRICE=${:.4} | \
+                     LOW=${:.4} | HIGH=${:.4} | \
+                     PROXIMITY={:.1}%",
+                    symbol,
+                    boundary,
+                    price,
+                    lower_boundary,
+                    upper_boundary,
+                    boundary_proximity_pct,
+                ),
+            );
         }
     }
 }
