@@ -183,13 +183,18 @@ async fn main() -> Result<()> {
         // backtest_end: "2026-10-03T00:00:00Z".to_string(),
 
         // Full month of October 2026 (31 days).
-        backtest_start: "2026-10-01T00:00:00Z".to_string(),
-        backtest_end: "2026-11-01T00:00:00Z".to_string(),
+        // backtest_start: "2026-10-01T00:00:00Z".to_string(),
+        // backtest_end: "2026-11-01T00:00:00Z".to_string(),
 
-        backtest_min_trade_interval: Duration::from_millis(500), 
+        // First Friday of October 2026.
+        // New York trading hours: 9:00 AM – 2:00 PM EDT (5 hours).
+        backtest_start: "2026-10-02T13:00:00Z".to_string(),
+        backtest_end: "2026-10-02T18:00:00Z".to_string(),
 
-        // backtest_chunk_days: None,
-        backtest_chunk_days: Some(2),
+        backtest_min_trade_interval: Duration::from_millis(300), 
+
+        backtest_chunk_days: None,
+        // backtest_chunk_days: Some(2),
 
         // ============================================================
         // RISK LIMITS

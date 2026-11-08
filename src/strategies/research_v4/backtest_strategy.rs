@@ -134,7 +134,7 @@ impl ResearchV4BacktestStrategy {
             max_trades_allowed: 8,
             reference_margin_usd: 1_600.0,
             trade_amount_usd: 200.0,
-            
+
             leverage: None,
             emergency_exit_percent: Some(5.0),
             min_sl_delay: Some(0),
@@ -143,7 +143,7 @@ impl ResearchV4BacktestStrategy {
             // MARKET QUALIFICATION
             // ====================================================
 
-            enable_trading_eligibility_check: true,
+            enable_trading_eligibility_check: false,
             min_volume_usd: Some(350_000.0),
             min_24h_move_pct: Some(3.0),
             max_24h_move_pct: Some(15.0),
@@ -182,7 +182,7 @@ impl ResearchV4BacktestStrategy {
                     enabled: true,
                     short_window_secs: 2 * 3600,
                     long_window_secs: 4 * 3600,
-                    min_range_width_pct: 4.0,
+                    min_range_width_pct: 2.0,
                     max_range_width_pct: 8.0,
                     max_range_boundary_diff_pct: 0.5,
                     boundary_proximity_pct: 0.5,
@@ -818,7 +818,7 @@ impl ResearchV4BacktestStrategy {
         if self.debug_mode {
             print_log(
                 self.debug_mode,
-                false,
+                true,
                 format_args!(
                     "[RESEARCH V4 BACKTEST RANGE DETECTED][{}] \
                      LOW=${:.4} | HIGH=${:.4} | \
