@@ -1248,6 +1248,26 @@ impl ResearchV4BacktestStrategy {
         }
 
         // ====================================================
+        // SKIP SYMBOLS WITH ACTIVE TRADES
+        // ====================================================
+
+        // Includes Opening, Open, and Closing trades.
+        let symbol_has_active_trade = {
+            let view = self.rx_view.borrow();
+
+            view.trades.has_active_trade_for_strategy_symbol(
+                "ResearchV4BacktestStrategy",
+                symbol,
+            )
+        };
+
+        if symbol_has_active_trade {
+            // Remove any pending or previously confirmed setup.
+            self.mean_reversion_boundary_monitors.remove(symbol);
+            return;
+        }
+
+        // ====================================================
         // GET ENABLED CONFIGURATION
         // ====================================================
 
@@ -1373,8 +1393,11 @@ impl ResearchV4BacktestStrategy {
         if let Some(monitor) =
             self.mean_reversion_boundary_monitors.get_mut(symbol)
         {
-            // Preserve confirmed setups until the validated
-            // range is invalidated or expires.
+            // Confirmed setups are evaluated for execution
+            // on their confirmation tick.
+            //
+            // If execution is unavailable, the setup remains
+            // consumed and cannot trigger a delayed entry.
             if monitor.confirmed {
                 return;
             }
@@ -1542,6 +1565,34 @@ impl ResearchV4BacktestStrategy {
         can_trade: bool,
     ) {
         // ====================================================
+        // GET CONFIRMED SETUP
+        // ====================================================
+
+        let Some(monitor) =
+            self.mean_reversion_boundary_monitors.get_mut(symbol)
+        else {
+            return;
+        };
+
+        if !monitor.confirmed || monitor.trade_submitted {
+            return;
+        }
+
+        // ====================================================
+        // CONSUME CONFIRMED SETUP
+        // ====================================================
+
+        // Consume immediately, regardless of whether trading
+        // is currently allowed.
+        //
+        // Prevents confirmed signals from executing later
+        // when position capacity becomes available.
+
+        monitor.trade_submitted = true;
+
+        let boundary = monitor.boundary;
+
+        // ====================================================
         // VALIDATE PRICE AND TRADING ELIGIBILITY
         // ====================================================
 
@@ -1575,20 +1626,10 @@ impl ResearchV4BacktestStrategy {
         }
 
         // ====================================================
-        // GET CONFIRMED SETUP
+        // DETERMINE TRADE DIRECTION
         // ====================================================
 
-        let Some(monitor) =
-            self.mean_reversion_boundary_monitors.get(symbol)
-        else {
-            return;
-        };
-
-        if !monitor.confirmed || monitor.trade_submitted {
-            return;
-        }
-
-        let direction = match monitor.boundary {
+        let direction = match boundary {
             MeanReversionBoundary::Lower => Direction::Long,
             MeanReversionBoundary::Upper => Direction::Short,
         };
@@ -1613,8 +1654,10 @@ impl ResearchV4BacktestStrategy {
         // CALCULATE TAKE PROFIT AND STOP LOSS
         // ====================================================
 
-        // Target a price movement equal to 75% of the
-        // validated range width, measured from entry.
+        // Target a price movement equal to the configured
+        // fraction of the validated range width.
+        //
+        // Currently 70% of the range width.
 
         let target_distance = range_width * profit_fraction;
 
@@ -1650,6 +1693,12 @@ impl ResearchV4BacktestStrategy {
                 ),
             )
         };
+
+        // Skip the confirmed signal if the symbol already
+        // has a trade or the strategy is at maximum capacity.
+        //
+        // The signal has already been consumed, so it
+        // cannot execute later.
 
         if symbol_has_active_trade
             || active_trade_count >= self.max_trades_allowed
@@ -1694,13 +1743,6 @@ impl ResearchV4BacktestStrategy {
         if self.tx_engine.send(
             EngineEvent::OpenTrade(intent)
         ).is_ok() {
-
-            // Mark setup as consumed.
-            if let Some(monitor) =
-                self.mean_reversion_boundary_monitors.get_mut(symbol)
-            {
-                monitor.trade_submitted = true;
-            }
 
             // Record submission cooldown.
             self.trade_cooldown.record_trade(
