@@ -185,7 +185,9 @@ impl ResearchV4BacktestStrategy {
                     min_range_width_pct: 2.0,
                     max_range_width_pct: 8.0,
                     max_range_boundary_diff_pct: 0.5,
-                    boundary_proximity_pct: 0.5,
+                    min_confirmed_reversals: 2,
+                    min_reversal_fraction: 0.25,
+                    boundary_proximity_pct: 0.8,
                     confirmation_pct: 0.3,
                     enable_confirmations: true,
                     range_profit_target_fraction: 0.75,
@@ -792,6 +794,27 @@ impl ResearchV4BacktestStrategy {
         }
 
         // ====================================================
+        // VALIDATE RANGE OSCILLATIONS
+        // ====================================================
+
+        // Require genuine price reversals from both established
+        // boundaries before accepting the range as mean-reverting.
+        let valid_oscillations =
+            Self::validate_mean_reversion_oscillations(
+                &bars_vec,
+                long_range_low,
+                long_range_high,
+                config.boundary_proximity_pct,
+                config.min_reversal_fraction,
+                config.min_confirmed_reversals,
+            );
+
+        if !valid_oscillations {
+            self.mean_reversion_ranges.remove(symbol);
+            return;
+        }
+
+        // ====================================================
         // CACHE VALID RANGE
         // ====================================================
 
@@ -836,5 +859,190 @@ impl ResearchV4BacktestStrategy {
                 ),
             );
         }
+    }
+}
+
+
+
+
+impl ResearchV4BacktestStrategy {
+
+    // ============================================================
+    // VALIDATE MEAN REVERSION OSCILLATIONS
+    // ============================================================
+
+    // Confirms that price has demonstrated meaningful reversals
+    // from both boundaries of an established trading range.
+    //
+    // Validation:
+    // - Requires at least one confirmed upper-boundary reversal.
+    // - Requires at least one confirmed lower-boundary reversal.
+    // - Requires the configured minimum number of reversals.
+    // - Counts only completed reversals.
+    // - Prevents repeated counting of the same boundary interaction.
+    // - Rejects directional movement without sufficient reversals.
+    //
+    // Uses completed one-minute candles in chronological order.
+    fn validate_mean_reversion_oscillations(
+        bars: &[Bar],
+        lower_boundary: f64,
+        upper_boundary: f64,
+        boundary_proximity_pct: f64,
+        min_reversal_fraction: f64,
+        min_confirmed_reversals: usize,
+    ) -> bool {
+        if bars.is_empty()
+            || !lower_boundary.is_finite()
+            || !upper_boundary.is_finite()
+            || lower_boundary <= 0.0
+            || upper_boundary <= lower_boundary
+            || !boundary_proximity_pct.is_finite()
+            || boundary_proximity_pct < 0.0
+            || !min_reversal_fraction.is_finite()
+            || min_reversal_fraction <= 0.0
+            || min_reversal_fraction > 1.0
+        {
+            return false;
+        }
+
+        // ====================================================
+        // CALCULATE REVERSAL REQUIREMENTS
+        // ====================================================
+
+        let range_width = upper_boundary - lower_boundary;
+
+        let required_reversal =
+            range_width * min_reversal_fraction;
+
+        let lower_proximity =
+            lower_boundary * (boundary_proximity_pct / 100.0);
+
+        let upper_proximity =
+            upper_boundary * (boundary_proximity_pct / 100.0);
+
+        // ====================================================
+        // TRACK BOUNDARY INTERACTIONS
+        // ====================================================
+
+        // 0 = waiting for a boundary interaction.
+        // 1 = tracking a reversal from the lower boundary.
+        // 2 = tracking a reversal from the upper boundary.
+        let mut active_boundary: u8 = 0;
+
+        let mut boundary_extreme = 0.0_f64;
+
+        let mut confirmed_reversals = 0_usize;
+        let mut lower_reversals = 0_usize;
+        let mut upper_reversals = 0_usize;
+
+        // Prevent consecutive reversals from being counted
+        // from the same boundary without visiting the opposite
+        // boundary first.
+        let mut last_confirmed_boundary: u8 = 0;
+
+        // ====================================================
+        // PROCESS CANDLES CHRONOLOGICALLY
+        // ====================================================
+
+        for bar in bars {
+            if !bar.high.is_finite()
+                || !bar.low.is_finite()
+                || bar.low <= 0.0
+                || bar.high < bar.low
+            {
+                return false;
+            }
+
+            let near_lower =
+                bar.low <= lower_boundary + lower_proximity;
+
+            let near_upper =
+                bar.high >= upper_boundary - upper_proximity;
+
+            match active_boundary {
+
+                // ============================================
+                // WAITING FOR A BOUNDARY INTERACTION
+                // ============================================
+
+                0 => {
+                    // A candle touching both boundaries is
+                    // ambiguous without intrabar ordering.
+                    if near_lower && near_upper {
+                        continue;
+                    }
+
+                    if near_lower
+                        && last_confirmed_boundary != 1
+                    {
+                        active_boundary = 1;
+                        boundary_extreme = bar.low;
+                    } else if near_upper
+                        && last_confirmed_boundary != 2
+                    {
+                        active_boundary = 2;
+                        boundary_extreme = bar.high;
+                    }
+                }
+
+                // ============================================
+                // LOWER BOUNDARY REVERSAL
+                // ============================================
+
+                1 => {
+                    // Track the lowest price reached.
+                    boundary_extreme =
+                        boundary_extreme.min(bar.low);
+
+                    // Require price to recover sufficiently
+                    // from the observed lower extreme.
+                    //
+                    // Use the candle close for confirmation.
+                    if bar.close - boundary_extreme
+                        >= required_reversal
+                    {
+                        confirmed_reversals += 1;
+                        lower_reversals += 1;
+
+                        last_confirmed_boundary = 1;
+                        active_boundary = 0;
+                    }
+                }
+
+                // ============================================
+                // UPPER BOUNDARY REVERSAL
+                // ============================================
+
+                2 => {
+                    // Track the highest price reached.
+                    boundary_extreme =
+                        boundary_extreme.max(bar.high);
+
+                    // Require price to decline sufficiently
+                    // from the observed upper extreme.
+                    //
+                    // Use the candle close for confirmation.
+                    if boundary_extreme - bar.close
+                        >= required_reversal
+                    {
+                        confirmed_reversals += 1;
+                        upper_reversals += 1;
+
+                        last_confirmed_boundary = 2;
+                        active_boundary = 0;
+                    }
+                }
+
+                _ => {}
+            }
+        }
+
+        // ====================================================
+        // FINAL OSCILLATION VALIDATION
+        // ====================================================
+
+        confirmed_reversals >= min_confirmed_reversals
+            && lower_reversals >= 1
+            && upper_reversals >= 1
     }
 }

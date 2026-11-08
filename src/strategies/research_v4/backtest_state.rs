@@ -82,6 +82,12 @@ pub struct MeanReversionConfig {
     // Percentage distance from a boundary to consider entry.
     pub boundary_proximity_pct: f64,
 
+    // Minimum number of confirmed alternating boundary reversals.
+    pub min_confirmed_reversals: usize,
+
+    // Minimum reversal distance as a fraction of the established range width.
+    pub min_reversal_fraction: f64,
+
     // Required reversal from the observed extreme.
     pub confirmation_pct: f64,
 
