@@ -206,7 +206,7 @@ impl ResearchV4BacktestStrategy {
                     enable_confirmations: true,
                     range_profit_target_fraction: 0.70,
                     boundary_break_buffer_pct: 0.5,
-                    stop_loss_pct: Some(2.0),
+                    stop_loss_boundary_buffer_pct: 0.5,
                     trade_duration_secs: Some(4800),
                 },
             ],
@@ -1256,7 +1256,7 @@ impl ResearchV4BacktestStrategy {
             let view = self.rx_view.borrow();
 
             view.trades.has_active_trade_for_strategy_symbol(
-                "ResearchV4BacktestStrategy",
+                self.name(),
                 symbol,
             )
         };
@@ -1557,6 +1557,30 @@ impl ResearchV4BacktestStrategy {
     // EXECUTE MEAN REVERSION ENTRY
     // ============================================================
 
+    /// Executes a confirmed mean-reversion entry using the validated range.
+    ///
+    /// Entry behavior:
+    /// - Consumes confirmed signals immediately, even when trading is blocked,
+    ///   preventing stale signals from executing later.
+    /// - Determines LONG or SHORT direction from the confirmed range boundary.
+    /// - Calculates take profit at a configurable fraction of the validated range.
+    /// - Places stop loss at a configurable percentage beyond the entry-side boundary.
+    /// - Converts absolute TP/SL price levels into percentages for engine risk management.
+    /// - Rejects entries with invalid prices, configurations, or TP/SL geometry.
+    /// - Prevents duplicate trades and enforces the strategy's maximum active-trade limit.
+    /// - Includes Opening, Open, and Closing trades in active-trade checks.
+    /// - Submits entries through the canonical EngineEvent::OpenTrade lifecycle.
+    /// - Records trade cooldowns only after successful event submission.
+    /// - Logs entry prices, range boundaries, TP/SL levels, and dynamic risk/reward.
+    ///
+    /// Risk management:
+    /// - TP/SL distances are determined by range geometry rather than a fixed
+    ///   risk/reward ratio.
+    /// - The engine evaluates TP/SL percentages against the actual average fill price.
+    /// - Execution slippage may shift absolute exit levels from their intended prices.
+    /// - Existing emergency stop-loss and maximum trade-duration protections remain active.
+    /// - All exit execution is managed by the engine, not directly by this strategy.
+
     fn execute_mean_reversion_entry(
         &mut self,
         symbol: &str,
@@ -1616,11 +1640,17 @@ impl ResearchV4BacktestStrategy {
             return;
         };
 
-        let profit_fraction = config.range_profit_target_fraction;
+        let profit_fraction =
+            config.range_profit_target_fraction;
+
+        let stop_buffer_pct =
+            config.stop_loss_boundary_buffer_pct;
 
         if !profit_fraction.is_finite()
             || profit_fraction <= 0.0
             || profit_fraction > 1.0
+            || !stop_buffer_pct.is_finite()
+            || stop_buffer_pct < 0.0
         {
             return;
         }
@@ -1638,35 +1668,144 @@ impl ResearchV4BacktestStrategy {
         // GET VALIDATED RANGE
         // ====================================================
 
-        let Some(range) = self.mean_reversion_ranges.get(symbol)
+        let Some(range) =
+            self.mean_reversion_ranges.get(symbol)
         else {
             return;
         };
 
-        let range_width =
-            range.upper_boundary - range.lower_boundary;
+        let lower_boundary =
+            range.lower_boundary;
 
-        if !range_width.is_finite() || range_width <= 0.0 {
+        let upper_boundary =
+            range.upper_boundary;
+
+        let range_width =
+            upper_boundary - lower_boundary;
+
+        if !lower_boundary.is_finite()
+            || !upper_boundary.is_finite()
+            || lower_boundary <= 0.0
+            || upper_boundary <= lower_boundary
+            || !range_width.is_finite()
+        {
             return;
         }
 
         // ====================================================
-        // CALCULATE TAKE PROFIT AND STOP LOSS
+        // CALCULATE RANGE-BASED TAKE PROFIT / STOP LOSS
         // ====================================================
 
-        // Target a price movement equal to the configured
-        // fraction of the validated range width.
+        // Take profit is positioned at a configured fraction
+        // of the validated range.
         //
-        // Currently 70% of the range width.
+        // LONG:
+        //     TP = lower + (range_width * fraction)
+        //
+        // SHORT:
+        //     TP = upper - (range_width * fraction)
+        //
+        // Stop loss is positioned outside the entry-side
+        // boundary using the configured percentage buffer.
+        //
+        // LONG:
+        //     SL = lower * (1 - buffer / 100)
+        //
+        // SHORT:
+        //     SL = upper * (1 + buffer / 100)
 
-        let target_distance = range_width * profit_fraction;
+        let (take_profit_price, stop_loss_price) =
+            match direction {
+
+                Direction::Long => {
+                    (
+                        lower_boundary
+                            + range_width * profit_fraction,
+
+                        lower_boundary
+                            * (1.0 - stop_buffer_pct / 100.0),
+                    )
+                }
+
+                Direction::Short => {
+                    (
+                        upper_boundary
+                            - range_width * profit_fraction,
+
+                        upper_boundary
+                            * (1.0 + stop_buffer_pct / 100.0),
+                    )
+                }
+            };
+
+        // ====================================================
+        // VALIDATE EXIT PRICES
+        // ====================================================
+
+        if !take_profit_price.is_finite()
+            || !stop_loss_price.is_finite()
+            || take_profit_price <= 0.0
+            || stop_loss_price <= 0.0
+        {
+            return;
+        }
+
+        // Ensure TP is profitable and SL is adverse
+        // relative to the current signal price.
+
+        let valid_exit_geometry =
+            match direction {
+                Direction::Long => {
+                    stop_loss_price < price
+                        && price < take_profit_price
+                }
+
+                Direction::Short => {
+                    take_profit_price < price
+                        && price < stop_loss_price
+                }
+            };
+
+        if !valid_exit_geometry {
+            return;
+        }
+
+        // ====================================================
+        // CONVERT EXIT PRICES TO ENGINE PERCENTAGES
+        // ====================================================
+
+        // Engine risk management evaluates TP/SL using
+        // the actual average entry fill price.
+        //
+        // These percentages are calculated from the
+        // signal price and may therefore produce slightly
+        // different absolute exit prices if execution slips.
 
         let take_profit_percent =
-            (target_distance / price) * 100.0;
+            match direction {
+                Direction::Long => {
+                    ((take_profit_price - price) / price)
+                        * 100.0
+                }
 
-        // Initial risk/reward ratio: 1:1.5.
+                Direction::Short => {
+                    ((price - take_profit_price) / price)
+                        * 100.0
+                }
+            };
+
         let stop_loss_percent =
-            take_profit_percent / 1.5;
+            match direction {
+                Direction::Long => {
+                    ((price - stop_loss_price) / price)
+                        * 100.0
+                }
+
+                Direction::Short => {
+                    ((stop_loss_price - price) / price)
+                        * 100.0
+                }
+            };
 
         if !take_profit_percent.is_finite()
             || !stop_loss_percent.is_finite()
@@ -1694,11 +1833,11 @@ impl ResearchV4BacktestStrategy {
             )
         };
 
-        // Skip the confirmed signal if the symbol already
-        // has a trade or the strategy is at maximum capacity.
+        // Opening, Open, and Closing trades are included.
         //
-        // The signal has already been consumed, so it
-        // cannot execute later.
+        // The confirmed signal was already consumed,
+        // preventing delayed execution if capacity
+        // becomes available later.
 
         if symbol_has_active_trade
             || active_trade_count >= self.max_trades_allowed
@@ -1728,8 +1867,8 @@ impl ResearchV4BacktestStrategy {
             take_profit_percent: Some(take_profit_percent),
             stop_loss_percent: Some(stop_loss_percent),
 
-            emergency_stop_percent: Some(5.0),
-            stop_loss_delay_secs: Some(0),
+            emergency_stop_percent: self.emergency_exit_percent,
+            stop_loss_delay_secs: self.min_sl_delay,
             trade_duration_secs: Some(86_400),
 
             trailing_stop: None,
@@ -1745,6 +1884,7 @@ impl ResearchV4BacktestStrategy {
         ).is_ok() {
 
             // Record submission cooldown.
+
             self.trade_cooldown.record_trade(
                 symbol,
                 current_ts,
@@ -1760,18 +1900,26 @@ impl ResearchV4BacktestStrategy {
                     true,
                     format_args!(
                         "[RESEARCH V4 BACKTEST {:?} ENTRY][{}] \
-                         PRICE=${:.4} | \
-                         RANGE_WIDTH=${:.4} | \
+                         PRICE=${:.6} | \
+                         RANGE_LOW=${:.6} | RANGE_HIGH=${:.6} | \
+                         TP_PRICE=${:.6} | SL_PRICE=${:.6} | \
                          TP={:.3}% | SL={:.3}% | \
                          TARGET_FRACTION={:.2} | \
+                         SL_BUFFER={:.3}% | \
+                         RR=1:{:.3} | \
                          AMOUNT=${:.2}",
                         direction,
                         symbol,
                         price,
-                        range_width,
+                        lower_boundary,
+                        upper_boundary,
+                        take_profit_price,
+                        stop_loss_price,
                         take_profit_percent,
                         stop_loss_percent,
                         profit_fraction,
+                        stop_buffer_pct,
+                        take_profit_percent / stop_loss_percent,
                         self.trade_amount_usd,
                     ),
                 );

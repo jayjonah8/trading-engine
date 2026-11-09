@@ -101,10 +101,25 @@ pub struct MeanReversionConfig {
     pub range_profit_target_fraction: f64,
 
     // Maximum permitted movement beyond a range boundary.
+    // Cancels pending reversal setups when price breaks outside the range
     pub boundary_break_buffer_pct: f64,
 
-    // Optional stop loss.
-    pub stop_loss_pct: Option<f64>,
+    /// Percentage buffer beyond the validated range boundary
+    /// used to calculate the stop-loss price.
+    ///
+    /// LONG:
+    ///     Stop loss below the lower boundary.
+    ///
+    /// SHORT:
+    ///     Stop loss above the upper boundary.
+    ///
+    /// Example:
+    ///     0.5 means 0.5% beyond the boundary.
+    ///
+    /// Unlike boundary_break_buffer_pct, which cancels pending
+    /// reversal setups after an intrabar breakout, this controls
+    /// the protective stop of an already submitted trade.
+    pub stop_loss_boundary_buffer_pct: f64,
 
     // Maximum trade duration.
     pub trade_duration_secs: Option<u64>,
