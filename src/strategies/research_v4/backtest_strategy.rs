@@ -201,7 +201,7 @@ impl ResearchV4BacktestStrategy {
                     max_range_boundary_diff_pct: 1.0,
                     min_confirmed_reversals: 3,
                     min_reversal_fraction: 0.60,
-                    boundary_proximity_pct: 10.0,
+                    boundary_proximity_pct: 15.0, 
                     confirmation_pct: 0.3,
                     enable_confirmations: true,
                     range_profit_target_fraction: 0.70,
