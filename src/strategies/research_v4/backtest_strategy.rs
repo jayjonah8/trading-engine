@@ -199,7 +199,7 @@ impl ResearchV4BacktestStrategy {
                     min_range_width_pct: 2.0,
                     max_range_width_pct: 8.0,
                     max_range_boundary_diff_pct: 0.5,
-                    min_confirmed_reversals: 2,
+                    min_confirmed_reversals: 3,
                     min_reversal_fraction: 0.25,
                     boundary_proximity_pct: 20.0,
                     confirmation_pct: 0.3,
@@ -1052,6 +1052,7 @@ impl ResearchV4BacktestStrategy {
             || !min_reversal_fraction.is_finite()
             || min_reversal_fraction <= 0.0
             || min_reversal_fraction > 1.0
+            || min_confirmed_reversals < 2
         {
             return false;
         }
