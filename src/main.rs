@@ -191,15 +191,19 @@ async fn main() -> Result<()> {
         // backtest_start: "2026-10-02T13:00:00Z".to_string(),
         // backtest_end: "2026-10-02T18:00:00Z".to_string(),
 
-        // First Friday of October 2026.
+        // First 8 days of October 2026.
+        backtest_start: "2026-10-01T00:00:00Z".to_string(),
+        backtest_end: "2026-10-09T00:00:00Z".to_string(),
+
+        // First Friday of October 2026. (severe down trend bear market!!)
         // New York: 9:00 AM – 5:00 PM EDT (8 hours).
-        backtest_start: "2026-10-02T13:00:00Z".to_string(),
-        backtest_end: "2026-10-02T21:00:00Z".to_string(),
+        // backtest_start: "2026-10-02T13:00:00Z".to_string(),
+        // backtest_end: "2026-10-02T21:00:00Z".to_string(),
 
         backtest_min_trade_interval: Duration::from_millis(300), 
 
-        backtest_chunk_days: None,
-        // backtest_chunk_days: Some(2),
+        // backtest_chunk_days: None,
+        backtest_chunk_days: Some(2),
 
         // ============================================================
         // RISK LIMITS
