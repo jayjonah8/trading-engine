@@ -4,7 +4,7 @@
                      BACKTEST RESULTS
 ============================================================
 
-Bot Name:              test-bot
+Bot Name:              test-bot-10-day-range-can-trade-on-weighted
 Execution Venue:       Hyperliquid
 Data Provider:         Hyperliquid
 Total Symbols:         178
@@ -13,51 +13,51 @@ Total Symbols:         178
 BACKTEST PERIOD
 ------------------------------------------------------------
 
-Starting Date:         2026-10-02 13:00:00.044 UTC
-Ending Date:           2026-10-02 20:59:59.799 UTC
-Elapsed Calendar Days: 0.3333
+Starting Date:         2026-10-01 00:00:00.051 UTC
+Ending Date:           2026-10-10 23:59:59.672 UTC
+Elapsed Calendar Days: 10.0000
 
 ------------------------------------------------------------
 ACCOUNT PERFORMANCE
 ------------------------------------------------------------
 
 Starting Balance:      $1,600.0000
-Ending Balance:        $1,600.8359
-Ending Equity:         $1,600.8359
+Ending Balance:        $1,609.6711
+Ending Equity:         $1,609.6711
 
-Realized PnL:          $+0.8359
+Realized PnL:          $+9.6711
 Unrealized PnL:        $-0.0000
 Net Unrealized PnL:    $-0.0000
 
-Total Return:          +0.0522%
+Total Return:          +0.6044%
 
 ------------------------------------------------------------
 PERFORMANCE METRICS
 ------------------------------------------------------------
 
-Sharpe Ratio:          0.0000
-Profit Factor:         1.1134
-Expected Value:        $+0.2090
-Expected Value (%):    +0.1045%
+Sharpe Ratio:          2.1105
+Profit Factor:         1.1146
+Expected Value:        $+0.1860
+Expected Value (%):    +0.0930%
 
-Win Rate:              25.0000%
-Loss Rate:             75.0000%
+Win Rate:              34.6154%
+Loss Rate:             65.3846%
 
-Max Drawdown:          0.5169%
+Max Drawdown:          1.4088%
 
 ------------------------------------------------------------
 EXECUTION FEES
 ------------------------------------------------------------
 
-Entry Fees:            $0.3600
-Exit Fees:             $0.3607
-Total Fees:            $0.7207
+Entry Fees:            $4.6800
+Exit Fees:             $4.6770
+Total Fees:            $9.3570
 
 ------------------------------------------------------------
 TRADING ACTIVITY
 ------------------------------------------------------------
 
-Closed Trades:         4
+Closed Trades:         52
 Open Trades:           0
 Active Trades:         0
 

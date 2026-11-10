@@ -22,41 +22,42 @@ use crate::{
         TradeCooldown,
         TradeDurationWatchdog,
         black_swan_protection::BlackSwanProtection,
+        weighted_trade_flip::WeightedTradeFlip,
     },
 };
 
 
 // ============================================================
-// TRENDING CONFIGURATION
+// STRATEGY CONFIGURATION KEY
 // ============================================================
 
-pub struct TrendingConfig {
-    pub enabled: bool,
+// Identifies an independent strategy configuration
+// operating on a specific asset.
+//
+// Allows multiple configurations to maintain their own
+// ranges, boundary monitors, and entry signals.
+//
+// Example:
+// BTC + mr_4h
+// BTC + mr_8h
+// ETH + mr_4h
 
-    // Rolling observation window used to identify trends.
-    pub trend_window_secs: u64,
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct StrategyConfigKey {
+    pub symbol: String,
+    pub config_id: String,
+}
 
-    // Maximum allowed pullback duration.
-    pub max_pullback_secs: u64,
-
-    // Minimum trend movement required.
-    pub min_trend_move_pct: f64,
-
-    // Minimum pullback depth before confirmation.
-    pub min_pullback_pct: f64,
-
-    // Required recovery from pullback extreme.
-    pub confirmation_pct: f64,
-
-    // Enable confirmation before entering.
-    pub enable_confirmations: bool,
-
-    // Profit and loss thresholds.
-    pub take_profit_pct: Option<f64>,
-    pub stop_loss_pct: Option<f64>,
-
-    // Maximum trade duration.
-    pub trade_duration_secs: Option<u64>,
+impl StrategyConfigKey {
+    pub fn new(
+        symbol: &str,
+        config_id: &str,
+    ) -> Self {
+        Self {
+            symbol: symbol.to_string(),
+            config_id: config_id.to_string(),
+        }
+    }
 }
 
 
@@ -65,6 +66,10 @@ pub struct TrendingConfig {
 // ============================================================
 
 pub struct MeanReversionConfig {
+
+    // Unique identifier for this configuration.
+    pub id: String,
+
     pub enabled: bool,
 
     // Two rolling observation windows used to validate ranges.
@@ -81,7 +86,6 @@ pub struct MeanReversionConfig {
 
     // Percentage of the total range width used to define
     // proximity to the upper and lower boundaries.
-    // Example: 20.0 = outer 20% of each side of the range.
     pub boundary_proximity_pct: f64,
 
     // Minimum number of confirmed alternating boundary reversals.
@@ -96,33 +100,22 @@ pub struct MeanReversionConfig {
     // Enable confirmation before entering.
     pub enable_confirmations: bool,
 
-    // Fraction of the established range used for take profit.
-    // Example: 0.75 = 75% of the range.
-    pub range_profit_target_fraction: f64,
+    // Determines how reversal confirmation is evaluated.
+    //
+    // true  = Confirm using completed one-minute candle closes.
+    // false = Confirm using individual trade ticks.
+    //
+    // Intrabar price extremes are still tracked using ticks,
+    // regardless of the selected confirmation mode.
+
+    pub require_candle_confirmation: bool,
 
     // Maximum permitted movement beyond a range boundary.
-    // Cancels pending reversal setups when price breaks outside the range
+    // Cancels pending reversal setups on intrabar breakouts.
     pub boundary_break_buffer_pct: f64,
 
-    /// Percentage buffer beyond the validated range boundary
-    /// used to calculate the stop-loss price.
-    ///
-    /// LONG:
-    ///     Stop loss below the lower boundary.
-    ///
-    /// SHORT:
-    ///     Stop loss above the upper boundary.
-    ///
-    /// Example:
-    ///     0.5 means 0.5% beyond the boundary.
-    ///
-    /// Unlike boundary_break_buffer_pct, which cancels pending
-    /// reversal setups after an intrabar breakout, this controls
-    /// the protective stop of an already submitted trade.
-    pub stop_loss_boundary_buffer_pct: f64,
-
-    // Maximum trade duration.
-    pub trade_duration_secs: Option<u64>,
+    // Independent risk configuration for this range setup.
+    pub risk: MeanReversionRiskConfig,
 }
 
 
@@ -152,10 +145,10 @@ pub struct MeanReversionBoundaryMonitor {
     // Highest price for SHORT setups.
     pub extreme_price: f64,
 
-    // Prevents repeated confirmations from the same setup.
+    // Prevents repeated confirmations.
     pub confirmed: bool,
 
-    // Prevent duplicate trade submissions.
+    // Prevents duplicate trade submissions.
     pub trade_submitted: bool,
 }
 
@@ -167,32 +160,24 @@ pub struct MeanReversionBoundaryMonitor {
 #[derive(Clone, Debug)]
 pub struct MeanReversionRange {
 
-    // Established upper price boundary of the trading range.
-    // Represents potential resistance for short entries.
+    // Established upper price boundary.
     pub upper_boundary: f64,
 
-    // Established lower price boundary of the trading range.
-    // Represents potential support for long entries.
+    // Established lower price boundary.
     pub lower_boundary: f64,
 
-    // Percentage distance between the upper and lower boundaries.
-    // Example: $100 low and $106 high = 6% range width.
+    // Percentage width of the validated range.
     pub range_width_pct: f64,
 
-    // Highest price observed within the shorter rolling window.
+    // Short-window boundaries.
     pub short_range_high: f64,
-
-    // Lowest price observed within the shorter rolling window.
     pub short_range_low: f64,
 
-    // Highest price observed within the longer rolling window.
+    // Long-window boundaries.
     pub long_range_high: f64,
-
-    // Lowest price observed within the longer rolling window.
     pub long_range_low: f64,
 
-    // Timestamp when the range was first validated.
-    // This remains unchanged while the range is active.
+    // Timestamp when the range was validated.
     pub detected_ts_ms: i64,
 }
 
@@ -202,12 +187,14 @@ pub struct MeanReversionRange {
 // ============================================================
 
 pub struct ResearchV4BacktestStrategy {
+
     // ========================================================
     // GENERAL
     // ========================================================
 
     pub enable_strategy: bool,
     pub debug_mode: bool,
+
     pub(crate) tx_engine: UnboundedSender<EngineEvent>,
     pub(crate) rx_view: watch::Receiver<Arc<EngineView>>,
 
@@ -220,77 +207,56 @@ pub struct ResearchV4BacktestStrategy {
     pub trade_amount_usd: f64,
     pub leverage: Option<f64>,
 
-    // Emergency stop loss.
     pub emergency_exit_percent: Option<f64>,
-
-    // Minimum delay before normal stop loss activates.
     pub min_sl_delay: Option<u64>,
 
     // ========================================================
     // MARKET QUALIFICATION
     // ========================================================
 
-    // Master switch for trading eligibility checks.
     pub enable_trading_eligibility_check: bool,
 
-    // Minimum USD trading volume over the last 24 hours.
-    // None = disable restriction.
     pub min_volume_usd: Option<f64>,
-
-    // Minimum absolute 24-hour price movement.
-    // None = disable restriction.
     pub min_24h_move_pct: Option<f64>,
-
-    // Maximum absolute 24-hour price movement.
-    // None = disable restriction.
     pub max_24h_move_pct: Option<f64>,
 
-    // Minimum recent relative volume.
-    // Example: 0.75 = 75% of average recent volume.
-    // None = disable restriction.
     pub min_relative_volume: Option<f64>,
-
-    // Number of completed one-minute candles used for RVOL.
-    // Example: 20 = compare the latest minute against the
-    // preceding 20 one-minute candles.
     pub relative_volume_period: usize,
 
-    // Cached eligibility per symbol.
+    // Cached eligibility per asset.
     pub can_trade: HashMap<String, bool>,
-
-    // ========================================================
-    // TREND FOLLOWING CONFIGURATIONS
-    // ========================================================
-
-    // Supports multiple independent trend configurations.
-    pub trending_configs: Vec<TrendingConfig>,
 
     // ========================================================
     // MEAN REVERSION CONFIGURATIONS
     // ========================================================
 
-    // Supports multiple independent range configurations.
+    // Supports any number of independent configurations.
     pub mean_reversion_configs: Vec<MeanReversionConfig>,
 
-    // Cached validated trading ranges for each symbol.
-    // Boundaries remain fixed until invalidation or expiration.
-    // TODO: Track by (symbol, config_id) to support multiple
-    // independent configurations per asset.
-    pub mean_reversion_ranges: HashMap<String, MeanReversionRange>,
+    // Validated ranges indexed by symbol and configuration.
+    pub mean_reversion_ranges:
+        HashMap<StrategyConfigKey, MeanReversionRange>,
 
-    // Tracks tick-level price approaches to preserved boundaries.
-    // Lower boundary = potential long setup.
-    // Upper boundary = potential short setup.
-    // TODO: Track by (symbol, config_id) when supporting
-    // multiple independent configurations per asset.
+    // Independent boundary monitors for each configuration.
     pub mean_reversion_boundary_monitors:
-        HashMap<String, MeanReversionBoundaryMonitor>,
+        HashMap<StrategyConfigKey, MeanReversionBoundaryMonitor>,
+
+    // ====================================================
+    // BREAKOUT CONFIGURATIONS & STATE
+    // ====================================================
+
+    // Independent breakout configurations.
+    pub breakout_configs: Vec<BreakoutConfig>,
+
+    // Confirmed breakout setups tracked independently
+    // by symbol, range configuration, and breakout configuration.
+    pub breakout_setups:
+        HashMap<BreakoutConfigKey, BreakoutSetup>,
 
     // ========================================================
     // MARKET DATA
     // ========================================================
 
-    // Stores completed multi-timeframe candle history.
     pub candle_history: CandleHistory,
 
     // ========================================================
@@ -300,4 +266,168 @@ pub struct ResearchV4BacktestStrategy {
     pub black_swan_protection: BlackSwanProtection,
     pub trade_cooldown: TradeCooldown,
     pub trade_duration_watchdog: TradeDurationWatchdog,
+
+    // Probability-based trade direction reversal.
+    pub weighted_trade_flip: WeightedTradeFlip,
+}
+
+
+// ============================================================
+// MEAN REVERSION RISK CONFIGURATION
+// ============================================================
+
+pub struct MeanReversionRiskConfig {
+
+    // Fraction of the established range used for take profit.
+    //
+    // Example:
+    // 0.70 = target 70% of the validated range.
+    pub range_profit_target_fraction: f64,
+
+    // Percentage buffer beyond the validated range boundary
+    // used to calculate the protective stop loss.
+    //
+    // LONG:
+    // Stop loss below the lower boundary.
+    //
+    // SHORT:
+    // Stop loss above the upper boundary.
+    //
+    // Example:
+    // 0.5 = 0.5% beyond the boundary.
+    pub stop_loss_boundary_buffer_pct: f64,
+
+    // Maximum trade duration.
+    pub trade_duration_secs: Option<u64>,
+}
+
+
+// ============================================================
+// BREAKOUT RISK CONFIGURATION
+// ============================================================
+
+pub struct BreakoutRiskConfig {
+
+    // Take-profit distance from the breakout entry price.
+    //
+    // Example:
+    // 3.0 = 3% favorable price movement.
+    pub take_profit_pct: f64,
+
+    // Stop-loss distance from the breakout entry price.
+    //
+    // Example:
+    // 2.0 = 2% adverse price movement.
+    pub stop_loss_pct: f64,
+
+    // Maximum trade duration.
+    pub trade_duration_secs: Option<u64>,
+}
+
+
+// ============================================================
+// BREAKOUT CONFIGURATION
+// ============================================================
+
+pub struct BreakoutConfig {
+
+    // Unique identifier for this breakout configuration.
+    pub id: String,
+
+    // Master switch for breakout trading.
+    pub enabled: bool,
+
+    // Percentage movement beyond the validated range
+    // boundary required to confirm a breakout.
+    //
+    // Example:
+    // 0.5 = price must move 0.5% beyond the boundary.
+    pub confirmation_pct: f64,
+
+    // Require a completed one-minute candle to confirm
+    // the breakout rather than relying on an intrabar tick.
+    pub require_candle_confirmation: bool,
+
+    // Independent risk settings for breakout trades.
+    pub risk: BreakoutRiskConfig,
+
+    // Maximum time a breakout setup can remain pending.
+    //
+    // Example:
+    // 900 = 15 minutes.
+    //
+    // If the breakout has not confirmed within this period,
+    // the setup is removed.
+    pub setup_expiration_secs: u64,
+}
+
+
+// ============================================================
+// BREAKOUT DIRECTION
+// ============================================================
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BreakoutDirection {
+    Bullish,
+    Bearish,
+}
+
+
+// ============================================================
+// BREAKOUT SETUP STATE
+// ============================================================
+
+#[derive(Clone, Debug)]
+pub struct BreakoutSetup {
+
+    // Direction of the original range breakout.
+    pub direction: BreakoutDirection,
+
+    // Original validated range boundaries.
+    pub upper_boundary: f64,
+    pub lower_boundary: f64,
+
+    // Price when the original range was invalidated.
+    pub breakout_price: f64,
+
+    // Timestamp when the original range was invalidated.
+    pub breakout_ts_ms: i64,
+
+    // Price when this configuration confirmed its breakout.
+    pub confirmation_price: Option<f64>,
+
+    // Timestamp when this configuration confirmed.
+    pub confirmed_ts_ms: Option<i64>,
+
+    // Whether this configuration has confirmed its breakout.
+    pub confirmed: bool,
+
+    // Prevent duplicate trade submissions.
+    pub trade_submitted: bool,
+}
+
+
+// ============================================================
+// BREAKOUT CONFIGURATION KEY
+// ============================================================
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct BreakoutConfigKey {
+    pub symbol: String,
+    pub range_config_id: String,
+    pub breakout_config_id: String,
+}
+
+impl BreakoutConfigKey {
+    pub fn new(
+        symbol: &str,
+        range_config_id: &str,
+        breakout_config_id: &str,
+    ) -> Self {
+        Self {
+            symbol: symbol.to_string(),
+            range_config_id: range_config_id.to_string(),
+            breakout_config_id: breakout_config_id.to_string(),
+        }
+    }
 }

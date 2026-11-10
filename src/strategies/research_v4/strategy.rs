@@ -53,7 +53,6 @@ impl ResearchV4Strategy {
 
             leverage: None,
 
-            trending_configs: Vec::new(),
             mean_reversion_configs: Vec::new(),
 
             candle_history: CandleHistory::new(

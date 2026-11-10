@@ -17,7 +17,6 @@ use crate::{
 };
 
 use super::backtest_state::{
-    TrendingConfig,
     MeanReversionConfig,
 };
 
@@ -40,7 +39,6 @@ pub struct ResearchV4Strategy {
 
     pub leverage: Option<f64>,
 
-    pub trending_configs: Vec<TrendingConfig>,
     pub mean_reversion_configs: Vec<MeanReversionConfig>,
 
     pub candle_history: CandleHistory,

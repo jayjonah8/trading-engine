@@ -39,6 +39,10 @@ use crate::{
         TradeCooldown,
         TradeDurationWatchdog,
         black_swan_protection::BlackSwanProtection,
+        weighted_trade_flip::{
+            WeightedTradeFlip,
+            WeightedTradeFlipConfig,
+        },
     },
 
     shared::print_log,
@@ -58,11 +62,17 @@ use crate::{
 
 use super::backtest_state::{
     ResearchV4BacktestStrategy,
-    TrendingConfig,
+    StrategyConfigKey,
+    BreakoutConfigKey,
     MeanReversionConfig,
     MeanReversionRange,
     MeanReversionBoundary,
     MeanReversionBoundaryMonitor,
+    MeanReversionRiskConfig,
+    BreakoutConfig,
+    BreakoutRiskConfig,
+    BreakoutDirection,
+    BreakoutSetup,
 };
 
 // ============================================================
@@ -159,7 +169,7 @@ impl ResearchV4BacktestStrategy {
 
             enable_trading_eligibility_check: false,
             min_volume_usd: Some(350_000.0),
-            min_24h_move_pct: Some(3.0),
+            min_24h_move_pct: None,
             max_24h_move_pct: Some(15.0),
 
             // Disabled initially for baseline testing.
@@ -169,50 +179,97 @@ impl ResearchV4BacktestStrategy {
             can_trade: HashMap::new(),
 
             // ====================================================
-            // TREND FOLLOWING CONFIGURATIONS
-            // ====================================================
-
-            trending_configs: vec![
-                TrendingConfig {
-                    enabled: true,
-                    trend_window_secs: 4 * 3600,
-                    max_pullback_secs: 2 * 3600,
-                    min_trend_move_pct: 3.0,
-                    min_pullback_pct: 0.5,
-                    confirmation_pct: 0.3,
-                    enable_confirmations: true,
-                    take_profit_pct: Some(3.0),
-                    stop_loss_pct: Some(2.0),
-                    trade_duration_secs: Some(4800),
-                },
-            ],
-
-            // ====================================================
             // MEAN REVERSION CONFIGURATIONS
             // ====================================================
 
             mean_reversion_configs: vec![
                 MeanReversionConfig {
+                    id: "mr_4h".to_string(),
+
                     enabled: true,
+
+                    // ====================================================
+                    // RANGE DETECTION
+                    // ====================================================
+
                     short_window_secs: 2 * 3600,
                     long_window_secs: 4 * 3600,
+
                     min_range_width_pct: 4.0,
-                    max_range_width_pct: 8.0, 
+                    max_range_width_pct: 8.0,
+
                     max_range_boundary_diff_pct: 1.0,
+
                     min_confirmed_reversals: 3,
                     min_reversal_fraction: 0.60,
-                    boundary_proximity_pct: 15.0, 
-                    confirmation_pct: 0.6, // was 0.5
+
+                    // ====================================================
+                    // ENTRY CONFIRMATION
+                    // ====================================================
+
+                    boundary_proximity_pct: 15.0,
+                    confirmation_pct: 0.5,
                     enable_confirmations: true,
-                    range_profit_target_fraction: 0.70, 
+
+                    // true = candle-close confirmation
+                    // false = tick-based confirmation
+                    require_candle_confirmation: true,
+
                     boundary_break_buffer_pct: 0.5,
-                    stop_loss_boundary_buffer_pct: 0.5, 
-                    trade_duration_secs: Some(4800),
+
+                    // ====================================================
+                    // RISK MANAGEMENT
+                    // ====================================================
+
+                    risk: MeanReversionRiskConfig {
+                        range_profit_target_fraction: 0.70,
+                        stop_loss_boundary_buffer_pct: 0.5,
+                        trade_duration_secs: Some(4800),
+                    },
                 },
             ],
 
+            // ====================================================
+            // BREAKOUT CONFIGURATIONS
+            // ====================================================
+
+            breakout_configs: vec![
+                BreakoutConfig {
+                    id: "breakout_4h".to_string(),
+
+                    enabled: true,
+
+                    confirmation_pct: 0.5,
+
+                    // true = candle-close confirmation
+                    // false = tick-based confirmation
+                    require_candle_confirmation: true,
+
+                    // Pending breakout expires after 30 minutes.
+                    setup_expiration_secs: 1800,
+
+                    risk: BreakoutRiskConfig {
+                        take_profit_pct: 3.0,
+                        stop_loss_pct: 2.0,
+                        trade_duration_secs: Some(4800),
+                    },
+                },
+            ],
+
+            // ====================================================
+            // BREAKOUT STATE
+            // ====================================================
+
+            breakout_setups: HashMap::new(),
+
+            // ====================================================
+            // MEAN REVERSION STATE
+            // ====================================================
+
+            // Validated ranges indexed by symbol + config ID.
             mean_reversion_ranges: HashMap::new(),
 
+            // Independent boundary monitors per configuration.
             mean_reversion_boundary_monitors: HashMap::new(),
 
             // ====================================================
@@ -228,7 +285,7 @@ impl ResearchV4BacktestStrategy {
             // ====================================================
 
             black_swan_protection: BlackSwanProtection::new(
-                false,
+                true,
                 false,
                 15.0,
                 8.0,
@@ -238,9 +295,27 @@ impl ResearchV4BacktestStrategy {
             trade_cooldown: TradeCooldown::new(200),
 
             trade_duration_watchdog: TradeDurationWatchdog::new(
-                false,
+                true,
                 10.0,
                 300_000,
+            ),
+
+            // ====================================================
+            // WEIGHTED TRADE FLIP
+            // ====================================================
+
+            weighted_trade_flip: WeightedTradeFlip::new(
+                WeightedTradeFlipConfig {
+                    enabled: false,
+
+                    min_profit_percent: 0.0,
+
+                    flip_probability_after_2_wins: 0.50,
+                    flip_probability_after_3_wins: 0.75,
+                    flip_probability_after_4_wins: 0.90,
+
+                    seed: 42,
+                },
             ),
         }
     }
@@ -270,6 +345,7 @@ pub fn make_research_v4_backtest(
 
 #[async_trait::async_trait]
 impl Strategy for ResearchV4BacktestStrategy {
+
     fn name(&self) -> &'static str {
         "ResearchV4BacktestStrategy"
     }
@@ -289,13 +365,14 @@ impl Strategy for ResearchV4BacktestStrategy {
             // ====================================================
 
             AppEvent::TapeTrade(trade) => {
+
                 if self.debug_mode {
                     print_log(
                         self.debug_mode,
                         false,
                         format_args!(
                             "[RESEARCH V4 BACKTEST TRADE][{}] \
-                            price=${:.4} | size={} | timestamp_ms={}",
+                             price=${:.4} | size={} | timestamp_ms={}",
                             ev.symbol,
                             trade.price,
                             trade.size,
@@ -311,35 +388,44 @@ impl Strategy for ResearchV4BacktestStrategy {
                 // Read cached eligibility for this symbol.
                 // When eligibility checking is disabled, all symbols
                 // are considered eligible.
-                let can_trade = if self.enable_trading_eligibility_check {
-                    self.can_trade
-                        .get(&ev.symbol)
-                        .copied()
-                        .unwrap_or(false)
-                } else {
-                    true
-                };
+
+                let can_trade =
+                    if self.enable_trading_eligibility_check {
+                        self.can_trade
+                            .get(&ev.symbol)
+                            .copied()
+                            .unwrap_or(false)
+                    } else {
+                        true
+                    };
 
                 // ====================================================
-                // MONITOR MEAN REVERSION BOUNDARIES
+                // MONITOR TICK-BASED MEAN REVERSION SETUPS
                 // ====================================================
 
-                // Monitor tick prices approaching preserved
-                // range boundaries.
+                // Track boundary approaches and intrabar extremes.
                 //
-                // Lower boundary -> Potential LONG setup.
-                // Upper boundary -> Potential SHORT setup.
+                // Configurations with tick confirmation enabled
+                // can confirm reversals on this event.
                 //
-                // No trade execution occurs at this stage.
+                // Candle-based configurations continue tracking
+                // extremes but wait for a completed candle.
+
                 self.monitor_mean_reversion_boundaries(
                     &ev.symbol,
                     trade.price,
                     trade.timestamp_ms,
+                    false,
                 );
 
                 // ====================================================
-                // EXECUTE CONFIRMED MEAN REVERSION ENTRY
+                // EXECUTE CONFIRMED MEAN REVERSION ENTRIES
                 // ====================================================
+
+                // Execute newly confirmed tick-based reversals.
+                //
+                // Confirmed signals are consumed immediately,
+                // even when trading is blocked.
 
                 self.execute_mean_reversion_entry(
                     &ev.symbol,
@@ -348,13 +434,55 @@ impl Strategy for ResearchV4BacktestStrategy {
                     can_trade,
                 );
 
+                // ====================================================
+                // MONITOR TICK-BASED BREAKOUT SETUPS
+                // ====================================================
+
+                // Configurations that do not require candle
+                // confirmation can confirm on trade ticks.
+                //
+                // Each breakout configuration independently
+                // evaluates its own confirmation threshold.
+
+                self.monitor_breakout_setups(
+                    &ev.symbol,
+                    trade.price,
+                    trade.timestamp_ms,
+                    false,
+                );
+
+                // ====================================================
+                // EXECUTE CONFIRMED BREAKOUT ENTRIES
+                // ====================================================
+
+                // Execute newly confirmed tick-based breakouts
+                // using the current trade price.
+
+                self.execute_breakout_entry(
+                    &ev.symbol,
+                    trade.price,
+                    trade.timestamp_ms,
+                    can_trade,
+                );
+
+                // ====================================================
+                // CLEANUP CONSUMED BREAKOUT SETUPS
+                // ====================================================
+
+                // Remove setups already evaluated for entry.
+                // Preserve pending setups awaiting confirmation.
+
+                self.cleanup_breakout_setups(
+                    &ev.symbol,
+                );
+
+                // ====================================================
+                // FUTURE STRATEGY DEVELOPMENT
+                // ====================================================
+
                 // TODO:
-                // 1. Update active trending setups.
-                // 2. Confirm mean-reversion reversals.
-                // 3. Evaluate entry confirmations.
-                // 4. Apply trading eligibility (can_trade).
-                // 5. Validate risk/reward.
-                // 6. Submit trade intent.
+                // 1. Integrate weighted trade flipping.
+                // 2. Expand strategy-specific risk management.
             }
 
             // ====================================================
@@ -362,13 +490,14 @@ impl Strategy for ResearchV4BacktestStrategy {
             // ====================================================
 
             AppEvent::Quote(quote) => {
+
                 if self.debug_mode {
                     print_log(
                         self.debug_mode,
                         false,
                         format_args!(
                             "[RESEARCH V4 BACKTEST QUOTE][{}] \
-                            bid=${:.4} | ask=${:.4}",
+                             bid=${:.4} | ask=${:.4}",
                             ev.symbol,
                             quote.bid_price,
                             quote.ask_price,
@@ -382,10 +511,25 @@ impl Strategy for ResearchV4BacktestStrategy {
             // ====================================================
 
             AppEvent::BarClosed(bar) => {
-                let timeframe = bar.timeframe;
-                let current_ts = bar.end.timestamp_millis();
 
-                // Store completed candle.
+                // ====================================================
+                // CAPTURE CANDLE INFORMATION
+                // ====================================================
+
+                // Capture the close price before moving the candle
+                // into CandleHistory.
+
+                let timeframe = bar.timeframe;
+
+                let current_ts =
+                    bar.end.timestamp_millis();
+
+                let close_price = bar.close;
+
+                // ====================================================
+                // STORE COMPLETED CANDLE
+                // ====================================================
+
                 self.candle_history.push(bar);
 
                 // ====================================================
@@ -402,16 +546,142 @@ impl Strategy for ResearchV4BacktestStrategy {
                 // UPDATE MEAN REVERSION RANGES
                 // ====================================================
 
+                // Detect new ranges and invalidate expired
+                // or broken ranges.
+                //
+                // Confirmed range failures generate independent
+                // pending breakout setups.
+
                 self.update_mean_reversion_ranges(
                     &ev.symbol,
                     timeframe,
                     current_ts,
                 );
 
+                // ====================================================
+                // PROCESS ONE-MINUTE CANDLE CONFIRMATIONS
+                // ====================================================
+
+                if timeframe == Timeframe::ONE_MINUTE {
+
+                    // ====================================================
+                    // TRADING ELIGIBILITY
+                    // ====================================================
+
+                    // Read updated eligibility after processing
+                    // the completed candle.
+
+                    let can_trade =
+                        if self.enable_trading_eligibility_check {
+                            self.can_trade
+                                .get(&ev.symbol)
+                                .copied()
+                                .unwrap_or(false)
+                        } else {
+                            true
+                        };
+
+                    // ====================================================
+                    // MONITOR CANDLE-BASED MEAN REVERSION SETUPS
+                    // ====================================================
+
+                    // Evaluate existing boundary monitors using
+                    // the completed candle's closing price.
+                    //
+                    // Configurations requiring candle confirmation
+                    // can confirm reversals here.
+                    //
+                    // Intrabar extremes remain tick-based.
+                    // Candle closes do not create new monitors
+                    // or modify their tracked extremes.
+
+                    self.monitor_mean_reversion_boundaries(
+                        &ev.symbol,
+                        close_price,
+                        current_ts,
+                        true,
+                    );
+
+                    // ====================================================
+                    // EXECUTE CANDLE-CONFIRMED MEAN REVERSION ENTRIES
+                    // ====================================================
+
+                    // Submit newly confirmed candle-based
+                    // mean-reversion signals.
+                    //
+                    // The completed candle close is used as
+                    // the signal price.
+                    //
+                    // Actual fill prices are determined
+                    // by the engine's execution adapter.
+
+                    self.execute_mean_reversion_entry(
+                        &ev.symbol,
+                        close_price,
+                        current_ts,
+                        can_trade,
+                    );
+
+                    // ====================================================
+                    // MONITOR CANDLE-BASED BREAKOUT SETUPS
+                    // ====================================================
+
+                    // Evaluate breakout confirmations using
+                    // the completed candle's closing price.
+                    //
+                    // Configurations requiring candle confirmation
+                    // can confirm their breakouts here.
+
+                    self.monitor_breakout_setups(
+                        &ev.symbol,
+                        close_price,
+                        current_ts,
+                        true,
+                    );
+
+                    // ====================================================
+                    // EXECUTE CANDLE-CONFIRMED BREAKOUT ENTRIES
+                    // ====================================================
+
+                    // Submit newly confirmed candle-based
+                    // breakout signals.
+                    //
+                    // The completed candle close is used
+                    // as the signal price.
+                    //
+                    // The engine handles actual order execution.
+
+                    self.execute_breakout_entry(
+                        &ev.symbol,
+                        close_price,
+                        current_ts,
+                        can_trade,
+                    );
+
+                    // ====================================================
+                    // CLEANUP CONSUMED BREAKOUT SETUPS
+                    // ====================================================
+
+                    // Remove setups already evaluated for entry.
+                    //
+                    // Preserve pending setups awaiting confirmation.
+
+                    self.cleanup_breakout_setups(
+                        &ev.symbol,
+                    );
+                }
+
+                // ====================================================
+                // FUTURE STRATEGY DEVELOPMENT
+                // ====================================================
+
                 // TODO:
-                // 1. Update trend indicators.
-                // 2. Update BTC volatility protection.
-                // 3. Detect and invalidate entry setups.
+                // 1. Integrate weighted trade flipping.
+                // 2. Update additional market protection logic.
+
+                // ====================================================
+                // CANDLE DEBUG
+                // ====================================================
 
                 if self.debug_mode {
                     print_log(
@@ -419,7 +689,7 @@ impl Strategy for ResearchV4BacktestStrategy {
                         false,
                         format_args!(
                             "[RESEARCH V4 BACKTEST CANDLE][{}][{}s] \
-                            stored={} | can_trade={} | range_detected={}",
+                             stored={} | can_trade={} | range_detected={}",
                             ev.symbol,
                             timeframe.as_secs(),
                             self.candle_history.len(
@@ -431,7 +701,8 @@ impl Strategy for ResearchV4BacktestStrategy {
                                 .copied()
                                 .unwrap_or(false),
                             self.mean_reversion_ranges
-                                .contains_key(&ev.symbol),
+                                .keys()
+                                .any(|key| key.symbol == ev.symbol),
                         ),
                     );
                 }
@@ -439,7 +710,6 @@ impl Strategy for ResearchV4BacktestStrategy {
         }
     }
 }
-
 
 
 
@@ -677,20 +947,29 @@ impl ResearchV4BacktestStrategy {
     // UPDATE MEAN REVERSION RANGES
     // ============================================================
 
-    // Detects and preserves established mean-reversion ranges.
+    // Detects and preserves established mean-reversion ranges
+    // independently for every enabled configuration.
     //
     // Range lifecycle:
     // 1. Discover a valid range using rolling candle history.
     // 2. Validate range width and boundary consistency.
     // 3. Validate confirmed oscillations and reversals.
     // 4. Preserve the validated range boundaries.
-    // 5. Monitor the preserved range for breakouts.
-    // 6. Expire the range after its configured lifetime.
+    // 5. Detect confirmed range breakouts.
+    // 6. Generate independent pending breakout setups.
+    // 7. Invalidate or expire the original range.
     //
-    // Once validated, boundaries remain fixed until the range
-    // expires or is invalidated by a breakout.
+    // Each configuration maintains its own validated range
+    // and boundary monitoring state for each asset.
+    //
+    // Breakout setups are preserved independently using:
+    // (symbol, range_config_id, breakout_config_id).
+    //
+    // Individual breakout confirmation is handled separately
+    // by monitor_breakout_setups().
     //
     // Runs once per completed one-minute candle.
+
     fn update_mean_reversion_ranges(
         &mut self,
         symbol: &str,
@@ -698,32 +977,6 @@ impl ResearchV4BacktestStrategy {
         current_ts: i64,
     ) {
         if timeframe != Timeframe::ONE_MINUTE {
-            return;
-        }
-
-        // Baseline: use the first enabled configuration.
-        // TODO: Evaluate all enabled configurations independently.
-        let Some(config) = self.mean_reversion_configs
-            .iter()
-            .find(|config| config.enabled)
-        else {
-            self.mean_reversion_ranges.remove(symbol);
-            self.mean_reversion_boundary_monitors.remove(symbol);
-            return;
-        };
-
-        let short_period =
-            (config.short_window_secs / 60) as usize;
-
-        let long_period =
-            (config.long_window_secs / 60) as usize;
-
-        if short_period == 0
-            || long_period == 0
-            || short_period > long_period
-        {
-            self.mean_reversion_ranges.remove(symbol);
-            self.mean_reversion_boundary_monitors.remove(symbol);
             return;
         }
 
@@ -735,80 +988,417 @@ impl ResearchV4BacktestStrategy {
             symbol,
             Timeframe::ONE_MINUTE,
         ) else {
-            self.mean_reversion_ranges.remove(symbol);
-            self.mean_reversion_boundary_monitors.remove(symbol);
             return;
         };
 
-        if bars.len() < long_period {
-            self.mean_reversion_ranges.remove(symbol);
-            self.mean_reversion_boundary_monitors.remove(symbol);
-            return;
-        }
-
         // ====================================================
-        // CHECK EXISTING VALIDATED RANGE
+        // EVALUATE ALL MEAN REVERSION CONFIGURATIONS
         // ====================================================
 
-        if let Some(existing_range) =
-            self.mean_reversion_ranges.get(symbol)
-        {
-            let latest_bar = bars.back().unwrap();
+        for config in self.mean_reversion_configs.iter() {
+
+            let key = StrategyConfigKey::new(
+                symbol,
+                &config.id,
+            );
 
             // ====================================================
-            // CHECK RANGE EXPIRATION
+            // CHECK CONFIGURATION STATUS
             // ====================================================
 
-            let elapsed_ms =
-                current_ts.saturating_sub(
-                    existing_range.detected_ts_ms,
-                );
+            if !config.enabled {
+                self.mean_reversion_ranges.remove(&key);
+                self.mean_reversion_boundary_monitors.remove(&key);
+                continue;
+            }
 
-            let max_lifetime_ms =
-                (config.long_window_secs as i64)
-                    .saturating_mul(1000);
+            let short_period =
+                (config.short_window_secs / 60) as usize;
 
-            let expired =
-                elapsed_ms >= max_lifetime_ms;
+            let long_period =
+                (config.long_window_secs / 60) as usize;
 
-            // ====================================================
-            // CHECK RANGE BREAKOUT
-            // ====================================================
+            if short_period == 0
+                || long_period == 0
+                || short_period > long_period
+            {
+                self.mean_reversion_ranges.remove(&key);
+                self.mean_reversion_boundary_monitors.remove(&key);
+                continue;
+            }
 
-            let breakout_buffer =
-                config.boundary_break_buffer_pct / 100.0;
-
-            let upper_breakout_price =
-                existing_range.upper_boundary
-                    * (1.0 + breakout_buffer);
-
-            let lower_breakout_price =
-                existing_range.lower_boundary
-                    * (1.0 - breakout_buffer);
-
-            // Use completed candle close to confirm a breakout.
-            // Temporary intrabar wicks do not invalidate a range.
-            let breakout_above =
-                latest_bar.close > upper_breakout_price;
-
-            let breakout_below =
-                latest_bar.close < lower_breakout_price;
-
-            let breakout =
-                breakout_above || breakout_below;
-
-            // ====================================================
-            // PRESERVE VALID RANGE
-            // ====================================================
-
-            if !expired && !breakout {
-                // The validated range remains active.
-                // Its original boundaries are preserved.
-                return;
+            if bars.len() < long_period {
+                self.mean_reversion_ranges.remove(&key);
+                self.mean_reversion_boundary_monitors.remove(&key);
+                continue;
             }
 
             // ====================================================
-            // INVALIDATE EXISTING RANGE
+            // CHECK EXISTING VALIDATED RANGE
+            // ====================================================
+
+            if let Some(existing_range) =
+                self.mean_reversion_ranges.get(&key)
+            {
+                let latest_bar = bars.back().unwrap();
+
+                // ====================================================
+                // CHECK RANGE EXPIRATION
+                // ====================================================
+
+                let elapsed_ms =
+                    current_ts.saturating_sub(
+                        existing_range.detected_ts_ms,
+                    );
+
+                let max_lifetime_ms =
+                    (config.long_window_secs as i64)
+                        .saturating_mul(1000);
+
+                let expired =
+                    elapsed_ms >= max_lifetime_ms;
+
+                // ====================================================
+                // CHECK RANGE BREAKOUT
+                // ====================================================
+
+                let breakout_buffer =
+                    config.boundary_break_buffer_pct / 100.0;
+
+                let upper_breakout_price =
+                    existing_range.upper_boundary
+                        * (1.0 + breakout_buffer);
+
+                let lower_breakout_price =
+                    existing_range.lower_boundary
+                        * (1.0 - breakout_buffer);
+
+                // Use completed candle close to confirm breakout.
+                // Temporary intrabar wicks do not invalidate ranges.
+
+                let breakout_above =
+                    latest_bar.close > upper_breakout_price;
+
+                let breakout_below =
+                    latest_bar.close < lower_breakout_price;
+
+                let breakout =
+                    breakout_above || breakout_below;
+
+                // ====================================================
+                // PRESERVE VALID RANGE
+                // ====================================================
+
+                if !expired && !breakout {
+                    continue;
+                }
+
+                // ====================================================
+                // CREATE PENDING BREAKOUT SETUPS
+                // ====================================================
+
+                // Only confirmed range failures generate
+                // breakout setups.
+                //
+                // Expiration alone does not create a breakout.
+                //
+                // Every enabled breakout configuration receives
+                // an independent pending setup.
+                //
+                // Each configuration will later confirm using
+                // its own confirmation threshold.
+
+                if breakout && !expired {
+
+                    // ====================================================
+                    // DETERMINE BREAKOUT DIRECTION
+                    // ====================================================
+
+                    let direction =
+                        if breakout_above {
+                            BreakoutDirection::Bullish
+                        } else {
+                            BreakoutDirection::Bearish
+                        };
+
+                    // ====================================================
+                    // EVALUATE BREAKOUT CONFIGURATIONS
+                    // ====================================================
+
+                    for breakout_config in self.breakout_configs.iter() {
+
+                        if !breakout_config.enabled {
+                            continue;
+                        }
+
+                        // ====================================================
+                        // VALIDATE BREAKOUT CONFIGURATION
+                        // ====================================================
+
+                        if !breakout_config.confirmation_pct.is_finite()
+                            || breakout_config.confirmation_pct < 0.0
+                        {
+                            continue;
+                        }
+
+                        // ====================================================
+                        // BUILD BREAKOUT CONFIGURATION KEY
+                        // ====================================================
+
+                        let breakout_key = BreakoutConfigKey::new(
+                            symbol,
+                            &config.id,
+                            &breakout_config.id,
+                        );
+
+                        // ====================================================
+                        // PRESERVE PENDING BREAKOUT SETUP
+                        // ====================================================
+
+                        self.breakout_setups.insert(
+                            breakout_key,
+                            BreakoutSetup {
+                                direction,
+
+                                upper_boundary:
+                                    existing_range.upper_boundary,
+
+                                lower_boundary:
+                                    existing_range.lower_boundary,
+
+                                breakout_price:
+                                    latest_bar.close,
+
+                                breakout_ts_ms:
+                                    current_ts,
+
+                                confirmation_price: None,
+                                confirmed_ts_ms: None,
+
+                                confirmed: false,
+                                trade_submitted: false,
+                            },
+                        );
+
+                        // ====================================================
+                        // BREAKOUT DETECTION DEBUG
+                        // ====================================================
+
+                        if self.debug_mode {
+                            print_log(
+                                self.debug_mode,
+                                true,
+                                format_args!(
+                                    "[RESEARCH V4 BACKTEST BREAKOUT DETECTED]\
+                                     [{}][{}][{}] \
+                                     DIRECTION={:?} | \
+                                     BREAKOUT_PRICE=${:.6} | \
+                                     RANGE_LOW=${:.6} | \
+                                     RANGE_HIGH=${:.6} | \
+                                     CONFIRMATION={:.3}% | \
+                                     STATUS=PENDING",
+                                    symbol,
+                                    config.id,
+                                    breakout_config.id,
+                                    direction,
+                                    latest_bar.close,
+                                    existing_range.lower_boundary,
+                                    existing_range.upper_boundary,
+                                    breakout_config.confirmation_pct,
+                                ),
+                            );
+                        }
+                    }
+                }
+
+                // ====================================================
+                // INVALIDATE EXISTING RANGE
+                // ====================================================
+
+                if self.debug_mode {
+                    print_log(
+                        self.debug_mode,
+                        true,
+                        format_args!(
+                            "[RESEARCH V4 BACKTEST RANGE INVALIDATED][{}][{}] \
+                             REASON={} | \
+                             LOW=${:.4} | HIGH=${:.4} | \
+                             AGE={}s",
+                            symbol,
+                            config.id,
+                            if breakout {
+                                "BREAKOUT"
+                            } else {
+                                "EXPIRED"
+                            },
+                            existing_range.lower_boundary,
+                            existing_range.upper_boundary,
+                            elapsed_ms / 1000,
+                        ),
+                    );
+                }
+
+                // ====================================================
+                // REMOVE INVALIDATED RANGE
+                // ====================================================
+
+                // Remove only this configuration's range
+                // and its associated mean-reversion monitor.
+                //
+                // Pending breakout setups remain preserved
+                // independently of the original range.
+
+                self.mean_reversion_ranges.remove(&key);
+
+                self.mean_reversion_boundary_monitors.remove(&key);
+
+                // Do not immediately establish a replacement range
+                // using the candle that invalidated this range.
+                //
+                // Other configurations continue independently.
+
+                continue;
+            }
+
+            // ====================================================
+            // COLLECT ROLLING CANDLE HISTORY
+            // ====================================================
+
+            let bars_vec: Vec<Bar> = bars
+                .iter()
+                .rev()
+                .take(long_period)
+                .cloned()
+                .collect::<Vec<_>>()
+                .into_iter()
+                .rev()
+                .collect();
+
+            // ====================================================
+            // CALCULATE LONG-WINDOW BOUNDARIES
+            // ====================================================
+
+            let long_range_high = bars_vec
+                .iter()
+                .map(|bar| bar.high)
+                .fold(f64::NEG_INFINITY, f64::max);
+
+            let long_range_low = bars_vec
+                .iter()
+                .map(|bar| bar.low)
+                .fold(f64::INFINITY, f64::min);
+
+            // ====================================================
+            // CALCULATE SHORT-WINDOW BOUNDARIES
+            // ====================================================
+
+            let short_bars = &bars_vec[
+                bars_vec.len() - short_period..
+            ];
+
+            let short_range_high = short_bars
+                .iter()
+                .map(|bar| bar.high)
+                .fold(f64::NEG_INFINITY, f64::max);
+
+            let short_range_low = short_bars
+                .iter()
+                .map(|bar| bar.low)
+                .fold(f64::INFINITY, f64::min);
+
+            // ====================================================
+            // VALIDATE PRICE BOUNDARIES
+            // ====================================================
+
+            if !long_range_high.is_finite()
+                || !long_range_low.is_finite()
+                || long_range_low <= 0.0
+                || long_range_high <= long_range_low
+            {
+                continue;
+            }
+
+            // ====================================================
+            // CALCULATE RANGE WIDTH
+            // ====================================================
+
+            let range_width_pct =
+                ((long_range_high - long_range_low)
+                    / long_range_low) * 100.0;
+
+            if range_width_pct < config.min_range_width_pct
+                || range_width_pct > config.max_range_width_pct
+            {
+                continue;
+            }
+
+            // ====================================================
+            // COMPARE RANGE BOUNDARIES
+            // ====================================================
+
+            let upper_boundary_diff_pct =
+                ((short_range_high - long_range_high).abs()
+                    / long_range_high) * 100.0;
+
+            let lower_boundary_diff_pct =
+                ((short_range_low - long_range_low).abs()
+                    / long_range_low) * 100.0;
+
+            let boundaries_match =
+                upper_boundary_diff_pct
+                    <= config.max_range_boundary_diff_pct
+                && lower_boundary_diff_pct
+                    <= config.max_range_boundary_diff_pct;
+
+            if !boundaries_match {
+                continue;
+            }
+
+            // ====================================================
+            // VALIDATE RANGE OSCILLATIONS
+            // ====================================================
+
+            let valid_oscillations =
+                Self::validate_mean_reversion_oscillations(
+                    &bars_vec,
+                    long_range_low,
+                    long_range_high,
+                    config.boundary_proximity_pct,
+                    config.min_reversal_fraction,
+                    config.min_confirmed_reversals,
+                );
+
+            if !valid_oscillations {
+                continue;
+            }
+
+            // ====================================================
+            // CACHE VALIDATED RANGE
+            // ====================================================
+
+            let detected_range = MeanReversionRange {
+                upper_boundary: long_range_high,
+                lower_boundary: long_range_low,
+                range_width_pct,
+                short_range_high,
+                short_range_low,
+                long_range_high,
+                long_range_low,
+                detected_ts_ms: current_ts,
+            };
+
+            self.mean_reversion_ranges.insert(
+                key.clone(),
+                detected_range,
+            );
+
+            // Clear stale boundary monitoring state
+            // belonging only to this configuration.
+
+            self.mean_reversion_boundary_monitors.remove(&key);
+
+            // ====================================================
+            // RANGE DETECTION DEBUG
             // ====================================================
 
             if self.debug_mode {
@@ -816,196 +1406,25 @@ impl ResearchV4BacktestStrategy {
                     self.debug_mode,
                     true,
                     format_args!(
-                        "[RESEARCH V4 BACKTEST RANGE INVALIDATED][{}] \
-                         REASON={} | \
+                        "[RESEARCH V4 BACKTEST RANGE VALIDATED][{}][{}] \
                          LOW=${:.4} | HIGH=${:.4} | \
-                         AGE={}s",
+                         WIDTH={:.3}% | \
+                         SHORT_LOW=${:.4} | SHORT_HIGH=${:.4} | \
+                         LONG_LOW=${:.4} | LONG_HIGH=${:.4} | \
+                         LIFETIME={}s",
                         symbol,
-                        if breakout {
-                            "BREAKOUT"
-                        } else {
-                            "EXPIRED"
-                        },
-                        existing_range.lower_boundary,
-                        existing_range.upper_boundary,
-                        elapsed_ms / 1000,
+                        config.id,
+                        long_range_low,
+                        long_range_high,
+                        range_width_pct,
+                        short_range_low,
+                        short_range_high,
+                        long_range_low,
+                        long_range_high,
+                        config.long_window_secs,
                     ),
                 );
             }
-
-            // Remove the validated range and any pending
-            // boundary approach associated with that range.
-            self.mean_reversion_ranges.remove(symbol);
-            self.mean_reversion_boundary_monitors.remove(symbol);
-
-            // Do not immediately establish a replacement range
-            // using the same candle that invalidated the old one.
-            //
-            // The next completed candle can initiate discovery.
-            return;
-        }
-
-        // ====================================================
-        // COLLECT ROLLING CANDLE HISTORY
-        // ====================================================
-
-        let bars_vec: Vec<Bar> = bars
-            .iter()
-            .rev()
-            .take(long_period)
-            .cloned()
-            .collect::<Vec<_>>()
-            .into_iter()
-            .rev()
-            .collect();
-
-        // ====================================================
-        // CALCULATE LONG-WINDOW BOUNDARIES
-        // ====================================================
-
-        let long_range_high = bars_vec
-            .iter()
-            .map(|bar| bar.high)
-            .fold(f64::NEG_INFINITY, f64::max);
-
-        let long_range_low = bars_vec
-            .iter()
-            .map(|bar| bar.low)
-            .fold(f64::INFINITY, f64::min);
-
-        // ====================================================
-        // CALCULATE SHORT-WINDOW BOUNDARIES
-        // ====================================================
-
-        let short_bars = &bars_vec[
-            bars_vec.len() - short_period..
-        ];
-
-        let short_range_high = short_bars
-            .iter()
-            .map(|bar| bar.high)
-            .fold(f64::NEG_INFINITY, f64::max);
-
-        let short_range_low = short_bars
-            .iter()
-            .map(|bar| bar.low)
-            .fold(f64::INFINITY, f64::min);
-
-        // ====================================================
-        // VALIDATE PRICE BOUNDARIES
-        // ====================================================
-
-        if !long_range_high.is_finite()
-            || !long_range_low.is_finite()
-            || long_range_low <= 0.0
-            || long_range_high <= long_range_low
-        {
-            return;
-        }
-
-        // ====================================================
-        // CALCULATE RANGE WIDTH
-        // ====================================================
-
-        let range_width_pct =
-            ((long_range_high - long_range_low)
-                / long_range_low) * 100.0;
-
-        if range_width_pct < config.min_range_width_pct
-            || range_width_pct > config.max_range_width_pct
-        {
-            return;
-        }
-
-        // ====================================================
-        // COMPARE RANGE BOUNDARIES
-        // ====================================================
-
-        let upper_boundary_diff_pct =
-            ((short_range_high - long_range_high).abs()
-                / long_range_high) * 100.0;
-
-        let lower_boundary_diff_pct =
-            ((short_range_low - long_range_low).abs()
-                / long_range_low) * 100.0;
-
-        let boundaries_match =
-            upper_boundary_diff_pct
-                <= config.max_range_boundary_diff_pct
-            && lower_boundary_diff_pct
-                <= config.max_range_boundary_diff_pct;
-
-        if !boundaries_match {
-            return;
-        }
-
-        // ====================================================
-        // VALIDATE RANGE OSCILLATIONS
-        // ====================================================
-
-        let valid_oscillations =
-            Self::validate_mean_reversion_oscillations(
-                &bars_vec,
-                long_range_low,
-                long_range_high,
-                config.boundary_proximity_pct,
-                config.min_reversal_fraction,
-                config.min_confirmed_reversals,
-            );
-
-        if !valid_oscillations {
-            return;
-        }
-
-        // ====================================================
-        // CACHE VALIDATED RANGE
-        // ====================================================
-
-        let detected_range = MeanReversionRange {
-            upper_boundary: long_range_high,
-            lower_boundary: long_range_low,
-            range_width_pct,
-            short_range_high,
-            short_range_low,
-            long_range_high,
-            long_range_low,
-            detected_ts_ms: current_ts,
-        };
-
-        self.mean_reversion_ranges.insert(
-            symbol.to_string(),
-            detected_range,
-        );
-
-        // Clear any stale boundary monitoring state.
-        self.mean_reversion_boundary_monitors.remove(symbol);
-
-        // ====================================================
-        // RANGE DETECTION DEBUG
-        // ====================================================
-
-        if self.debug_mode {
-            print_log(
-                self.debug_mode,
-                true,
-                format_args!(
-                    "[RESEARCH V4 BACKTEST RANGE VALIDATED][{}] \
-                     LOW=${:.4} | HIGH=${:.4} | \
-                     WIDTH={:.3}% | \
-                     SHORT_LOW=${:.4} | SHORT_HIGH=${:.4} | \
-                     LONG_LOW=${:.4} | LONG_HIGH=${:.4} | \
-                     LIFETIME={}s",
-                    symbol,
-                    long_range_low,
-                    long_range_high,
-                    range_width_pct,
-                    short_range_low,
-                    short_range_high,
-                    long_range_low,
-                    long_range_high,
-                    config.long_window_secs,
-                ),
-            );
         }
     }
 }
@@ -1219,26 +1638,33 @@ impl ResearchV4BacktestStrategy {
     // MONITOR MEAN REVERSION RANGE BOUNDARIES
     // ============================================================
 
-    // Monitors tick prices approaching preserved range boundaries
-    // and confirms reversals from observed price extremes.
+    // Monitors preserved range boundaries independently for
+    // every enabled mean-reversion configuration.
     //
     // Lower boundary -> Potential LONG setup.
     // Upper boundary -> Potential SHORT setup.
     //
-    // Boundary proximity is calculated as a percentage of the
-    // established range width.
+    // Boundary detection:
+    // - Uses trade ticks to detect boundary approaches.
+    // - Tracks intrabar price extremes using trade ticks.
+    // - Cancels pending setups on excessive breakouts.
+    // - Cancels setups when the opposite boundary is reached.
     //
-    // Reversal confirmation is calculated as a percentage
-    // of the observed extreme price.
-    //
-    // Confirmations must occur inside the validated range.
+    // Reversal confirmation:
+    // - enable_confirmations controls whether a reversal is required.
+    // - require_candle_confirmation selects candle or tick confirmation.
+    // - Candle confirmation uses completed one-minute candle closes.
+    // - Tick confirmation uses individual trade prices.
+    // - Confirmation must occur inside the validated range.
     //
     // Trade execution is handled separately.
+
     fn monitor_mean_reversion_boundaries(
         &mut self,
         symbol: &str,
         price: f64,
         current_ts: i64,
+        candle_closed: bool,
     ) {
         // ====================================================
         // VALIDATE PRICE
@@ -1249,233 +1675,647 @@ impl ResearchV4BacktestStrategy {
         }
 
         // ====================================================
-        // SKIP SYMBOLS WITH ACTIVE TRADES
+        // EVALUATE ALL MEAN REVERSION CONFIGURATIONS
         // ====================================================
 
-        // Includes Opening, Open, and Closing trades.
-        let symbol_has_active_trade = {
-            let view = self.rx_view.borrow();
+        for config in self.mean_reversion_configs.iter() {
 
-            view.trades.has_active_trade_for_strategy_symbol(
-                self.name(),
+            let key = StrategyConfigKey::new(
                 symbol,
-            )
-        };
+                &config.id,
+            );
 
-        if symbol_has_active_trade {
-            // Remove any pending or previously confirmed setup.
-            self.mean_reversion_boundary_monitors.remove(symbol);
-            return;
-        }
+            // ====================================================
+            // CHECK CONFIGURATION STATUS
+            // ====================================================
 
-        // ====================================================
-        // GET ENABLED CONFIGURATION
-        // ====================================================
-
-        let Some(config) = self.mean_reversion_configs
-            .iter()
-            .find(|config| config.enabled)
-        else {
-            self.mean_reversion_boundary_monitors.remove(symbol);
-            return;
-        };
-
-        if !config.confirmation_pct.is_finite()
-            || config.confirmation_pct <= 0.0
-            || !config.boundary_proximity_pct.is_finite()
-            || !(0.0..=50.0).contains(&config.boundary_proximity_pct)
-            || !config.boundary_break_buffer_pct.is_finite()
-            || config.boundary_break_buffer_pct < 0.0
-        {
-            self.mean_reversion_boundary_monitors.remove(symbol);
-            return;
-        }
-
-        let confirmation_pct = config.confirmation_pct;
-        let enable_confirmations = config.enable_confirmations;
-        let boundary_proximity_pct = config.boundary_proximity_pct;
-        let breakout_buffer_pct = config.boundary_break_buffer_pct;
-
-        // ====================================================
-        // GET PRESERVED RANGE
-        // ====================================================
-
-        let Some(range) = self.mean_reversion_ranges.get(symbol)
-        else {
-            self.mean_reversion_boundary_monitors.remove(symbol);
-            return;
-        };
-
-        let lower_boundary = range.lower_boundary;
-        let upper_boundary = range.upper_boundary;
-
-        // ====================================================
-        // CALCULATE BOUNDARY PROXIMITY
-        // ====================================================
-
-        let range_width = upper_boundary - lower_boundary;
-
-        if !range_width.is_finite() || range_width <= 0.0 {
-            self.mean_reversion_boundary_monitors.remove(symbol);
-            return;
-        }
-
-        let proximity =
-            range_width * (boundary_proximity_pct / 100.0);
-
-        let lower_zone = lower_boundary + proximity;
-        let upper_zone = upper_boundary - proximity;
-
-        // ====================================================
-        // CALCULATE BREAKOUT LIMITS
-        // ====================================================
-
-        let breakout_buffer = breakout_buffer_pct / 100.0;
-
-        let upper_breakout_price =
-            upper_boundary * (1.0 + breakout_buffer);
-
-        let lower_breakout_price =
-            lower_boundary * (1.0 - breakout_buffer);
-
-        // ====================================================
-        // CANCEL SETUP ON EXCESSIVE BREAKOUT
-        // ====================================================
-
-        // An intrabar breakout cancels the pending setup.
-        // The validated range itself remains active until
-        // candle-level invalidation confirms the breakout.
-
-        if price > upper_breakout_price
-            || price < lower_breakout_price
-        {
-            if self.mean_reversion_boundary_monitors
-                .remove(symbol)
-                .is_some()
-                && self.debug_mode
-            {
-                print_log(
-                    self.debug_mode,
-                    true,
-                    format_args!(
-                        "[RESEARCH V4 BACKTEST SETUP CANCELLED][{}] \
-                         REASON=TICK_BREAKOUT | PRICE=${:.4} | \
-                         LOW=${:.4} | HIGH=${:.4}",
-                        symbol,
-                        price,
-                        lower_boundary,
-                        upper_boundary,
-                    ),
-                );
+            if !config.enabled {
+                self.mean_reversion_boundary_monitors.remove(&key);
+                continue;
             }
 
-            return;
-        }
+            if !config.confirmation_pct.is_finite()
+                || config.confirmation_pct <= 0.0
+                || !config.boundary_proximity_pct.is_finite()
+                || !(0.0..=50.0).contains(
+                    &config.boundary_proximity_pct
+                )
+                || !config.boundary_break_buffer_pct.is_finite()
+                || config.boundary_break_buffer_pct < 0.0
+            {
+                self.mean_reversion_boundary_monitors.remove(&key);
+                continue;
+            }
 
-        // ====================================================
-        // DETERMINE CURRENT BOUNDARY
-        // ====================================================
+            let confirmation_pct = config.confirmation_pct;
 
-        let current_boundary =
-            if price < lower_boundary || price > upper_boundary {
-                None
-            } else if price <= lower_zone {
-                Some(MeanReversionBoundary::Lower)
-            } else if price >= upper_zone {
-                Some(MeanReversionBoundary::Upper)
-            } else {
-                None
+            let enable_confirmations =
+                config.enable_confirmations;
+
+            let require_candle_confirmation =
+                config.require_candle_confirmation;
+
+            let boundary_proximity_pct =
+                config.boundary_proximity_pct;
+
+            let breakout_buffer_pct =
+                config.boundary_break_buffer_pct;
+
+            // ====================================================
+            // GET PRESERVED RANGE
+            // ====================================================
+
+            let Some(range) =
+                self.mean_reversion_ranges.get(&key)
+            else {
+                self.mean_reversion_boundary_monitors.remove(&key);
+                continue;
             };
 
-        // ====================================================
-        // UPDATE EXISTING SETUP
-        // ====================================================
+            let lower_boundary = range.lower_boundary;
+            let upper_boundary = range.upper_boundary;
 
-        if let Some(monitor) =
-            self.mean_reversion_boundary_monitors.get_mut(symbol)
-        {
-            // Confirmed setups are evaluated for execution
-            // on their confirmation tick.
+            // ====================================================
+            // CALCULATE BOUNDARY PROXIMITY
+            // ====================================================
+
+            let range_width =
+                upper_boundary - lower_boundary;
+
+            if !range_width.is_finite()
+                || range_width <= 0.0
+            {
+                self.mean_reversion_boundary_monitors.remove(&key);
+                continue;
+            }
+
+            let proximity =
+                range_width * (boundary_proximity_pct / 100.0);
+
+            let lower_zone =
+                lower_boundary + proximity;
+
+            let upper_zone =
+                upper_boundary - proximity;
+
+            // ====================================================
+            // CALCULATE BREAKOUT LIMITS
+            // ====================================================
+
+            let breakout_buffer =
+                breakout_buffer_pct / 100.0;
+
+            let upper_breakout_price =
+                upper_boundary * (1.0 + breakout_buffer);
+
+            let lower_breakout_price =
+                lower_boundary * (1.0 - breakout_buffer);
+
+            // ====================================================
+            // CANCEL SETUP ON EXCESSIVE BREAKOUT
+            // ====================================================
+
+            // Intrabar breakout cancellation remains tick-based.
             //
-            // If execution is unavailable, the setup remains
-            // consumed and cannot trigger a delayed entry.
-            if monitor.confirmed {
-                return;
+            // The validated range itself remains active until
+            // candle-level invalidation confirms the breakout.
+
+            if !candle_closed
+                && (price > upper_breakout_price
+                    || price < lower_breakout_price)
+            {
+                if self.mean_reversion_boundary_monitors
+                    .remove(&key)
+                    .is_some()
+                    && self.debug_mode
+                {
+                    print_log(
+                        self.debug_mode,
+                        true,
+                        format_args!(
+                            "[RESEARCH V4 BACKTEST SETUP CANCELLED][{}][{}] \
+                             REASON=TICK_BREAKOUT | PRICE=${:.4} | \
+                             LOW=${:.4} | HIGH=${:.4}",
+                            symbol,
+                            config.id,
+                            price,
+                            lower_boundary,
+                            upper_boundary,
+                        ),
+                    );
+                }
+
+                continue;
             }
 
             // ====================================================
-            // CANCEL IF OPPOSITE BOUNDARY IS REACHED
+            // DETERMINE CURRENT BOUNDARY
             // ====================================================
 
-            if let Some(boundary) = current_boundary {
-                if boundary != monitor.boundary {
+            let current_boundary =
+                if price < lower_boundary
+                    || price > upper_boundary
+                {
+                    None
+                } else if price <= lower_zone {
+                    Some(MeanReversionBoundary::Lower)
+                } else if price >= upper_zone {
+                    Some(MeanReversionBoundary::Upper)
+                } else {
+                    None
+                };
+
+            // ====================================================
+            // UPDATE EXISTING SETUP
+            // ====================================================
+
+            if let Some(monitor) =
+                self.mean_reversion_boundary_monitors.get_mut(&key)
+            {
+                // Confirmed setups are consumed by the
+                // entry execution function.
+                //
+                // Never reconfirm an existing setup.
+
+                if monitor.confirmed {
+                    continue;
+                }
+
+                // ====================================================
+                // CANCEL IF OPPOSITE BOUNDARY IS REACHED
+                // ====================================================
+
+                // Only ticks modify boundary monitoring state.
+
+                if !candle_closed {
+
+                    if let Some(boundary) = current_boundary {
+
+                        if boundary != monitor.boundary {
+
+                            if self.debug_mode {
+                                print_log(
+                                    self.debug_mode,
+                                    true,
+                                    format_args!(
+                                        "[RESEARCH V4 BACKTEST SETUP CANCELLED][{}][{}] \
+                                         REASON=OPPOSITE_BOUNDARY | \
+                                         PRICE=${:.4}",
+                                        symbol,
+                                        config.id,
+                                        price,
+                                    ),
+                                );
+                            }
+
+                            self.mean_reversion_boundary_monitors
+                                .remove(&key);
+
+                            continue;
+                        }
+                    }
+
+                    // ====================================================
+                    // TRACK PRICE EXTREME
+                    // ====================================================
+
+                    // LONG: Track the lowest observed price.
+                    // SHORT: Track the highest observed price.
+                    //
+                    // Candle-close events must not modify extremes.
+
+                    match monitor.boundary {
+
+                        MeanReversionBoundary::Lower => {
+                            monitor.extreme_price =
+                                monitor.extreme_price.min(price);
+                        }
+
+                        MeanReversionBoundary::Upper => {
+                            monitor.extreme_price =
+                                monitor.extreme_price.max(price);
+                        }
+                    }
+                }
+
+                // ====================================================
+                // CHECK CONFIRMATION MODE
+                // ====================================================
+
+                // When reversal confirmation is enabled:
+                //
+                // Candle mode -> Only evaluate candle closes.
+                // Tick mode   -> Only evaluate trade ticks.
+                //
+                // When reversal confirmation is disabled,
+                // preserve immediate tick-based confirmation.
+
+                let confirmation_event_allowed =
+                    if !enable_confirmations {
+                        !candle_closed
+                    } else if require_candle_confirmation {
+                        candle_closed
+                    } else {
+                        !candle_closed
+                    };
+
+                if !confirmation_event_allowed {
+                    continue;
+                }
+
+                // ====================================================
+                // CHECK REVERSAL CONFIRMATION
+                // ====================================================
+
+                let reversal_pct =
+                    match monitor.boundary {
+
+                        MeanReversionBoundary::Lower => {
+                            ((price - monitor.extreme_price)
+                                / monitor.extreme_price) * 100.0
+                        }
+
+                        MeanReversionBoundary::Upper => {
+                            ((monitor.extreme_price - price)
+                                / monitor.extreme_price) * 100.0
+                        }
+                    };
+
+                // ====================================================
+                // REQUIRE CONFIRMATION INSIDE RANGE
+                // ====================================================
+
+                let inside_range =
+                    price >= lower_boundary
+                        && price <= upper_boundary;
+
+                if inside_range
+                    && (!enable_confirmations
+                        || reversal_pct >= confirmation_pct)
+                {
+                    monitor.confirmed = true;
+
+                    // ====================================================
+                    // CONFIRMATION DEBUG
+                    // ====================================================
+
                     if self.debug_mode {
                         print_log(
                             self.debug_mode,
                             true,
                             format_args!(
-                                "[RESEARCH V4 BACKTEST SETUP CANCELLED][{}] \
-                                 REASON=OPPOSITE_BOUNDARY | \
-                                 PRICE=${:.4}",
+                                "[RESEARCH V4 BACKTEST REVERSAL CONFIRMED][{}][{}] \
+                                 SIDE={} | PRICE=${:.4} | \
+                                 EXTREME=${:.4} | REVERSAL={:.3}% | \
+                                 REQUIRED={:.3}% | MODE={}",
                                 symbol,
+                                config.id,
+                                match monitor.boundary {
+                                    MeanReversionBoundary::Lower => "LONG",
+                                    MeanReversionBoundary::Upper => "SHORT",
+                                },
                                 price,
+                                monitor.extreme_price,
+                                reversal_pct,
+                                confirmation_pct,
+                                if !enable_confirmations {
+                                    "NONE"
+                                } else if require_candle_confirmation {
+                                    "CANDLE"
+                                } else {
+                                    "TICK"
+                                },
+                            ),
+                        );
+                    }
+                }
+
+                continue;
+            }
+
+            // ====================================================
+            // DETECT NEW BOUNDARY APPROACH
+            // ====================================================
+
+            // New boundary setups are detected only on ticks.
+            //
+            // Candle-close events can confirm existing setups,
+            // but cannot create new ones.
+
+            if candle_closed {
+                continue;
+            }
+
+            let Some(boundary) = current_boundary else {
+                continue;
+            };
+
+            self.mean_reversion_boundary_monitors.insert(
+                key,
+                MeanReversionBoundaryMonitor {
+                    boundary,
+                    detected_ts_ms: current_ts,
+                    detected_price: price,
+                    extreme_price: price,
+                    confirmed: false,
+                    trade_submitted: false,
+                },
+            );
+
+            // ====================================================
+            // BOUNDARY APPROACH DEBUG
+            // ====================================================
+
+            if self.debug_mode {
+                print_log(
+                    self.debug_mode,
+                    true,
+                    format_args!(
+                        "[RESEARCH V4 BACKTEST BOUNDARY APPROACH][{}][{}] \
+                         SIDE={:?} | PRICE=${:.4} | \
+                         LOW=${:.4} | HIGH=${:.4} | \
+                         PROXIMITY={:.1}%",
+                        symbol,
+                        config.id,
+                        boundary,
+                        price,
+                        lower_boundary,
+                        upper_boundary,
+                        boundary_proximity_pct,
+                    ),
+                );
+            }
+        }
+    }
+}
+
+
+
+
+impl ResearchV4BacktestStrategy {
+
+    // ============================================================
+    // MONITOR BREAKOUT SETUPS
+    // ============================================================
+
+    /// Independently monitors pending breakout setups for every
+    /// enabled breakout configuration.
+    ///
+    /// Breakout lifecycle:
+    /// 1. A validated mean-reversion range fails.
+    /// 2. A pending breakout setup is created.
+    /// 3. Monitor price against the configuration's threshold.
+    /// 4. Confirm the breakout when its conditions are satisfied.
+    /// 5. Cancel the setup if price returns inside the range.
+    /// 6. Expire the setup if confirmation takes too long.
+    ///
+    /// Confirmation:
+    /// - Candle-based configurations require a completed candle.
+    /// - Tick-based configurations can confirm intrabar.
+    /// - Each configuration uses its own confirmation percentage.
+    ///
+    /// Cancellation:
+    /// - Bullish setups cancel when price returns inside the range.
+    /// - Bearish setups cancel when price returns inside the range.
+    /// - Confirmed setups remain available for entry execution.
+    ///
+    /// Expiration:
+    /// - Pending setups expire after their configured lifetime.
+    /// - Confirmed setups are not expired by this function.
+    ///
+    /// This function does not submit trades.
+    /// Trade execution is handled separately.
+
+    fn monitor_breakout_setups(
+        &mut self,
+        symbol: &str,
+        price: f64,
+        current_ts: i64,
+        candle_closed: bool,
+    ) {
+        // ====================================================
+        // VALIDATE PRICE
+        // ====================================================
+
+        if !price.is_finite() || price <= 0.0 {
+            return;
+        }
+
+        // ====================================================
+        // EVALUATE ALL BREAKOUT CONFIGURATIONS
+        // ====================================================
+
+        for config in self.breakout_configs.iter() {
+
+            // ====================================================
+            // GET MATCHING BREAKOUT SETUPS
+            // ====================================================
+
+            // A single breakout configuration may have setups
+            // originating from multiple mean-reversion ranges.
+
+            let keys: Vec<BreakoutConfigKey> = self
+                .breakout_setups
+                .keys()
+                .filter(|key| {
+                    key.symbol == symbol
+                        && key.breakout_config_id == config.id
+                })
+                .cloned()
+                .collect();
+
+            // ====================================================
+            // EVALUATE EACH BREAKOUT SETUP
+            // ====================================================
+
+            for key in keys {
+
+                // ====================================================
+                // CHECK CONFIGURATION STATUS
+                // ====================================================
+
+                if !config.enabled {
+                    self.breakout_setups.remove(&key);
+                    continue;
+                }
+
+                // ====================================================
+                // GET BREAKOUT SETUP
+                // ====================================================
+
+                let Some(setup) =
+                    self.breakout_setups.get_mut(&key)
+                else {
+                    continue;
+                };
+
+                // ====================================================
+                // SKIP CONFIRMED / SUBMITTED SETUPS
+                // ====================================================
+
+                if setup.confirmed || setup.trade_submitted {
+                    continue;
+                }
+
+                // ====================================================
+                // CHECK SETUP EXPIRATION
+                // ====================================================
+
+                let elapsed_ms =
+                    current_ts.saturating_sub(
+                        setup.breakout_ts_ms,
+                    );
+
+                let expiration_ms =
+                    (config.setup_expiration_secs as i64)
+                        .saturating_mul(1000);
+
+                if elapsed_ms >= expiration_ms {
+
+                    if self.debug_mode {
+                        print_log(
+                            self.debug_mode,
+                            true,
+                            format_args!(
+                                "[RESEARCH V4 BACKTEST BREAKOUT EXPIRED]\
+                                 [{}][{}][{}] \
+                                 DIRECTION={:?} | \
+                                 AGE={}s | \
+                                 MAX_AGE={}s",
+                                symbol,
+                                key.range_config_id,
+                                config.id,
+                                setup.direction,
+                                elapsed_ms / 1000,
+                                config.setup_expiration_secs,
                             ),
                         );
                     }
 
-                    self.mean_reversion_boundary_monitors.remove(symbol);
-                    return;
+                    self.breakout_setups.remove(&key);
+                    continue;
                 }
-            }
-
-            // ====================================================
-            // TRACK PRICE EXTREME
-            // ====================================================
-
-            match monitor.boundary {
-                MeanReversionBoundary::Lower => {
-                    monitor.extreme_price =
-                        monitor.extreme_price.min(price);
-                }
-
-                MeanReversionBoundary::Upper => {
-                    monitor.extreme_price =
-                        monitor.extreme_price.max(price);
-                }
-            }
-
-            // ====================================================
-            // CHECK REVERSAL CONFIRMATION
-            // ====================================================
-
-            let reversal_pct = match monitor.boundary {
-                MeanReversionBoundary::Lower => {
-                    ((price - monitor.extreme_price)
-                        / monitor.extreme_price) * 100.0
-                }
-
-                MeanReversionBoundary::Upper => {
-                    ((monitor.extreme_price - price)
-                        / monitor.extreme_price) * 100.0
-                }
-            };
-
-            // ====================================================
-            // REQUIRE CONFIRMATION INSIDE RANGE
-            // ====================================================
-
-            let inside_range =
-                price >= lower_boundary
-                    && price <= upper_boundary;
-
-            if inside_range
-                && (!enable_confirmations
-                    || reversal_pct >= confirmation_pct)
-            {
-                monitor.confirmed = true;
 
                 // ====================================================
-                // CONFIRMATION DEBUG
+                // CHECK RANGE REENTRY
+                // ====================================================
+
+                // A bullish breakout fails if price returns
+                // to or below the original upper boundary.
+                //
+                // A bearish breakout fails if price returns
+                // to or above the original lower boundary.
+
+                let returned_inside_range =
+                    match setup.direction {
+
+                        BreakoutDirection::Bullish => {
+                            price <= setup.upper_boundary
+                        }
+
+                        BreakoutDirection::Bearish => {
+                            price >= setup.lower_boundary
+                        }
+                    };
+
+                if returned_inside_range {
+
+                    if self.debug_mode {
+                        print_log(
+                            self.debug_mode,
+                            true,
+                            format_args!(
+                                "[RESEARCH V4 BACKTEST BREAKOUT CANCELLED]\
+                                 [{}][{}][{}] \
+                                 DIRECTION={:?} | \
+                                 PRICE=${:.6} | \
+                                 RANGE_LOW=${:.6} | \
+                                 RANGE_HIGH=${:.6} | \
+                                 REASON=RANGE_REENTRY",
+                                symbol,
+                                key.range_config_id,
+                                config.id,
+                                setup.direction,
+                                price,
+                                setup.lower_boundary,
+                                setup.upper_boundary,
+                            ),
+                        );
+                    }
+
+                    self.breakout_setups.remove(&key);
+                    continue;
+                }
+
+                // ====================================================
+                // CHECK CONFIRMATION MODE
+                // ====================================================
+
+                // Candle-based configurations only confirm
+                // using completed candle closes.
+                //
+                // Tick-based configurations may confirm
+                // using live trade prices.
+
+                if config.require_candle_confirmation
+                    && !candle_closed
+                {
+                    continue;
+                }
+
+                // ====================================================
+                // CALCULATE CONFIRMATION THRESHOLD
+                // ====================================================
+
+                let confirmation_buffer =
+                    config.confirmation_pct / 100.0;
+
+                if !confirmation_buffer.is_finite()
+                    || confirmation_buffer < 0.0
+                {
+                    continue;
+                }
+
+                let upper_confirmation_price =
+                    setup.upper_boundary
+                        * (1.0 + confirmation_buffer);
+
+                let lower_confirmation_price =
+                    setup.lower_boundary
+                        * (1.0 - confirmation_buffer);
+
+                // ====================================================
+                // CHECK BREAKOUT CONFIRMATION
+                // ====================================================
+
+                let breakout_confirmed =
+                    match setup.direction {
+
+                        BreakoutDirection::Bullish => {
+                            price > upper_confirmation_price
+                        }
+
+                        BreakoutDirection::Bearish => {
+                            price < lower_confirmation_price
+                        }
+                    };
+
+                if !breakout_confirmed {
+                    continue;
+                }
+
+                // ====================================================
+                // CONFIRM BREAKOUT SETUP
+                // ====================================================
+
+                setup.confirmed = true;
+
+                setup.confirmation_price = Some(price);
+
+                setup.confirmed_ts_ms = Some(current_ts);
+
+                // ====================================================
+                // BREAKOUT CONFIRMATION DEBUG
                 // ====================================================
 
                 if self.debug_mode {
@@ -1483,69 +2323,78 @@ impl ResearchV4BacktestStrategy {
                         self.debug_mode,
                         true,
                         format_args!(
-                            "[RESEARCH V4 BACKTEST REVERSAL CONFIRMED][{}] \
-                             SIDE={} | PRICE=${:.4} | \
-                             EXTREME=${:.4} | REVERSAL={:.3}% | \
-                             REQUIRED={:.3}%",
+                            "[RESEARCH V4 BACKTEST BREAKOUT CONFIRMED]\
+                             [{}][{}][{}] \
+                             DIRECTION={:?} | \
+                             PRICE=${:.6} | \
+                             RANGE_LOW=${:.6} | \
+                             RANGE_HIGH=${:.6} | \
+                             CONFIRMATION={:.3}% | \
+                             AGE={}s | \
+                             MODE={}",
                             symbol,
-                            match monitor.boundary {
-                                MeanReversionBoundary::Lower => "LONG",
-                                MeanReversionBoundary::Upper => "SHORT",
-                            },
+                            key.range_config_id,
+                            config.id,
+                            setup.direction,
                             price,
-                            monitor.extreme_price,
-                            reversal_pct,
-                            confirmation_pct,
+                            setup.lower_boundary,
+                            setup.upper_boundary,
+                            config.confirmation_pct,
+                            elapsed_ms / 1000,
+                            if config.require_candle_confirmation {
+                                "CANDLE"
+                            } else {
+                                "TICK"
+                            },
                         ),
                     );
                 }
             }
-
-            return;
         }
+    }
+}
 
+
+
+
+impl ResearchV4BacktestStrategy {
+
+    // ============================================================
+    // CLEANUP BREAKOUT SETUPS
+    // ============================================================
+
+    /// Removes breakout setups that have already been consumed.
+    ///
+    /// Cleanup behavior:
+    /// - Removes setups marked as trade_submitted.
+    /// - Preserves pending setups awaiting confirmation.
+    /// - Preserves confirmed setups awaiting execution.
+    /// - Operates independently for each asset.
+    ///
+    /// Note:
+    /// trade_submitted indicates that the signal was consumed,
+    /// even if trading eligibility prevented order submission.
+    ///
+    /// This function does not affect active engine trades.
+
+    fn cleanup_breakout_setups(
+        &mut self,
+        symbol: &str,
+    ) {
         // ====================================================
-        // DETECT NEW BOUNDARY APPROACH
+        // REMOVE CONSUMED BREAKOUT SETUPS
         // ====================================================
 
-        let Some(boundary) = current_boundary else {
-            return;
-        };
+        self.breakout_setups.retain(|key, setup| {
 
-        self.mean_reversion_boundary_monitors.insert(
-            symbol.to_string(),
-            MeanReversionBoundaryMonitor {
-                boundary,
-                detected_ts_ms: current_ts,
-                detected_price: price,
-                extreme_price: price,
-                confirmed: false,
-                trade_submitted: false,
-            },
-        );
+            // Preserve setups belonging to other assets.
+            if key.symbol != symbol {
+                return true;
+            }
 
-        // ====================================================
-        // BOUNDARY APPROACH DEBUG
-        // ====================================================
-
-        if self.debug_mode {
-            print_log(
-                self.debug_mode,
-                true,
-                format_args!(
-                    "[RESEARCH V4 BACKTEST BOUNDARY APPROACH][{}] \
-                     SIDE={:?} | PRICE=${:.4} | \
-                     LOW=${:.4} | HIGH=${:.4} | \
-                     PROXIMITY={:.1}%",
-                    symbol,
-                    boundary,
-                    price,
-                    lower_boundary,
-                    upper_boundary,
-                    boundary_proximity_pct,
-                ),
-            );
-        }
+            // Remove consumed setups.
+            !setup.trade_submitted
+        });
     }
 }
 
@@ -1558,29 +2407,27 @@ impl ResearchV4BacktestStrategy {
     // EXECUTE MEAN REVERSION ENTRY
     // ============================================================
 
-    /// Executes a confirmed mean-reversion entry using the validated range.
+    /// Executes confirmed mean-reversion entries independently
+    /// for every enabled mean-reversion configuration.
     ///
     /// Entry behavior:
-    /// - Consumes confirmed signals immediately, even when trading is blocked,
-    ///   preventing stale signals from executing later.
-    /// - Determines LONG or SHORT direction from the confirmed range boundary.
-    /// - Calculates take profit at a configurable fraction of the validated range.
-    /// - Places stop loss at a configurable percentage beyond the entry-side boundary.
-    /// - Converts absolute TP/SL price levels into percentages for engine risk management.
-    /// - Rejects entries with invalid prices, configurations, or TP/SL geometry.
-    /// - Prevents duplicate trades and enforces the strategy's maximum active-trade limit.
-    /// - Includes Opening, Open, and Closing trades in active-trade checks.
-    /// - Submits entries through the canonical EngineEvent::OpenTrade lifecycle.
-    /// - Records trade cooldowns only after successful event submission.
-    /// - Logs entry prices, range boundaries, TP/SL levels, and dynamic risk/reward.
+    /// - Evaluates all enabled configurations for the asset.
+    /// - Consumes confirmed signals immediately, even when trading is blocked.
+    /// - Determines LONG or SHORT direction from the confirmed boundary.
+    /// - Calculates range-based take-profit and stop-loss levels.
+    /// - Converts absolute exit prices into engine TP/SL percentages.
+    /// - Rejects invalid configurations and exit geometry.
+    /// - Allows multiple trades on the same asset.
+    /// - Enforces the strategy's global maximum active-trade limit.
+    /// - Submits trades through EngineEvent::OpenTrade.
     ///
     /// Risk management:
-    /// - TP/SL distances are determined by range geometry rather than a fixed
-    ///   risk/reward ratio.
-    /// - The engine evaluates TP/SL percentages against the actual average fill price.
-    /// - Execution slippage may shift absolute exit levels from their intended prices.
-    /// - Existing emergency stop-loss and maximum trade-duration protections remain active.
-    /// - All exit execution is managed by the engine, not directly by this strategy.
+    /// - Each configuration independently determines its TP/SL.
+    /// - TP/SL distances are calculated using validated range geometry.
+    /// - The engine applies percentages relative to the actual fill price.
+    /// - Emergency stop-loss protection remains enabled.
+    /// - Trade duration is controlled by each configuration.
+    /// - The engine manages all trade execution and exits.
 
     fn execute_mean_reversion_entry(
         &mut self,
@@ -1590,341 +2437,634 @@ impl ResearchV4BacktestStrategy {
         can_trade: bool,
     ) {
         // ====================================================
-        // GET CONFIRMED SETUP
+        // VALIDATE PRICE
         // ====================================================
 
-        let Some(monitor) =
-            self.mean_reversion_boundary_monitors.get_mut(symbol)
-        else {
-            return;
-        };
-
-        if !monitor.confirmed || monitor.trade_submitted {
+        if !price.is_finite() || price <= 0.0 {
             return;
         }
 
         // ====================================================
-        // CONSUME CONFIRMED SETUP
+        // EVALUATE ALL MEAN REVERSION CONFIGURATIONS
         // ====================================================
 
-        // Consume immediately, regardless of whether trading
-        // is currently allowed.
-        //
-        // Prevents confirmed signals from executing later
-        // when position capacity becomes available.
+        for config in self.mean_reversion_configs.iter() {
 
-        monitor.trade_submitted = true;
+            if !config.enabled {
+                continue;
+            }
 
-        let boundary = monitor.boundary;
-
-        // ====================================================
-        // VALIDATE PRICE AND TRADING ELIGIBILITY
-        // ====================================================
-
-        if !can_trade
-            || !price.is_finite()
-            || price <= 0.0
-            || self.black_swan_protection.is_halted()
-            || !self.trade_cooldown.can_trade(symbol, current_ts)
-        {
-            return;
-        }
-
-        // ====================================================
-        // GET ENABLED CONFIGURATION
-        // ====================================================
-
-        let Some(config) = self.mean_reversion_configs
-            .iter()
-            .find(|config| config.enabled)
-        else {
-            return;
-        };
-
-        let profit_fraction =
-            config.range_profit_target_fraction;
-
-        let stop_buffer_pct =
-            config.stop_loss_boundary_buffer_pct;
-
-        if !profit_fraction.is_finite()
-            || profit_fraction <= 0.0
-            || profit_fraction > 1.0
-            || !stop_buffer_pct.is_finite()
-            || stop_buffer_pct < 0.0
-        {
-            return;
-        }
-
-        // ====================================================
-        // DETERMINE TRADE DIRECTION
-        // ====================================================
-
-        let direction = match boundary {
-            MeanReversionBoundary::Lower => Direction::Long,
-            MeanReversionBoundary::Upper => Direction::Short,
-        };
-
-        // ====================================================
-        // GET VALIDATED RANGE
-        // ====================================================
-
-        let Some(range) =
-            self.mean_reversion_ranges.get(symbol)
-        else {
-            return;
-        };
-
-        let lower_boundary =
-            range.lower_boundary;
-
-        let upper_boundary =
-            range.upper_boundary;
-
-        let range_width =
-            upper_boundary - lower_boundary;
-
-        if !lower_boundary.is_finite()
-            || !upper_boundary.is_finite()
-            || lower_boundary <= 0.0
-            || upper_boundary <= lower_boundary
-            || !range_width.is_finite()
-        {
-            return;
-        }
-
-        // ====================================================
-        // CALCULATE RANGE-BASED TAKE PROFIT / STOP LOSS
-        // ====================================================
-
-        // Take profit is positioned at a configured fraction
-        // of the validated range.
-        //
-        // LONG:
-        //     TP = lower + (range_width * fraction)
-        //
-        // SHORT:
-        //     TP = upper - (range_width * fraction)
-        //
-        // Stop loss is positioned outside the entry-side
-        // boundary using the configured percentage buffer.
-        //
-        // LONG:
-        //     SL = lower * (1 - buffer / 100)
-        //
-        // SHORT:
-        //     SL = upper * (1 + buffer / 100)
-
-        let (take_profit_price, stop_loss_price) =
-            match direction {
-
-                Direction::Long => {
-                    (
-                        lower_boundary
-                            + range_width * profit_fraction,
-
-                        lower_boundary
-                            * (1.0 - stop_buffer_pct / 100.0),
-                    )
-                }
-
-                Direction::Short => {
-                    (
-                        upper_boundary
-                            - range_width * profit_fraction,
-
-                        upper_boundary
-                            * (1.0 + stop_buffer_pct / 100.0),
-                    )
-                }
-            };
-
-        // ====================================================
-        // VALIDATE EXIT PRICES
-        // ====================================================
-
-        if !take_profit_price.is_finite()
-            || !stop_loss_price.is_finite()
-            || take_profit_price <= 0.0
-            || stop_loss_price <= 0.0
-        {
-            return;
-        }
-
-        // Ensure TP is profitable and SL is adverse
-        // relative to the current signal price.
-
-        let valid_exit_geometry =
-            match direction {
-                Direction::Long => {
-                    stop_loss_price < price
-                        && price < take_profit_price
-                }
-
-                Direction::Short => {
-                    take_profit_price < price
-                        && price < stop_loss_price
-                }
-            };
-
-        if !valid_exit_geometry {
-            return;
-        }
-
-        // ====================================================
-        // CONVERT EXIT PRICES TO ENGINE PERCENTAGES
-        // ====================================================
-
-        // Engine risk management evaluates TP/SL using
-        // the actual average entry fill price.
-        //
-        // These percentages are calculated from the
-        // signal price and may therefore produce slightly
-        // different absolute exit prices if execution slips.
-
-        let take_profit_percent =
-            match direction {
-                Direction::Long => {
-                    ((take_profit_price - price) / price)
-                        * 100.0
-                }
-
-                Direction::Short => {
-                    ((price - take_profit_price) / price)
-                        * 100.0
-                }
-            };
-
-        let stop_loss_percent =
-            match direction {
-                Direction::Long => {
-                    ((price - stop_loss_price) / price)
-                        * 100.0
-                }
-
-                Direction::Short => {
-                    ((stop_loss_price - price) / price)
-                        * 100.0
-                }
-            };
-
-        if !take_profit_percent.is_finite()
-            || !stop_loss_percent.is_finite()
-            || take_profit_percent <= 0.0
-            || stop_loss_percent <= 0.0
-        {
-            return;
-        }
-
-        // ====================================================
-        // CHECK EXISTING TRADES
-        // ====================================================
-
-        let (symbol_has_active_trade, active_trade_count) = {
-            let view = self.rx_view.borrow();
-
-            (
-                view.trades.has_active_trade_for_strategy_symbol(
-                    self.name(),
-                    symbol,
-                ),
-                view.trades.count_active_for_strategy(
-                    self.name(),
-                ),
-            )
-        };
-
-        // Opening, Open, and Closing trades are included.
-        //
-        // The confirmed signal was already consumed,
-        // preventing delayed execution if capacity
-        // becomes available later.
-
-        if symbol_has_active_trade
-            || active_trade_count >= self.max_trades_allowed
-        {
-            return;
-        }
-
-        // ====================================================
-        // CONSTRUCT TRADE INTENT
-        // ====================================================
-
-        let intent = TradeIntent {
-            strategy_id: self.name().to_string(),
-            symbol: symbol.to_string(),
-            direction,
-            signal_px: price,
-
-            target_notional: self.trade_amount_usd,
-            margin_usd: self.trade_amount_usd,
-
-            order_type: OrderType::Market,
-            time_in_force: TimeInForce::Day,
-            limit_px: None,
-            stop_px: None,
-            post_only: false,
-
-            take_profit_percent: Some(take_profit_percent),
-            stop_loss_percent: Some(stop_loss_percent),
-
-            emergency_stop_percent: self.emergency_exit_percent,
-            stop_loss_delay_secs: self.min_sl_delay,
-            trade_duration_secs: Some(86_400),
-
-            trailing_stop: None,
-            ts_ms: current_ts,
-        };
-
-        // ====================================================
-        // SUBMIT TRADE INTENT
-        // ====================================================
-
-        if self.tx_engine.send(
-            EngineEvent::OpenTrade(intent)
-        ).is_ok() {
-
-            // Record submission cooldown.
-
-            self.trade_cooldown.record_trade(
+            let key = StrategyConfigKey::new(
                 symbol,
-                current_ts,
+                &config.id,
             );
 
             // ====================================================
-            // ENTRY DEBUG
+            // GET CONFIRMED SETUP
             // ====================================================
 
-            if self.debug_mode {
-                print_log(
-                    self.debug_mode,
-                    true,
-                    format_args!(
-                        "[RESEARCH V4 BACKTEST {:?} ENTRY][{}] \
-                         PRICE=${:.6} | \
-                         RANGE_LOW=${:.6} | RANGE_HIGH=${:.6} | \
-                         TP_PRICE=${:.6} | SL_PRICE=${:.6} | \
-                         TP={:.3}% | SL={:.3}% | \
-                         TARGET_FRACTION={:.2} | \
-                         SL_BUFFER={:.3}% | \
-                         RR=1:{:.3} | \
-                         AMOUNT=${:.2}",
-                        direction,
-                        symbol,
-                        price,
-                        lower_boundary,
-                        upper_boundary,
-                        take_profit_price,
-                        stop_loss_price,
-                        take_profit_percent,
-                        stop_loss_percent,
-                        profit_fraction,
-                        stop_buffer_pct,
-                        take_profit_percent / stop_loss_percent,
-                        self.trade_amount_usd,
-                    ),
+            let Some(monitor) =
+                self.mean_reversion_boundary_monitors.get_mut(&key)
+            else {
+                continue;
+            };
+
+            if !monitor.confirmed || monitor.trade_submitted {
+                continue;
+            }
+
+            // ====================================================
+            // CONSUME CONFIRMED SETUP
+            // ====================================================
+
+            // Consume immediately, even when trading is blocked.
+            // Prevents stale signals from executing later.
+
+            monitor.trade_submitted = true;
+
+            let boundary = monitor.boundary;
+
+            // ====================================================
+            // VALIDATE TRADING ELIGIBILITY
+            // ====================================================
+
+            if !can_trade
+                || self.black_swan_protection.is_halted()
+                || !self.trade_cooldown.can_trade(symbol, current_ts)
+            {
+                continue;
+            }
+
+            // ====================================================
+            // GET CONFIGURATION RISK SETTINGS
+            // ====================================================
+
+            let profit_fraction =
+                config.risk.range_profit_target_fraction;
+
+            let stop_buffer_pct =
+                config.risk.stop_loss_boundary_buffer_pct;
+
+            if !profit_fraction.is_finite()
+                || profit_fraction <= 0.0
+                || profit_fraction > 1.0
+                || !stop_buffer_pct.is_finite()
+                || stop_buffer_pct < 0.0
+            {
+                continue;
+            }
+
+            // ====================================================
+            // DETERMINE TRADE DIRECTION
+            // ====================================================
+
+            let direction = match boundary {
+                MeanReversionBoundary::Lower => Direction::Long,
+                MeanReversionBoundary::Upper => Direction::Short,
+            };
+
+            // ====================================================
+            // GET VALIDATED RANGE
+            // ====================================================
+
+            let Some(range) =
+                self.mean_reversion_ranges.get(&key)
+            else {
+                continue;
+            };
+
+            let lower_boundary = range.lower_boundary;
+            let upper_boundary = range.upper_boundary;
+
+            let range_width =
+                upper_boundary - lower_boundary;
+
+            if !lower_boundary.is_finite()
+                || !upper_boundary.is_finite()
+                || lower_boundary <= 0.0
+                || upper_boundary <= lower_boundary
+                || !range_width.is_finite()
+            {
+                continue;
+            }
+
+            // ====================================================
+            // CALCULATE RANGE-BASED TAKE PROFIT / STOP LOSS
+            // ====================================================
+
+            // LONG:
+            // TP = lower + (range_width * profit_fraction)
+            // SL = lower * (1 - stop_buffer_pct / 100)
+            //
+            // SHORT:
+            // TP = upper - (range_width * profit_fraction)
+            // SL = upper * (1 + stop_buffer_pct / 100)
+
+            let (take_profit_price, stop_loss_price) =
+                match direction {
+
+                    Direction::Long => {
+                        (
+                            lower_boundary
+                                + range_width * profit_fraction,
+
+                            lower_boundary
+                                * (1.0 - stop_buffer_pct / 100.0),
+                        )
+                    }
+
+                    Direction::Short => {
+                        (
+                            upper_boundary
+                                - range_width * profit_fraction,
+
+                            upper_boundary
+                                * (1.0 + stop_buffer_pct / 100.0),
+                        )
+                    }
+                };
+
+            // ====================================================
+            // VALIDATE EXIT PRICES
+            // ====================================================
+
+            if !take_profit_price.is_finite()
+                || !stop_loss_price.is_finite()
+                || take_profit_price <= 0.0
+                || stop_loss_price <= 0.0
+            {
+                continue;
+            }
+
+            let valid_exit_geometry =
+                match direction {
+
+                    Direction::Long => {
+                        stop_loss_price < price
+                            && price < take_profit_price
+                    }
+
+                    Direction::Short => {
+                        take_profit_price < price
+                            && price < stop_loss_price
+                    }
+                };
+
+            if !valid_exit_geometry {
+                continue;
+            }
+
+            // ====================================================
+            // CONVERT EXIT PRICES TO ENGINE PERCENTAGES
+            // ====================================================
+
+            // The engine applies TP/SL relative to the actual
+            // average entry fill price.
+
+            let take_profit_percent =
+                match direction {
+
+                    Direction::Long => {
+                        ((take_profit_price - price) / price)
+                            * 100.0
+                    }
+
+                    Direction::Short => {
+                        ((price - take_profit_price) / price)
+                            * 100.0
+                    }
+                };
+
+            let stop_loss_percent =
+                match direction {
+
+                    Direction::Long => {
+                        ((price - stop_loss_price) / price)
+                            * 100.0
+                    }
+
+                    Direction::Short => {
+                        ((stop_loss_price - price) / price)
+                            * 100.0
+                    }
+                };
+
+            if !take_profit_percent.is_finite()
+                || !stop_loss_percent.is_finite()
+                || take_profit_percent <= 0.0
+                || stop_loss_percent <= 0.0
+            {
+                continue;
+            }
+
+            // ====================================================
+            // CHECK GLOBAL ACTIVE TRADE LIMIT
+            // ====================================================
+
+            // Includes Opening, Open, and Closing trades.
+            //
+            // Multiple trades on the same asset are allowed.
+            // Only the strategy-wide position limit is enforced.
+
+            let active_trade_count = {
+                let view = self.rx_view.borrow();
+
+                view.trades.count_active_for_strategy(
+                    self.name(),
+                )
+            };
+
+            if active_trade_count >= self.max_trades_allowed {
+                continue;
+            }
+
+            // ====================================================
+            // CONSTRUCT TRADE INTENT
+            // ====================================================
+
+            let intent = TradeIntent {
+                strategy_id: self.name().to_string(),
+                symbol: symbol.to_string(),
+                direction,
+                signal_px: price,
+
+                target_notional: self.trade_amount_usd,
+                margin_usd: self.trade_amount_usd,
+
+                order_type: OrderType::Market,
+                time_in_force: TimeInForce::Day,
+                limit_px: None,
+                stop_px: None,
+                post_only: false,
+
+                take_profit_percent: Some(take_profit_percent),
+                stop_loss_percent: Some(stop_loss_percent),
+
+                emergency_stop_percent: self.emergency_exit_percent,
+                stop_loss_delay_secs: self.min_sl_delay,
+                trade_duration_secs: config.risk.trade_duration_secs,
+
+                trailing_stop: None,
+                ts_ms: current_ts,
+            };
+
+            // ====================================================
+            // SUBMIT TRADE INTENT
+            // ====================================================
+
+            if self.tx_engine.send(
+                EngineEvent::OpenTrade(intent)
+            ).is_ok() {
+
+                // Record submission cooldown.
+                self.trade_cooldown.record_trade(
+                    symbol,
+                    current_ts,
                 );
+
+                // ====================================================
+                // ENTRY DEBUG
+                // ====================================================
+
+                if self.debug_mode {
+                    print_log(
+                        self.debug_mode,
+                        true,
+                        format_args!(
+                            "[RESEARCH V4 BACKTEST {:?} ENTRY][{}][{}] \
+                             PRICE=${:.6} | \
+                             RANGE_LOW=${:.6} | RANGE_HIGH=${:.6} | \
+                             TP_PRICE=${:.6} | SL_PRICE=${:.6} | \
+                             TP={:.3}% | SL={:.3}% | \
+                             TARGET_FRACTION={:.2} | \
+                             SL_BUFFER={:.3}% | \
+                             RR=1:{:.3} | \
+                             AMOUNT=${:.2}",
+                            direction,
+                            symbol,
+                            config.id,
+                            price,
+                            lower_boundary,
+                            upper_boundary,
+                            take_profit_price,
+                            stop_loss_price,
+                            take_profit_percent,
+                            stop_loss_percent,
+                            profit_fraction,
+                            stop_buffer_pct,
+                            take_profit_percent / stop_loss_percent,
+                            self.trade_amount_usd,
+                        ),
+                    );
+                }
             }
         }
+    }
+}
+
+
+
+
+impl ResearchV4BacktestStrategy {
+
+    // ============================================================
+    // EXECUTE BREAKOUT ENTRY
+    // ============================================================
+
+    /// Executes confirmed breakout entries independently
+    /// for every enabled breakout configuration.
+    ///
+    /// Entry behavior:
+    /// - Evaluates confirmed breakout setups for the asset.
+    /// - Supports multiple breakout configurations per asset.
+    /// - Supports breakouts originating from different ranges.
+    /// - Consumes confirmed signals immediately.
+    /// - Determines direction from the confirmed breakout.
+    /// - Validates configuration-specific risk settings.
+    /// - Enforces trading eligibility and protection rules.
+    /// - Allows multiple trades on the same asset.
+    /// - Enforces the strategy's global active-trade limit.
+    /// - Submits trades through EngineEvent::OpenTrade.
+    ///
+    /// Risk management:
+    /// - Each breakout configuration has independent TP/SL.
+    /// - TP/SL percentages are relative to the entry fill price.
+    /// - Emergency stop-loss protection remains enabled.
+    /// - Trade duration is controlled by BreakoutRiskConfig.
+    /// - The engine manages execution and trade exits.
+
+    fn execute_breakout_entry(
+        &mut self,
+        symbol: &str,
+        price: f64,
+        current_ts: i64,
+        can_trade: bool,
+    ) {
+        // ====================================================
+        // VALIDATE PRICE
+        // ====================================================
+
+        if !price.is_finite() || price <= 0.0 {
+            return;
+        }
+
+        // ====================================================
+        // EVALUATE ALL BREAKOUT CONFIGURATIONS
+        // ====================================================
+
+        for config in self.breakout_configs.iter() {
+
+            if !config.enabled {
+                continue;
+            }
+
+            // ====================================================
+            // GET MATCHING BREAKOUT SETUPS
+            // ====================================================
+
+            // Multiple mean-reversion configurations may
+            // generate breakouts for the same asset.
+
+            let keys: Vec<BreakoutConfigKey> = self
+                .breakout_setups
+                .keys()
+                .filter(|key| {
+                    key.symbol == symbol
+                        && key.breakout_config_id == config.id
+                })
+                .cloned()
+                .collect();
+
+            // ====================================================
+            // EVALUATE EACH CONFIRMED SETUP
+            // ====================================================
+
+            for key in keys {
+
+                // ====================================================
+                // GET CONFIRMED BREAKOUT SETUP
+                // ====================================================
+
+                let Some(setup) =
+                    self.breakout_setups.get_mut(&key)
+                else {
+                    continue;
+                };
+
+                if !setup.confirmed || setup.trade_submitted {
+                    continue;
+                }
+
+                // ====================================================
+                // CONSUME CONFIRMED SETUP
+                // ====================================================
+
+                // Consume immediately, even if trading is blocked.
+                // Prevents stale signals from executing later.
+
+                setup.trade_submitted = true;
+
+                let breakout_direction = setup.direction;
+
+                // ====================================================
+                // VALIDATE TRADING ELIGIBILITY
+                // ====================================================
+
+                if !can_trade
+                    || self.black_swan_protection.is_halted()
+                    || !self.trade_cooldown.can_trade(
+                        symbol,
+                        current_ts,
+                    )
+                {
+                    continue;
+                }
+
+                // ====================================================
+                // GET BREAKOUT RISK SETTINGS
+                // ====================================================
+
+                let take_profit_percent =
+                    config.risk.take_profit_pct;
+
+                let stop_loss_percent =
+                    config.risk.stop_loss_pct;
+
+                let trade_duration_secs =
+                    config.risk.trade_duration_secs;
+
+                // ====================================================
+                // VALIDATE RISK SETTINGS
+                // ====================================================
+
+                if !take_profit_percent.is_finite()
+                    || !stop_loss_percent.is_finite()
+                    || take_profit_percent <= 0.0
+                    || stop_loss_percent <= 0.0
+                {
+                    continue;
+                }
+
+                // ====================================================
+                // DETERMINE TRADE DIRECTION
+                // ====================================================
+
+                let direction = match breakout_direction {
+                    BreakoutDirection::Bullish => Direction::Long,
+                    BreakoutDirection::Bearish => Direction::Short,
+                };
+
+                // ====================================================
+                // CHECK GLOBAL ACTIVE TRADE LIMIT
+                // ====================================================
+
+                // Includes Opening, Open, and Closing trades.
+                //
+                // Multiple trades on the same asset are allowed.
+                // Only the strategy-wide limit is enforced.
+
+                let active_trade_count = {
+                    let view = self.rx_view.borrow();
+
+                    view.trades.count_active_for_strategy(
+                        self.name(),
+                    )
+                };
+
+                if active_trade_count >= self.max_trades_allowed {
+                    continue;
+                }
+
+                // ====================================================
+                // CONSTRUCT TRADE INTENT
+                // ====================================================
+
+                let intent = TradeIntent {
+                    strategy_id: self.name().to_string(),
+                    symbol: symbol.to_string(),
+                    direction,
+                    signal_px: price,
+
+                    target_notional: self.trade_amount_usd,
+                    margin_usd: self.trade_amount_usd,
+
+                    order_type: OrderType::Market,
+                    time_in_force: TimeInForce::Day,
+                    limit_px: None,
+                    stop_px: None,
+                    post_only: false,
+
+                    take_profit_percent: Some(
+                        take_profit_percent,
+                    ),
+
+                    stop_loss_percent: Some(
+                        stop_loss_percent,
+                    ),
+
+                    emergency_stop_percent:
+                        self.emergency_exit_percent,
+
+                    stop_loss_delay_secs:
+                        self.min_sl_delay,
+
+                    trade_duration_secs,
+
+                    trailing_stop: None,
+                    ts_ms: current_ts,
+                };
+
+                // ====================================================
+                // SUBMIT TRADE INTENT
+                // ====================================================
+
+                if self.tx_engine.send(
+                    EngineEvent::OpenTrade(intent)
+                ).is_ok() {
+
+                    // Record submission cooldown.
+
+                    self.trade_cooldown.record_trade(
+                        symbol,
+                        current_ts,
+                    );
+
+                    // ====================================================
+                    // ENTRY DEBUG
+                    // ====================================================
+
+                    if self.debug_mode {
+                        print_log(
+                            self.debug_mode,
+                            true,
+                            format_args!(
+                                "[RESEARCH V4 BACKTEST BREAKOUT {:?} ENTRY]\
+                                 [{}][{}][{}] \
+                                 PRICE=${:.6} | \
+                                 TP={:.3}% | SL={:.3}% | \
+                                 RR=1:{:.3} | \
+                                 AMOUNT=${:.2} | \
+                                 DURATION={:?}",
+                                direction,
+                                symbol,
+                                key.range_config_id,
+                                config.id,
+                                price,
+                                take_profit_percent,
+                                stop_loss_percent,
+                                take_profit_percent
+                                    / stop_loss_percent,
+                                self.trade_amount_usd,
+                                trade_duration_secs,
+                            ),
+                        );
+                    }
+                }
+            }
+        }
+    }
+}
+
+
+
+
+impl ResearchV4BacktestStrategy {
+
+    // ============================================================
+    // EVALUATE WEIGHTED TRADE FLIP
+    // ============================================================
+
+    /// Evaluates historical consecutive winning trades
+    /// and determines whether the next trade signal
+    /// should be reversed.
+    ///
+    /// Uses closed trades retained by the engine view.
+    ///
+    /// Does not submit orders or modify TP/SL levels.
+    fn evaluate_weighted_trade_flip(
+        &self,
+        signal_id: u64,
+    ) -> bool {
+
+        let view = self.rx_view.borrow();
+
+        // ========================================================
+        // BUILD WINNING STREAK SNAPSHOT
+        // ========================================================
+
+        let snapshot = self.weighted_trade_flip
+            .winning_streak_snapshot(
+                self.name(),
+                &view.trades,
+            );
+
+        // ========================================================
+        // DETERMINE WEIGHTED FLIP
+        // ========================================================
+
+        self.weighted_trade_flip.should_flip(
+            &snapshot,
+            signal_id,
+        )
     }
 }
