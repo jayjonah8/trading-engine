@@ -591,7 +591,7 @@ impl Strategy for ResearchV1BacktestStrategy {
                                 if self.debug_mode {
                                     print_log(
                                         self.debug_mode,
-                                        true,
+                                        false,
                                         format_args!(
                                             "[RESEARCH V1 BACKTEST {:?} ENTRY][{}] \
                                             price=${:.4} | \
@@ -695,7 +695,7 @@ impl Strategy for ResearchV1BacktestStrategy {
                                 if self.debug_mode {
                                     print_log(
                                         self.debug_mode,
-                                        true,
+                                        false,
                                         format_args!(
                                             "[RESEARCH V1 BACKTEST {:?} ENTRY][{}] \
                                             price=${:.4} | \

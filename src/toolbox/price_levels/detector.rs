@@ -68,6 +68,59 @@ use super::{
 //   analyzing large numbers of assets.
 
 
+
+// ====================================================
+// PRICE LEVELS USAGE
+// ====================================================
+//
+// Trading strategies can retrieve previously calculated
+// support and resistance levels from the PriceLevelDetector
+// cache using the asset symbol and configured timeframe.
+//
+// Available functionality:
+// - Retrieve the nearest support below the current price.
+// - Retrieve the nearest resistance above the current price.
+// - Retrieve the strongest detected price level.
+// - Retrieve all levels above or below the current price.
+// - Access the complete list of detected levels, ranked
+//   by significance from strongest to weakest.
+//
+// Each price level provides:
+// - Representative price and upper/lower zone boundaries.
+// - Support or resistance classification.
+// - Strength score ranging from 0 to 100.
+// - Number of independent price reactions (touches).
+// - Average reversal percentage and relative volume.
+// - Timestamp of the most recent price reaction.
+//
+// Example usage:
+//
+// let support = levels.nearest_support(trade.price);
+// let resistance = levels.nearest_resistance(trade.price);
+// let strongest = levels.strongest_level();
+//
+// for level in &levels.levels {
+//     println!(
+//         "price={} strength={} touches={}",
+//         level.price,
+//         level.strength,
+//         level.touches,
+//     );
+// }
+//
+// Price levels are calculated from completed historical
+// candles and cached for efficient access without requiring
+// recalculation on every market tick.
+//
+// Strategies can use this information to evaluate nearby
+// price barriers, identify potential reversal zones, and
+// improve entry, exit, and risk management decisions.
+//
+// NOTE: The toolbox only identifies and ranks price levels.
+// It does not automatically generate signals or execute trades.
+
+
+
 // ====================================================
 // INTERNAL SWING POINT
 // ====================================================
