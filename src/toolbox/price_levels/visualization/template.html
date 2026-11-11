@@ -1,0 +1,358 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+    <title>Price Levels Visualization</title>
+
+    <script src="https://unpkg.com/lightweight-charts@4.2.3/dist/lightweight-charts.standalone.production.js"></script>
+
+    <style>
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        background: #0b1220;
+        color: #e5e7eb;
+        font-family: Arial, sans-serif;
+      }
+
+      header {
+        padding: 20px 24px;
+        border-bottom: 1px solid #263244;
+      }
+
+      h1 {
+        margin: 0;
+        font-size: 22px;
+      }
+
+      #subtitle {
+        margin-top: 8px;
+        color: #94a3b8;
+        font-size: 13px;
+      }
+
+      #chart-container {
+        width: 100%;
+        height: 650px;
+        position: relative;
+      }
+
+      #chart {
+        width: 100%;
+        height: 100%;
+      }
+
+      #levels-panel {
+        padding: 20px 24px;
+      }
+
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 13px;
+      }
+
+      th,
+      td {
+        padding: 10px;
+        border-bottom: 1px solid #263244;
+        text-align: left;
+      }
+
+      th {
+        color: #94a3b8;
+      }
+
+      /* ====================================================
+         PRICE LEVEL SELECTION
+         ==================================================== */
+
+      #levels-body tr {
+        cursor: pointer;
+        transition: background-color 0.15s ease;
+      }
+
+      #levels-body tr:hover {
+        background: #1e293b;
+      }
+
+      #levels-body tr.selected {
+        background: #334155;
+      }
+
+      #levels-body tr.selected td {
+        font-weight: 600;
+      }
+
+      .support {
+        color: #22c55e;
+      }
+
+      .resistance {
+        color: #ef4444;
+      }
+
+      .combined {
+        color: #eab308;
+      }
+    </style>
+  </head>
+
+  <body>
+    <header>
+      <h1 id="title">Price Levels Visualization</h1>
+      <div id="subtitle"></div>
+    </header>
+
+    <div id="chart-container">
+      <div id="chart"></div>
+    </div>
+
+    <section id="levels-panel">
+      <h2>Detected Price Levels</h2>
+
+      <table>
+        <thead>
+          <tr>
+            <th>Type</th>
+            <th>Price</th>
+            <th>Zone</th>
+            <th>Strength</th>
+            <th>Touches</th>
+            <th>Reversal</th>
+            <th>Volume</th>
+          </tr>
+        </thead>
+
+        <tbody id="levels-body"></tbody>
+      </table>
+    </section>
+
+    <script>
+      const DATA = __PRICE_LEVEL_DATA__;
+
+      // ====================================================
+      // CHART INITIALIZATION
+      // ====================================================
+
+      const chartContainer = document.getElementById("chart");
+
+      const chart = LightweightCharts.createChart(chartContainer, {
+        width: chartContainer.clientWidth,
+        height: chartContainer.clientHeight,
+
+        layout: {
+          background: {
+            type: "solid",
+            color: "#0b1220",
+          },
+          textColor: "#94a3b8",
+        },
+
+        grid: {
+          vertLines: {
+            color: "#1e293b",
+          },
+          horzLines: {
+            color: "#1e293b",
+          },
+        },
+
+        timeScale: {
+          timeVisible: true,
+          secondsVisible: false,
+          borderColor: "#334155",
+        },
+
+        rightPriceScale: {
+          borderColor: "#334155",
+        },
+
+        crosshair: {
+          mode: LightweightCharts.CrosshairMode.Normal,
+        },
+      });
+
+      // ====================================================
+      // CANDLESTICK SERIES
+      // ====================================================
+
+      const candleSeries = chart.addCandlestickSeries({
+        upColor: "#22c55e",
+        downColor: "#ef4444",
+
+        borderVisible: false,
+
+        wickUpColor: "#22c55e",
+        wickDownColor: "#ef4444",
+      });
+
+      candleSeries.setData(DATA.candles);
+
+      // ====================================================
+      // SUPPORT / RESISTANCE LEVELS
+      // ====================================================
+      //
+      // Displays one horizontal line per detected level.
+      //
+      // Green  = Support
+      // Red    = Resistance
+      // Yellow = SupportResistance
+      //
+      // Only the representative price is displayed.
+      // Zone boundaries remain available in the table.
+
+      // ====================================================
+      // LEVEL COLORS
+      // ====================================================
+
+      const zoneColors = {
+        Support: "#22c55e",
+        Resistance: "#ef4444",
+        SupportResistance: "#eab308",
+      };
+
+      // ====================================================
+      // DRAW PRICE LEVELS
+      // ====================================================
+
+      const levelLines = [];
+
+      for (const level of DATA.levels) {
+        const color = zoneColors[level.type];
+
+        const line = candleSeries.createPriceLine({
+          price: level.price,
+          color: color,
+          lineWidth: 2,
+          lineStyle: LightweightCharts.LineStyle.Solid,
+          axisLabelVisible: true,
+          title: `${level.strength.toFixed(0)}`,
+        });
+
+        levelLines.push(line);
+      }
+
+      // ====================================================
+      // PRICE LEVEL HIGHLIGHTING
+      // ====================================================
+
+      let selectedLevelIndex = null;
+      let hoveredLevelIndex = null;
+
+      // ====================================================
+      // UPDATE LEVEL HIGHLIGHT
+      // ====================================================
+
+      function updateLevelHighlight() {
+        const activeIndex = hoveredLevelIndex !== null ? hoveredLevelIndex : selectedLevelIndex;
+
+        DATA.levels.forEach((level, index) => {
+          const isActive = index === activeIndex;
+
+          const color = activeIndex === null ? zoneColors[level.type] : isActive ? zoneColors[level.type] : "#334155";
+
+          levelLines[index].applyOptions({
+            color: color,
+            lineWidth: isActive ? 3 : activeIndex === null ? 2 : 1,
+            axisLabelVisible: activeIndex === null || isActive,
+            title: activeIndex === null || isActive ? `${level.strength.toFixed(0)}` : "",
+          });
+        });
+      }
+
+      // ====================================================
+      // CHART VIEW
+      // ====================================================
+
+      chart.timeScale().fitContent();
+
+      // ====================================================
+      // LEVEL DETAILS
+      // ====================================================
+
+      document.getElementById("title").textContent = `${DATA.symbol} Price Levels`;
+
+      document.getElementById("subtitle").textContent =
+        `Timeframe: ${DATA.timeframe}s | ` + `Candles: ${DATA.candles.length} | ` + `Levels: ${DATA.levels.length} | ` + `Analysis: ${new Date(DATA.calculatedTs).toISOString()}`;
+
+      const tbody = document.getElementById("levels-body");
+
+      // ====================================================
+      // CREATE LEVEL TABLE
+      // ====================================================
+
+      DATA.levels.forEach((level, index) => {
+        const row = document.createElement("tr");
+
+        const typeClass = level.type === "Support" ? "support" : level.type === "Resistance" ? "resistance" : "combined";
+
+        row.innerHTML = `
+          <td class="${typeClass}">${level.type}</td>
+          <td>${level.price.toFixed(4)}</td>
+          <td>${level.lower.toFixed(4)} - ${level.upper.toFixed(4)}</td>
+          <td>${level.strength.toFixed(2)}</td>
+          <td>${level.touches}</td>
+          <td>${level.reversal.toFixed(3)}%</td>
+          <td>${level.volume.toFixed(2)}</td>
+        `;
+
+        // ====================================================
+        // HOVER HIGHLIGHT
+        // ====================================================
+
+        row.addEventListener("mouseenter", () => {
+          hoveredLevelIndex = index;
+          updateLevelHighlight();
+        });
+
+        row.addEventListener("mouseleave", () => {
+          hoveredLevelIndex = null;
+          updateLevelHighlight();
+        });
+
+        // ====================================================
+        // CLICK SELECTION
+        // ====================================================
+
+        row.addEventListener("click", () => {
+          if (selectedLevelIndex === index) {
+            selectedLevelIndex = null;
+          } else {
+            selectedLevelIndex = index;
+          }
+
+          document.querySelectorAll("#levels-body tr").forEach((r) => r.classList.remove("selected"));
+
+          if (selectedLevelIndex !== null) {
+            row.classList.add("selected");
+          }
+
+          updateLevelHighlight();
+        });
+
+        tbody.appendChild(row);
+      });
+
+      // ====================================================
+      // RESPONSIVE RESIZING
+      // ====================================================
+
+      const resizeObserver = new ResizeObserver((entries) => {
+        const entry = entries[0];
+
+        chart.applyOptions({
+          width: entry.contentRect.width,
+        });
+      });
+
+      resizeObserver.observe(chartContainer);
+    </script>
+  </body>
+</html>

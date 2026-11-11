@@ -1,16 +1,21 @@
 pub mod config;
 pub mod detector;
 pub mod types;
+pub mod visualization;
+
 #[cfg(test)]
 mod tests;
 
 pub use config::PriceLevelConfig;
 pub use detector::PriceLevelDetector;
+
 pub use types::{
     PriceLevel,
     PriceLevelType,
     PriceLevels,
 };
+
+pub use visualization::generate_price_levels_chart;
 
 // ====================================================
 // TODO: MULTI-TIMEFRAME CONFLUENCE

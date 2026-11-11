@@ -10,6 +10,7 @@ use crate::{
         PriceLevelConfig,
         PriceLevelDetector,
         PriceLevelType,
+        generate_price_levels_chart,
     },
 };
 
@@ -41,23 +42,23 @@ use super::hyperliquid::{
 // TEST CONFIGURATION
 // ====================================================
 
-const TEST_SYMBOL: &str = "BTC";
+const TEST_SYMBOL: &str = "ZEC";
 
 const TEST_TIMEFRAME: Timeframe = Timeframe::FIVE_MINUTES;
 
 // false = Latest completed candles.
 // true  = Historical start/end date range.
 
-const USE_HISTORICAL_RANGE: bool = true;
+const USE_HISTORICAL_RANGE: bool = false;
 
 // 1 day.
-// const TEST_LOOKBACK_SECS: u64 = 24 * 60 * 60;
+const TEST_LOOKBACK_SECS: u64 = 24 * 60 * 60;
 
 // 2 days.
 // const TEST_LOOKBACK_SECS: u64 = 2 * 24 * 60 * 60;
 
 // 7 days.
-const TEST_LOOKBACK_SECS: u64 = 7 * 24 * 60 * 60;
+// const TEST_LOOKBACK_SECS: u64 = 7 * 24 * 60 * 60;
 
 // Dates are interpreted as UTC.
 //
@@ -69,14 +70,14 @@ const TEST_LOOKBACK_SECS: u64 = 7 * 24 * 60 * 60;
 // represents exactly 48 hours.
 
 // 4 days ago (UTC).
-// const TEST_START_DATE: &str = "2026-11-07 00:00:00";
+const TEST_START_DATE: &str = "2026-11-07 00:00:00";
 // 2 days ago (UTC).
-// const TEST_END_DATE: &str = "2026-11-09 00:00:00";
+const TEST_END_DATE: &str = "2026-11-09 00:00:00";
 
-// 6 days ago (UTC).
-const TEST_START_DATE: &str = "2026-11-05 00:00:00";
-// 4 days ago (UTC).
-const TEST_END_DATE: &str = "2026-11-07 00:00:00";
+// // 6 days ago (UTC).
+// const TEST_START_DATE: &str = "2026-11-05 00:00:00";
+// // 4 days ago (UTC).
+// const TEST_END_DATE: &str = "2026-11-07 00:00:00";
 
 // ====================================================
 // PARSE HISTORICAL DATE
@@ -102,7 +103,14 @@ fn parse_test_date(date: &str) -> Result<DateTime<Utc>> {
 // TEST PRICE LEVEL DETECTION
 // ====================================================
 
+// Run the test:
 // cargo test test_hyperliquid_price_levels -- --nocapture
+
+// Open the generated HTML chart (macOS):
+// open price_levels_chart.html
+
+// Direct browser address:
+// file:///Users/jared/web3/quant-finance/trading-bots/trading-engine/price_levels_chart.html
 
 #[tokio::test]
 async fn test_hyperliquid_price_levels() -> Result<()> {
@@ -270,6 +278,26 @@ async fn test_hyperliquid_price_levels() -> Result<()> {
     let levels = detector
         .get_levels(TEST_SYMBOL, TEST_TIMEFRAME)
         .context("Detector did not return price levels")?;
+
+    // ====================================================
+    // GENERATE PRICE LEVEL VISUALIZATION
+    // ====================================================
+
+    let chart_path = "price_levels_chart.html";
+
+    generate_price_levels_chart(
+        chart_path,
+        TEST_SYMBOL,
+        TEST_TIMEFRAME,
+        &bars,
+        levels,
+    )?;
+
+    println!();
+    println!("====================================================");
+    println!("PRICE LEVEL VISUALIZATION");
+    println!("====================================================");
+    println!("Chart generated: {}", chart_path);
 
     // ====================================================
     // PRINT TEST SUMMARY
