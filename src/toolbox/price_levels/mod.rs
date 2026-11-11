@@ -1,6 +1,8 @@
 pub mod config;
 pub mod detector;
 pub mod types;
+#[cfg(test)]
+mod tests;
 
 pub use config::PriceLevelConfig;
 pub use detector::PriceLevelDetector;
