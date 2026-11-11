@@ -179,8 +179,8 @@ async fn main() -> Result<()> {
         // backtest_end: "2026-10-02T04:00:00Z".to_string(),
 
         // First two days of October 2026.
-        // backtest_start: "2026-10-01T00:00:00Z".to_string(),
-        // backtest_end: "2026-10-03T00:00:00Z".to_string(),
+        backtest_start: "2026-10-01T00:00:00Z".to_string(),
+        backtest_end: "2026-10-03T00:00:00Z".to_string(),
 
         // Full month of October 2026 (31 days).
         // backtest_start: "2026-10-01T00:00:00Z".to_string(),
@@ -196,8 +196,8 @@ async fn main() -> Result<()> {
         // backtest_end: "2026-10-09T00:00:00Z".to_string(),
 
         // First 10 days of October 2026.
-        backtest_start: "2026-10-01T00:00:00Z".to_string(),
-        backtest_end: "2026-10-11T00:00:00Z".to_string(),
+        // backtest_start: "2026-10-01T00:00:00Z".to_string(),
+        // backtest_end: "2026-10-11T00:00:00Z".to_string(),
 
         // First Friday of October 2026. (severe down trend bear market!!)
         // New York: 9:00 AM – 5:00 PM EDT (8 hours).
@@ -1229,10 +1229,10 @@ async fn main() -> Result<()> {
     // The same StrategyKind identifies a strategy family while the factory
     // chooses the live or historical implementation.
     let enabled = vec![
-        // StrategyKind::ResearchV1,
+        StrategyKind::ResearchV1,
         // StrategyKind::ResearchV2,
         // StrategyKind:: ResearchV3,
-        StrategyKind::ResearchV4
+        // StrategyKind::ResearchV4
         // StrategyKind::Base,
         // StrategyKind::Indicator,
         // StrategyKind::MeanReversion,

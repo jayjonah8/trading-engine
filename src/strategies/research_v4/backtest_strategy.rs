@@ -167,7 +167,7 @@ impl ResearchV4BacktestStrategy {
             // MARKET QUALIFICATION
             // ====================================================
 
-            enable_trading_eligibility_check: false,
+            enable_trading_eligibility_check: true,
             min_volume_usd: Some(350_000.0),
             min_24h_move_pct: None,
             max_24h_move_pct: Some(15.0),

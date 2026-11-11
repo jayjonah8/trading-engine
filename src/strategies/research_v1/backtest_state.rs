@@ -95,6 +95,17 @@ pub struct ResearchV1BacktestStrategy {
     // Timestamp-based rolling price window.
     pub price_window: PriceWindowTs,
 
+    // Timestamp-based btc rolling price window.
+    pub btc_window: PriceWindowTs,
+
+    // Blocks trades during a btc vacuum
+    pub btc_vacuum_protection_enabled: bool,
+
+    // Threshold percent that determines a btc vacuum
+    pub btc_vacuum_threshold_pct: f64,
+
+    pub btc_vacuum_active: bool,
+
     // Closed multi-timeframe candle history.
     pub candle_history: CandleHistory,
 

@@ -176,21 +176,30 @@ impl ResearchV1BacktestStrategy {
             leverage: None,
             entry_percent: Some(2.0),
             exit_profit_percent: Some(3.0),
-            exit_loss_percent: Some(0.5),
-            emergency_exit_percent: Some(5.0),
-            min_sl_delay: Some(1800), // 1800 = 30 min
-            trade_duration_secs: Some(3600), // 600 = 10 minutes, 3600 = 1hr
+            exit_loss_percent: Some(2.0),
+            emergency_exit_percent: Some(4.0),
+            min_sl_delay: None, // 1800 = 30 min
+            trade_duration_secs: Some(4800), // 600 = 10 minutes, 3600 = 1hr, 4800 1hr 20 min
             min_volume_usd: Some(350_000.0), 
             max_24h_move_pct: Some(15.00),
 
             market_regime: MarketRegime::MeanReversion,
 
             track_price_window_while_in_trade: false,
+
             price_window: PriceWindowTs::new(
                 1800, // 30 min rolling window
                 false,
             ),
 
+            btc_vacuum_protection_enabled: true,
+            btc_vacuum_active: false, // default setting
+            btc_vacuum_threshold_pct: 0.75,
+            btc_window: PriceWindowTs::new(
+                900, // 15 minutes
+                false,
+            ),
+            
             candle_history: CandleHistory::new(
                 candle_config.history_retention,
             ),
@@ -222,7 +231,7 @@ impl ResearchV1BacktestStrategy {
                 vec![
                     EarlyProfitRule {
                         name: "Small Basket Early Profit".to_string(),
-                        enabled: true,
+                        enabled: false,
                         min_open_trades: 2,
                         max_open_trades: Some(4),
                         min_margin_usd: 0.0,
@@ -237,7 +246,7 @@ impl ResearchV1BacktestStrategy {
 
                     EarlyProfitRule {
                         name: "Large Basket Early Profit".to_string(),
-                        enabled: true,
+                        enabled: false,
                         min_open_trades: 5,
                         max_open_trades: None,
                         min_margin_usd: 0.0,
@@ -251,11 +260,11 @@ impl ResearchV1BacktestStrategy {
 
             multi_sync: MultiSync::new(
                 MultiSyncConfig {
-                    enabled: true,
-                    debug_mode: true,
+                    enabled: false,
+                    debug_mode: false,
 
                     profit_protection: MultiSyncProfitProtectionConfig {
-                        enabled: true,
+                        enabled: false,
 
                         default_settings: vec![
                             MultiSyncSetting {
@@ -266,7 +275,7 @@ impl ResearchV1BacktestStrategy {
                     },
 
                     drawdown_protection: MultiSyncDrawdownProtectionConfig {
-                        enabled: true,
+                        enabled: false,
 
                         default_settings: vec![
                             MultiSyncSetting {
@@ -334,6 +343,22 @@ impl Strategy for ResearchV1BacktestStrategy {
                             trade.size,
                             trade.timestamp_ms,
                         ),
+                    );
+                }
+
+                // ====================================================
+                // BTC VACUUM PROTECTION
+                // ====================================================
+
+                // Update the BTC vacuum state whenever a BTC trade arrives.
+                // Automatically resets to false when the threshold is no
+                // longer reached.
+                if self.btc_vacuum_protection_enabled && ev.symbol == "BTC" {
+
+                    self.btc_vacuum_active = self.btc_vacuum_threshold_reached(
+                        &ev.symbol,
+                        trade.price,
+                        trade.timestamp_ms,
                     );
                 }
 
@@ -475,6 +500,8 @@ impl Strategy for ResearchV1BacktestStrategy {
                         // ====================================================
 
                         if can_trade 
+                            // Block new trades only when BTC vacuum protection is enabled and a vacuum is active.
+                            && !(self.btc_vacuum_protection_enabled && self.btc_vacuum_active)
                             && active_trade_count < self.max_trades_allowed
                             && !symbol_has_active_trade
                             && !self.black_swan_protection.is_halted() 
@@ -1220,3 +1247,90 @@ impl ResearchV1BacktestStrategy {
 
 
 
+impl ResearchV1BacktestStrategy {
+
+    // ====================================================
+    // BTC VACUUM PROTECTION
+    // ====================================================
+
+    fn btc_vacuum_threshold_reached(
+        &mut self,
+        symbol: &str,
+        price: f64,
+        current_ts: i64,
+    ) -> bool {
+
+        const BTC: &str = "BTC";
+
+        // ====================================================
+        // PROTECTION ENABLED
+        // ====================================================
+
+        if !self.btc_vacuum_protection_enabled {
+            return false;
+        }
+
+        // ====================================================
+        // BTC PRICE WINDOW
+        // ====================================================
+
+        if symbol != BTC {
+            return false;
+        }
+
+        let result = self.btc_window
+            .update_price_window_extreme_diffs_ts(
+                BTC,
+                current_ts,
+                price,
+            );
+
+        // ====================================================
+        // CHECK BTC VACUUM THRESHOLD
+        // ====================================================
+
+        let Some((
+            pct_from_min,
+            pct_from_max,
+            elapsed_secs,
+        )) = result
+        else {
+            return false;
+        };
+
+        // Detect both upward and downward BTC movements.
+        let threshold_reached =
+            pct_from_min >= self.btc_vacuum_threshold_pct
+            || pct_from_max >= self.btc_vacuum_threshold_pct;
+
+        // ====================================================
+        // DEBUG
+        // ====================================================
+
+        if self.debug_mode {
+
+            print_log(
+                self.debug_mode,
+                threshold_reached,
+                format_args!(
+                    "[RESEARCH V1 BACKTEST BTC VACUUM][{}] \
+                    price=${:.4} | \
+                    above_min={:.3}% | \
+                    below_max={:.3}% | \
+                    age={}s | \
+                    threshold={:.3}% | \
+                    reached={}",
+                    BTC,
+                    price,
+                    pct_from_min,
+                    pct_from_max,
+                    elapsed_secs,
+                    self.btc_vacuum_threshold_pct,
+                    threshold_reached,
+                ),
+            );
+        }
+
+        threshold_reached
+    }
+}
