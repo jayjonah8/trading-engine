@@ -7,6 +7,7 @@ pub mod early_profit_taking;
 pub mod market_regime;
 pub mod multi_sync;
 pub mod weighted_trade_flip;
+pub mod price_levels;
 
 
 pub use trade_cooldown::TradeCooldown;

@@ -63,6 +63,10 @@ use crate::{
         MultiSyncProfitProtectionConfig,
         MultiSyncDrawdownProtectionConfig,
     },
+    toolbox::price_levels::{
+        PriceLevelConfig,
+        PriceLevelDetector,
+    },
 
     shared::print_log,
 };
@@ -183,7 +187,7 @@ impl ResearchV1BacktestStrategy {
             min_volume_usd: Some(350_000.0), 
             max_24h_move_pct: Some(15.00),
 
-            market_regime: MarketRegime::MeanReversion,
+            market_regime: MarketRegime::Trending,
 
             track_price_window_while_in_trade: false,
 
@@ -192,7 +196,7 @@ impl ResearchV1BacktestStrategy {
                 false,
             ),
 
-            btc_vacuum_protection_enabled: true,
+            btc_vacuum_protection_enabled: false,
             btc_vacuum_active: false, // default setting
             btc_vacuum_threshold_pct: 0.75,
             btc_window: PriceWindowTs::new(
@@ -202,6 +206,10 @@ impl ResearchV1BacktestStrategy {
             
             candle_history: CandleHistory::new(
                 candle_config.history_retention,
+            ),
+
+            price_levels: PriceLevelDetector::new(
+                PriceLevelConfig::default(),
             ),
 
             // false = bypass can_trade check, 
@@ -604,15 +612,15 @@ impl Strategy for ResearchV1BacktestStrategy {
                                 // SEND TRADE INTENT
                                 // ====================================================
 
-                                let _ = self.tx_engine.send(
-                                    EngineEvent::OpenTrade(intent)
-                                );
+                                // let _ = self.tx_engine.send(
+                                //     EngineEvent::OpenTrade(intent)
+                                // );
 
-                                // Record the trade submission cooldown.
-                                self.trade_cooldown.record_trade(
-                                    &ev.symbol,
-                                    trade.timestamp_ms,
-                                );
+                                // // Record the trade submission cooldown.
+                                // self.trade_cooldown.record_trade(
+                                //     &ev.symbol,
+                                //     trade.timestamp_ms,
+                                // );
                             }
 
                             // ====================================================
@@ -708,15 +716,15 @@ impl Strategy for ResearchV1BacktestStrategy {
                                 // SEND TRADE INTENT
                                 // ====================================================
 
-                                let _ = self.tx_engine.send(
-                                    EngineEvent::OpenTrade(intent)
-                                );
+                                // let _ = self.tx_engine.send(
+                                //     EngineEvent::OpenTrade(intent)
+                                // );
 
-                                // Record the trade submission cooldown.
-                                self.trade_cooldown.record_trade(
-                                    &ev.symbol,
-                                    trade.timestamp_ms,
-                                );
+                                // // Record the trade submission cooldown.
+                                // self.trade_cooldown.record_trade(
+                                //     &ev.symbol,
+                                //     trade.timestamp_ms,
+                                // );
                             }
                         }
                     }
@@ -745,6 +753,58 @@ impl Strategy for ResearchV1BacktestStrategy {
 
                 // Store completed candle.
                 self.candle_history.push(bar);
+
+                // ====================================================
+                // UPDATE PRICE LEVELS
+                // ====================================================
+
+                self.price_levels.update(
+                    &ev.symbol,
+                    timeframe,
+                    current_ts,
+                    &self.candle_history,
+                );
+
+                // ====================================================
+                // PRICE LEVEL DEBUG
+                // ====================================================
+
+                if self.debug_mode && timeframe == Timeframe::FIVE_MINUTES {
+
+                    if let Some(levels) = self.price_levels.get_levels(
+                        &ev.symbol,
+                        timeframe,
+                    ) {
+
+                        for level in &levels.levels {
+
+                            print_log(
+                                self.debug_mode,
+                                true,
+                                format_args!(
+                                    "[RESEARCH V1 BACKTEST PRICE LEVEL][{}][{}s] \
+                                    level=${:.4} | \
+                                    zone=${:.4}-${:.4} | \
+                                    type={:?} | \
+                                    strength={:.2} | \
+                                    touches={} | \
+                                    reversal={:.3}% | \
+                                    relative_volume={:.2}",
+                                    ev.symbol,
+                                    timeframe.as_secs(),
+                                    level.price,
+                                    level.lower_bound,
+                                    level.upper_bound,
+                                    level.level_type,
+                                    level.strength,
+                                    level.touches,
+                                    level.average_reversal_pct,
+                                    level.relative_volume,
+                                ),
+                            );
+                        }
+                    }
+                }
 
                 self.update_trading_eligibility(
                     &ev.symbol,

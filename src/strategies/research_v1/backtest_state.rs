@@ -25,6 +25,10 @@ use crate::{
     toolbox::early_profit_taking::{
         EarlyProfitTaking,
     },
+    toolbox::price_levels::{
+        PriceLevelConfig,
+        PriceLevelDetector,
+    },
 };
 
 
@@ -108,6 +112,9 @@ pub struct ResearchV1BacktestStrategy {
 
     // Closed multi-timeframe candle history.
     pub candle_history: CandleHistory,
+
+    // Detects support and resistance price levels
+    pub price_levels: PriceLevelDetector,
 
     /// Enables or disables can_trade trading eligibility checks.
     /// When enabled, trades must pass the cached symbol eligibility check.
