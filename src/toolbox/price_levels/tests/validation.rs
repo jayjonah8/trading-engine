@@ -42,7 +42,7 @@ use super::hyperliquid::{
 // TEST CONFIGURATION
 // ====================================================
 
-const TEST_SYMBOL: &str = "ZEC";
+const TEST_SYMBOL: &str = "BTC";
 
 const TEST_TIMEFRAME: Timeframe = Timeframe::FIVE_MINUTES;
 

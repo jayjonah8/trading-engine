@@ -1,0 +1,462 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+    <title>Trading Range Visualization</title>
+
+    <script src="https://unpkg.com/lightweight-charts@4.2.3/dist/lightweight-charts.standalone.production.js"></script>
+
+    <style>
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        background: #0b1220;
+        color: #e5e7eb;
+        font-family: Arial, sans-serif;
+      }
+
+      header {
+        padding: 20px 24px;
+        border-bottom: 1px solid #263244;
+      }
+
+      h1 {
+        margin: 0;
+        font-size: 22px;
+      }
+
+      #subtitle {
+        margin-top: 8px;
+        color: #94a3b8;
+        font-size: 13px;
+      }
+
+      #chart-container {
+        width: 100%;
+        height: 650px;
+        position: relative;
+      }
+
+      #chart {
+        width: 100%;
+        height: 100%;
+      }
+
+      #ranges-panel {
+        padding: 20px 24px;
+      }
+
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 13px;
+      }
+
+      th,
+      td {
+        padding: 10px;
+        border-bottom: 1px solid #263244;
+        text-align: left;
+      }
+
+      th {
+        color: #94a3b8;
+      }
+
+      /* ====================================================
+         RANGE SELECTION
+         ==================================================== */
+
+      #ranges-body tr {
+        cursor: pointer;
+        transition: background-color 0.15s ease;
+      }
+
+      #ranges-body tr:hover {
+        background: #1e293b;
+      }
+
+      #ranges-body tr.selected {
+        background: #334155;
+      }
+
+      #ranges-body tr.selected td {
+        font-weight: 600;
+      }
+
+      .lower {
+        color: #22c55e;
+      }
+
+      .upper {
+        color: #ef4444;
+      }
+
+      .midpoint {
+        color: #eab308;
+      }
+
+      .extreme-low {
+        color: #38bdf8;
+      }
+
+      .extreme-high {
+        color: #c084fc;
+      }
+
+      .empty {
+        color: #94a3b8;
+        padding: 20px 0;
+      }
+    </style>
+  </head>
+
+  <body>
+    <header>
+      <h1 id="title">Trading Range Visualization</h1>
+      <div id="subtitle"></div>
+    </header>
+
+    <div id="chart-container">
+      <div id="chart"></div>
+    </div>
+
+    <section id="ranges-panel">
+      <h2>Detected Trading Ranges</h2>
+
+      <table>
+        <thead>
+          <tr>
+            <th>Range</th>
+            <th>Lower</th>
+            <th>Upper</th>
+            <th>Midpoint</th>
+            <th>Width</th>
+            <th>Touches (S/R)</th>
+            <th>Oscillations</th>
+            <th>Containment</th>
+            <th>Strength</th>
+          </tr>
+        </thead>
+
+        <tbody id="ranges-body"></tbody>
+      </table>
+
+      <p id="empty-message" class="empty" hidden>No validated trading ranges were detected.</p>
+
+      <div id="range-details"></div>
+    </section>
+
+    <script>
+      const DATA = __PRICE_RANGE_DATA__;
+
+      // ====================================================
+      // CHART INITIALIZATION
+      // ====================================================
+
+      const chartContainer = document.getElementById("chart");
+
+      const chart = LightweightCharts.createChart(chartContainer, {
+        width: chartContainer.clientWidth,
+        height: chartContainer.clientHeight,
+
+        layout: {
+          background: {
+            type: "solid",
+            color: "#0b1220",
+          },
+          textColor: "#94a3b8",
+        },
+
+        grid: {
+          vertLines: {
+            color: "#1e293b",
+          },
+          horzLines: {
+            color: "#1e293b",
+          },
+        },
+
+        timeScale: {
+          timeVisible: true,
+          secondsVisible: false,
+          borderColor: "#334155",
+        },
+
+        rightPriceScale: {
+          borderColor: "#334155",
+        },
+
+        crosshair: {
+          mode: LightweightCharts.CrosshairMode.Normal,
+        },
+      });
+
+      // ====================================================
+      // CANDLESTICK SERIES
+      // ====================================================
+
+      const candleSeries = chart.addCandlestickSeries({
+        upColor: "#22c55e",
+        downColor: "#ef4444",
+
+        borderVisible: false,
+
+        wickUpColor: "#22c55e",
+        wickDownColor: "#ef4444",
+      });
+
+      candleSeries.setData(DATA.candles);
+
+      // ====================================================
+      // RANGE COLORS
+      // ====================================================
+
+      const rangeColors = {
+        lower: "#22c55e",
+        upper: "#ef4444",
+        midpoint: "#eab308",
+        lowest: "#38bdf8",
+        highest: "#c084fc",
+      };
+
+      // ====================================================
+      // DRAW TIME-BOUNDED RANGE LINES
+      // ====================================================
+
+      // Unlike createPriceLine(), a line series can be
+      // restricted to a specific historical time interval.
+      //
+      // This prevents historical ranges from appearing
+      // as permanent support/resistance levels.
+
+      const rangeSeries = [];
+
+      function createRangeLine(price, startTs, endTs, color, style) {
+        const series = chart.addLineSeries({
+          color: color,
+          lineWidth: 2,
+          lineStyle: style,
+          priceLineVisible: false,
+          lastValueVisible: false,
+          crosshairMarkerVisible: false,
+        });
+
+        const startTime = Math.floor(startTs / 1000);
+        const endTime = Math.floor(endTs / 1000);
+
+        if (endTime > startTime) {
+          series.setData([
+            { time: startTime, value: price },
+            { time: endTime, value: price },
+          ]);
+        } else {
+          series.setData([{ time: startTime, value: price }]);
+        }
+
+        return series;
+      }
+
+      // ====================================================
+      // CREATE RANGE OVERLAYS
+      // ====================================================
+
+      for (const range of DATA.ranges) {
+        const startTs = range.startTs;
+
+        // The range detector currently stores the last
+        // confirmed boundary reaction, not the final
+        // timestamp of the historical segment.
+        //
+        // Restrict the overlay to the last reaction.
+        // This avoids implying an unknown range end.
+
+        const endTs = range.lastTouchTs;
+
+        const overlays = {
+          lower: createRangeLine(range.lower, startTs, endTs, rangeColors.lower, LightweightCharts.LineStyle.Solid),
+
+          upper: createRangeLine(range.upper, startTs, endTs, rangeColors.upper, LightweightCharts.LineStyle.Solid),
+
+          midpoint: createRangeLine(range.midpoint, startTs, endTs, rangeColors.midpoint, LightweightCharts.LineStyle.Dashed),
+
+          lowest: createRangeLine(range.lowest, startTs, endTs, rangeColors.lowest, LightweightCharts.LineStyle.Dotted),
+
+          highest: createRangeLine(range.highest, startTs, endTs, rangeColors.highest, LightweightCharts.LineStyle.Dotted),
+        };
+
+        rangeSeries.push(overlays);
+      }
+
+      // ====================================================
+      // RANGE HIGHLIGHTING
+      // ====================================================
+
+      let selectedRangeIndex = null;
+      let hoveredRangeIndex = null;
+
+      function updateRangeHighlight() {
+        const activeIndex = hoveredRangeIndex !== null ? hoveredRangeIndex : selectedRangeIndex;
+
+        rangeSeries.forEach((overlays, index) => {
+          const isActive = index === activeIndex;
+
+          const dimmed = activeIndex !== null && !isActive;
+
+          Object.entries(overlays).forEach(([type, series]) => {
+            series.applyOptions({
+              color: dimmed ? "#334155" : rangeColors[type],
+              lineWidth: isActive ? 3 : 2,
+            });
+          });
+        });
+      }
+
+      // ====================================================
+      // CHART VIEW
+      // ====================================================
+
+      chart.timeScale().fitContent();
+
+      // ====================================================
+      // HEADER DETAILS
+      // ====================================================
+
+      document.getElementById("title").textContent = `${DATA.symbol} Trading Ranges`;
+
+      document.getElementById("subtitle").textContent =
+        `Timeframe: ${DATA.timeframe}s | ` + `Candles: ${DATA.candles.length} | ` + `Ranges: ${DATA.ranges.length} | ` + `Analysis: ${new Date(DATA.calculatedTs).toISOString()}`;
+
+      // ====================================================
+      // RANGE TABLE
+      // ====================================================
+
+      const tbody = document.getElementById("ranges-body");
+
+      if (DATA.ranges.length === 0) {
+        document.getElementById("empty-message").hidden = false;
+      }
+
+      DATA.ranges.forEach((range, index) => {
+        const row = document.createElement("tr");
+
+        row.innerHTML = `
+          <td>#${index + 1}</td>
+          <td class="lower">${range.lower.toFixed(4)}</td>
+          <td class="upper">${range.upper.toFixed(4)}</td>
+          <td class="midpoint">${range.midpoint.toFixed(4)}</td>
+          <td>${range.width.toFixed(3)}%</td>
+          <td>${range.supportTouches} / ${range.resistanceTouches}</td>
+          <td>${range.oscillations}</td>
+          <td>${range.containment.toFixed(2)}%</td>
+          <td>${range.strength.toFixed(2)}</td>
+        `;
+
+        // ====================================================
+        // HOVER HIGHLIGHT
+        // ====================================================
+
+        row.addEventListener("mouseenter", () => {
+          hoveredRangeIndex = index;
+          updateRangeHighlight();
+        });
+
+        row.addEventListener("mouseleave", () => {
+          hoveredRangeIndex = null;
+          updateRangeHighlight();
+        });
+
+        // ====================================================
+        // CLICK SELECTION
+        // ====================================================
+
+        row.addEventListener("click", () => {
+          if (selectedRangeIndex === index) {
+            selectedRangeIndex = null;
+          } else {
+            selectedRangeIndex = index;
+          }
+
+          document.querySelectorAll("#ranges-body tr").forEach((r) => r.classList.remove("selected"));
+
+          if (selectedRangeIndex !== null) {
+            row.classList.add("selected");
+          }
+
+          updateRangeHighlight();
+          updateRangeDetails();
+        });
+
+        tbody.appendChild(row);
+      });
+
+      // ====================================================
+      // RANGE DETAILS
+      // ====================================================
+
+      function updateRangeDetails() {
+        const container = document.getElementById("range-details");
+
+        if (selectedRangeIndex === null) {
+          container.innerHTML = "";
+          return;
+        }
+
+        const range = DATA.ranges[selectedRangeIndex];
+
+        container.innerHTML = `
+          <h3>Range #${selectedRangeIndex + 1} Details</h3>
+
+          <p>
+            <span class="extreme-low">Lowest Observed:</span>
+            ${range.lowest.toFixed(4)}
+            &nbsp; | &nbsp;
+            <span class="extreme-high">Highest Observed:</span>
+            ${range.highest.toFixed(4)}
+          </p>
+
+          <p>
+            Support Strength: ${range.supportStrength.toFixed(2)}
+            &nbsp; | &nbsp;
+            Resistance Strength: ${range.resistanceStrength.toFixed(2)}
+          </p>
+
+          <p>
+            Start:
+            ${new Date(range.startTs).toISOString()}
+          </p>
+
+          <p>
+            Confirmed:
+            ${new Date(range.confirmedTs).toISOString()}
+          </p>
+
+          <p>
+            Last Boundary Reaction:
+            ${new Date(range.lastTouchTs).toISOString()}
+          </p>
+        `;
+      }
+
+      // ====================================================
+      // RESPONSIVE RESIZING
+      // ====================================================
+
+      const resizeObserver = new ResizeObserver((entries) => {
+        const entry = entries[0];
+
+        chart.applyOptions({
+          width: entry.contentRect.width,
+        });
+      });
+
+      resizeObserver.observe(chartContainer);
+    </script>
+  </body>
+</html>

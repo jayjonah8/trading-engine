@@ -1,5 +1,6 @@
 mod hyperliquid;
 mod validation;
+mod range_validation;
 
 // ====================================================
 // TODO: HISTORICAL TIMESTAMP SUPPORT

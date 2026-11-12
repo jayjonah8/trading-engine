@@ -1,6 +1,7 @@
 pub mod config;
 pub mod detector;
 pub mod types;
+pub mod range;
 pub mod visualization;
 
 #[cfg(test)]
