@@ -431,9 +431,27 @@ async fn test_hyperliquid_ranges() -> Result<()> {
             range.strength
         );
 
+        // ====================================================
+        // RANGE STATUS
+        // ====================================================
+
+        println!(
+            "Range Status: {:?}",
+            range.status
+        );
+
+        // ====================================================
+        // RANGE TIMESTAMPS
+        // ====================================================
+
         println!(
             "Start Timestamp: {}",
             range.start_ts
+        );
+
+        println!(
+            "End Timestamp: {}",
+            range.end_ts
         );
 
         println!(
@@ -477,3 +495,8 @@ async fn test_hyperliquid_ranges() -> Result<()> {
 
     Ok(())
 }
+
+
+
+
+

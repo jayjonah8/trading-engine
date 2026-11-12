@@ -1,6 +1,18 @@
+
 #![allow(dead_code)]
 
 use crate::market::timeframe::Timeframe;
+
+// ====================================================
+// RANGE STATUS
+// ====================================================
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RangeStatus {
+    Active,
+    BrokenAbove,
+    BrokenBelow,
+}
 
 // ====================================================
 // PRICE RANGE
@@ -28,7 +40,10 @@ pub struct PriceRange {
 
     pub strength: f64,
 
+    pub status: RangeStatus,
+
     pub start_ts: i64,
+    pub end_ts: i64,
     pub confirmed_ts: i64,
     pub last_touch_ts: i64,
 }
@@ -44,3 +59,6 @@ pub struct PriceRanges {
     pub calculated_ts: i64,
     pub ranges: Vec<PriceRange>,
 }
+
+
+

@@ -19,6 +19,7 @@ use crate::{
             types::{
                 PriceRange,
                 PriceRanges,
+                RangeStatus,
             },
         },
     },
@@ -38,6 +39,7 @@ use crate::{
 // 5. Historical range segmentation.
 // 6. Price containment.
 // 7. Observed price extremes.
+// 8. Historical breakout classification.
 //
 // Supports historical and latest-candle analysis.
 //
@@ -284,7 +286,7 @@ impl RangeDetector {
                                 ..=segment.end_index
                         ];
 
-                        if let Some(range) = self.validate_range(
+                        if let Some(mut range) = self.validate_range(
                             segment_bars,
                             support,
                             resistance,
@@ -293,6 +295,18 @@ impl RangeDetector {
                             width_pct,
                             current_ts,
                         ) {
+
+                            // ====================================================
+                            // CLASSIFY RANGE STATUS
+                            // ====================================================
+
+                            range.status = self.classify_range_status(
+                                &bars,
+                                segment.end_index,
+                                lower_boundary,
+                                upper_boundary,
+                            );
+
                             ranges.push(range);
                         }
                     }
@@ -408,6 +422,67 @@ impl RangeDetector {
         }
 
         segments
+    }
+
+
+    // ====================================================
+    // CLASSIFY RANGE STATUS
+    // ====================================================
+
+    // Examines completed candles following the historical
+    // range segment.
+    //
+    // The first close beyond the breakout buffer determines
+    // the historical breakout direction.
+    //
+    // A subsequent return inside the original boundaries
+    // does not reset the breakout classification.
+    //
+    // This is calculated independently for each segment.
+    //
+    // No persistent lifecycle state is required.
+
+    fn classify_range_status(
+        &self,
+        bars: &[&Bar],
+        segment_end_index: usize,
+        lower_boundary: f64,
+        upper_boundary: f64,
+    ) -> RangeStatus {
+
+        let buffer =
+            self.config.boundary_break_buffer_pct / 100.0;
+
+        if !buffer.is_finite() || buffer < 0.0 {
+            return RangeStatus::Active;
+        }
+
+        let lower_breakout =
+            lower_boundary * (1.0 - buffer);
+
+        let upper_breakout =
+            upper_boundary * (1.0 + buffer);
+
+        // ====================================================
+        // CHECK SUBSEQUENT COMPLETED CANDLES
+        // ====================================================
+
+        for bar in bars.iter().skip(segment_end_index + 1) {
+
+            if bar.close > upper_breakout {
+                return RangeStatus::BrokenAbove;
+            }
+
+            if bar.close < lower_breakout {
+                return RangeStatus::BrokenBelow;
+            }
+        }
+
+        // ====================================================
+        // NO CONFIRMED BREAKOUT
+        // ====================================================
+
+        RangeStatus::Active
     }
 
 
@@ -534,6 +609,11 @@ impl RangeDetector {
             .end
             .timestamp_millis();
 
+        let end_ts = bars
+            .last()?
+            .end
+            .timestamp_millis();
+
         let last_touch_ts = reactions
             .last()?
             .timestamp_ms;
@@ -589,7 +669,7 @@ impl RangeDetector {
             completed_oscillations,
             containment_pct,
             start_ts,
-            bars.last()?.end.timestamp_millis(),
+            end_ts,
         );
 
         // ====================================================
@@ -631,7 +711,10 @@ impl RangeDetector {
 
             strength,
 
+            status: RangeStatus::Active,
+
             start_ts,
+            end_ts,
             confirmed_ts,
             last_touch_ts,
         })
@@ -900,3 +983,9 @@ impl RangeDetector {
         });
     }
 }
+
+
+
+
+
+
